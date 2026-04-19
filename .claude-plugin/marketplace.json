@@ -1,0 +1,23 @@
+{
+  "name": "jewzaam-reviews",
+  "owner": {
+    "name": "Naveen Malik"
+  },
+  "metadata": {
+    "description": "Connected pipeline of review skills that produce standardized Review-*.md files and apply findings as isolated, tested commits."
+  },
+  "plugins": [
+    {
+      "name": "jewzaam-reviews",
+      "source": {
+        "source": "github",
+        "repo": "jewzaam/jewzaam-reviews"
+      },
+      "description": "Review pipeline skills: produce standardized Review-*.md findings and apply them as one-commit-per-finding.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Naveen Malik"
+      }
+    }
+  ]
+}

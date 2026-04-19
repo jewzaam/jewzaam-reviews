@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jewzaam/claude-skill-review/schemas/render-config.schema.json",
+  "title": "Render Config",
+  "description": "Configuration for severity-bucket thresholds applied at render time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["confidence_floor", "critical", "important"],
+  "properties": {
+    "confidence_floor": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Findings with confidence below this go to needs-review regardless of priority."
+    },
+    "critical": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min_priority", "min_impact"],
+      "properties": {
+        "min_priority": {"type": "integer", "minimum": 0, "maximum": 100},
+        "min_impact": {"type": "integer", "minimum": 0, "maximum": 100}
+      }
+    },
+    "important": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["min_priority"],
+      "properties": {
+        "min_priority": {"type": "integer", "minimum": 0, "maximum": 100}
+      }
+    }
+  }
+}

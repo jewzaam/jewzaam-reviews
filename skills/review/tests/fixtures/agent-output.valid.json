@@ -1,0 +1,25 @@
+{
+  "agent_id": "architecture-auth-001",
+  "concern": "Architecture & Design",
+  "concern_slug": "architecture",
+  "dimension_name": "auth subsystem",
+  "dimension_slug": "auth",
+  "dimension_scope": {"paths": ["src/auth/"]},
+  "findings": [
+    {
+      "title": "AuthService bypasses repository abstraction",
+      "impact": 70,
+      "likelihood": 80,
+      "effort_to_fix": 30,
+      "confidence": 85,
+      "locations": [
+        {"path": "src/auth/service.py", "line": "42-58", "role": "primary"},
+        {"path": "src/auth/repo.py", "line": "10", "role": "related"}
+      ],
+      "issue": "AuthService reads the database directly instead of going through AuthRepository.",
+      "why_it_matters": "All other services route DB access through repositories per the project's stated architecture (CLAUDE.md).",
+      "suggested_fix": "Inject AuthRepository into AuthService and replace the direct query with repo.get_user()."
+    }
+  ],
+  "cross_cutting_observations": []
+}

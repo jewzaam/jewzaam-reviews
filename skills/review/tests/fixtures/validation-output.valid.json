@@ -1,0 +1,21 @@
+{
+  "batch_number": 1,
+  "verdicts": [
+    {
+      "finding_ref": {"index": 0, "content_hash": "a1b2c3d4e5f60718"},
+      "action": "confirm",
+      "reasoning": "Verified the location and severity is appropriate."
+    },
+    {
+      "finding_ref": {"index": 1, "content_hash": "b2c3d4e5f6071829"},
+      "action": "rescore",
+      "new_scores": {"confidence": 90, "impact": 75},
+      "reasoning": "Found additional evidence in src/auth/policy.py:33 that confirms the issue."
+    },
+    {
+      "finding_ref": {"index": 2, "content_hash": "c3d4e5f607182930"},
+      "action": "remove",
+      "reasoning": "Cited line does not exist; finding appears speculative."
+    }
+  ]
+}

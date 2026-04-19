@@ -1,0 +1,25 @@
+{
+  "project": {"name": "myapp", "scope_slug": ""},
+  "decomposition": [
+    {"dimension_name": "auth subsystem", "dimension_slug": "auth", "dimension_scope": {"paths": ["src/auth/"]}},
+    {"dimension_name": "api endpoints", "dimension_slug": "api", "dimension_scope": {"paths": ["src/api/"]}}
+  ],
+  "findings": [
+    {
+      "content_hash": "a1b2c3d4e5f60718",
+      "concern_slug": "architecture",
+      "source_dimensions": ["auth"],
+      "title": "AuthService bypasses repository abstraction",
+      "impact": 70,
+      "likelihood": 80,
+      "effort_to_fix": 30,
+      "confidence": 85,
+      "locations": [
+        {"path": "src/auth/service.py", "line": "42-58", "role": "primary"}
+      ],
+      "issue": "AuthService reads the database directly.",
+      "why_it_matters": "All other services use repositories.",
+      "suggested_fix": "Inject AuthRepository."
+    }
+  ]
+}

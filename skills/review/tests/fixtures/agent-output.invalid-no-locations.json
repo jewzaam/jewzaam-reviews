@@ -1,0 +1,21 @@
+{
+  "agent_id": "implementation-core-002",
+  "concern": "Implementation Quality",
+  "concern_slug": "implementation",
+  "dimension_name": "core module",
+  "dimension_slug": "core",
+  "dimension_scope": {"paths": ["src/core/"]},
+  "findings": [
+    {
+      "title": "Missing null check",
+      "impact": 50,
+      "likelihood": 50,
+      "effort_to_fix": 20,
+      "confidence": 70,
+      "locations": [],
+      "issue": "Possible null deref.",
+      "why_it_matters": "May crash.",
+      "suggested_fix": "Add a null check."
+    }
+  ]
+}

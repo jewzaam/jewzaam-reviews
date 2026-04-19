@@ -1,0 +1,11 @@
+{
+  "name": "jewzaam-reviews",
+  "version": "0.1.0",
+  "description": "Review pipeline skills: produce standardized Review-*.md findings (review, standards, update-pr, c4-reverse-engineer) and apply them as one-commit-per-finding (apply-review).",
+  "author": {
+    "name": "Naveen Malik"
+  },
+  "repository": "https://github.com/jewzaam/jewzaam-reviews",
+  "license": "Apache-2.0",
+  "keywords": ["code-review", "review", "standards", "pull-request", "c4", "architecture"]
+}

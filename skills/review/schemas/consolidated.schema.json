@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jewzaam/claude-skill-review/schemas/consolidated.schema.json",
+  "title": "Consolidated Findings",
+  "description": "Merged set of findings from all (concern, dimension) cells; no severity buckets, no IDs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project", "decomposition", "findings"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "scope_slug": {"type": "string"}
+      }
+    },
+    "decomposition": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dimension_name", "dimension_slug"],
+        "properties": {
+          "dimension_name": {"type": "string", "minLength": 1},
+          "dimension_slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"},
+          "dimension_scope": {"type": "object"}
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/consolidated_finding"}
+    }
+  },
+  "$defs": {
+    "consolidated_finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "content_hash",
+        "concern_slug",
+        "source_dimensions",
+        "title",
+        "impact",
+        "likelihood",
+        "effort_to_fix",
+        "confidence",
+        "locations",
+        "issue",
+        "why_it_matters",
+        "suggested_fix"
+      ],
+      "properties": {
+        "content_hash": {"type": "string", "pattern": "^[a-f0-9]{16,64}$"},
+        "concern_slug": {
+          "type": "string",
+          "enum": [
+            "architecture",
+            "implementation",
+            "test",
+            "maintainability",
+            "security",
+            "documentation",
+            "observability"
+          ]
+        },
+        "source_dimensions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"}
+        },
+        "title": {"type": "string", "minLength": 1, "maxLength": 120},
+        "impact": {"type": "integer", "minimum": 0, "maximum": 100},
+        "likelihood": {"type": "integer", "minimum": 0, "maximum": 100},
+        "effort_to_fix": {"type": "integer", "minimum": 0, "maximum": 100},
+        "confidence": {"type": "integer", "minimum": 0, "maximum": 100},
+        "locations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/location"}
+        },
+        "issue": {"type": "string", "minLength": 1},
+        "why_it_matters": {"type": "string", "minLength": 1},
+        "suggested_fix": {"type": "string", "minLength": 1}
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "line": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
+        "role": {
+          "type": "string",
+          "enum": ["primary", "related", "callsite", "requirement"]
+        }
+      }
+    }
+  }
+}

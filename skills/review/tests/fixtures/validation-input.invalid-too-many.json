@@ -1,0 +1,15 @@
+{
+  "batch_number": 1,
+  "total_batches": 1,
+  "findings": [
+    {"index": 0, "content_hash": "0000000000000000", "concern_slug": "architecture", "title": "f0", "impact": 50, "likelihood": 50, "effort_to_fix": 50, "confidence": 70, "locations": [{"path": "x", "line": "1"}], "issue": "i", "why_it_matters": "w", "suggested_fix": "s"},
+    {"index": 1, "content_hash": "0000000000000001", "concern_slug": "architecture", "title": "f1", "impact": 50, "likelihood": 50, "effort_to_fix": 50, "confidence": 70, "locations": [{"path": "x", "line": "1"}], "issue": "i", "why_it_matters": "w", "suggested_fix": "s"},
+    {"index": 2, "content_hash": "0000000000000002", "concern_slug": "architecture", "title": "f2", "impact": 50, "likelihood": 50, "effort_to_fix": 50, "confidence": 70, "locations": [{"path": "x", "line": "1"}], "issue": "i", "why_it_matters": "w", "suggested_fix": "s"},
+    {"index": 3, "content_hash": "0000000000000003", "concern_slug": "architecture", "title": "f3", "impact": 50, "likelihood": 50, "effort_to_fix": 50, "confidence": 70, "locations": [{"path": "x", "line": "1"}], "issue": "i", "why_it_matters": "w", "suggested_fix": "s"},
+    {"index": 4, "content_hash": "0000000000000004", "concern_slug": "architecture", "title": "f4", "impact": 50, "likelihood": 50, "effort_to_fix": 50, "confidence": 70, "locations": [{"path": "x", "line": "1"}], "issue": "i", "why_it_matters": "w", "suggested_fix": "s"},
+    {"index": 5, "content_hash": "0000000000000005", "concern_slug": "architecture", "title": "f5", "impact": 50, "likelihood": 50, "effort_to_fix": 50, "confidence": 70, "locations": [{"path": "x", "line": "1"}], "issue": "i", "why_it_matters": "w", "suggested_fix": "s"},
+    {"index": 6, "content_hash": "0000000000000006", "concern_slug": "architecture", "title": "f6", "impact": 50, "likelihood": 50, "effort_to_fix": 50, "confidence": 70, "locations": [{"path": "x", "line": "1"}], "issue": "i", "why_it_matters": "w", "suggested_fix": "s"},
+    {"index": 7, "content_hash": "0000000000000007", "concern_slug": "architecture", "title": "f7", "impact": 50, "likelihood": 50, "effort_to_fix": 50, "confidence": 70, "locations": [{"path": "x", "line": "1"}], "issue": "i", "why_it_matters": "w", "suggested_fix": "s"},
+    {"index": 8, "content_hash": "0000000000000008", "concern_slug": "architecture", "title": "f8", "impact": 50, "likelihood": 50, "effort_to_fix": 50, "confidence": 70, "locations": [{"path": "x", "line": "1"}], "issue": "i", "why_it_matters": "w", "suggested_fix": "s"}
+  ]
+}

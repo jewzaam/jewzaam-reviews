@@ -1,0 +1,21 @@
+{
+  "agent_id": "security-api-003",
+  "concern": "Security",
+  "concern_slug": "security",
+  "dimension_name": "api endpoints",
+  "dimension_slug": "api",
+  "dimension_scope": {"paths": ["src/api/"]},
+  "findings": [
+    {
+      "title": "SQL injection risk",
+      "impact": 90,
+      "likelihood": 60,
+      "effort_to_fix": 40,
+      "confidence": 150,
+      "locations": [{"path": "src/api/users.py", "line": "23"}],
+      "issue": "User input flows into a raw SQL string.",
+      "why_it_matters": "Allows arbitrary query execution.",
+      "suggested_fix": "Use parameterized queries."
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "project": {"name": "myapp", "scope_slug": ""},
+  "decomposition": [
+    {"dimension_name": "auth subsystem", "dimension_slug": "auth", "dimension_scope": {"paths": ["src/auth/"]}}
+  ],
+  "findings": [
+    {
+      "content_hash": "aaaaaaaaaaaaaaaa",
+      "concern_slug": "security",
+      "source_dimensions": ["auth"],
+      "title": "SQL injection in user lookup",
+      "impact": 95,
+      "likelihood": 80,
+      "effort_to_fix": 20,
+      "confidence": 90,
+      "locations": [{"path": "src/auth/lookup.py", "line": "23", "role": "primary"}],
+      "issue": "Raw string interpolation into SQL.",
+      "why_it_matters": "Allows arbitrary query execution by any authenticated user.",
+      "suggested_fix": "Use parameterized queries via the existing db.execute_params() helper."
+    },
+    {
+      "content_hash": "bbbbbbbbbbbbbbbb",
+      "concern_slug": "implementation",
+      "source_dimensions": ["auth"],
+      "title": "Missing null check before deref",
+      "impact": 60,
+      "likelihood": 40,
+      "effort_to_fix": 10,
+      "confidence": 80,
+      "locations": [{"path": "src/auth/service.py", "line": "108", "role": "primary"}],
+      "issue": "session may be None.",
+      "why_it_matters": "Crashes on logged-out users.",
+      "suggested_fix": "Add an early return when session is None."
+    },
+    {
+      "content_hash": "cccccccccccccccc",
+      "concern_slug": "documentation",
+      "source_dimensions": ["auth"],
+      "title": "README missing install instructions",
+      "impact": 30,
+      "likelihood": 50,
+      "effort_to_fix": 15,
+      "confidence": 75,
+      "locations": [{"path": "README.md", "line": "1", "role": "primary"}],
+      "issue": "No install section.",
+      "why_it_matters": "New contributors can't get started.",
+      "suggested_fix": "Add an Install section with the standard pip-install incantation."
+    },
+    {
+      "content_hash": "dddddddddddddddd",
+      "concern_slug": "observability",
+      "source_dimensions": ["auth"],
+      "title": "Maybe we should log here",
+      "impact": 30,
+      "likelihood": 40,
+      "effort_to_fix": 5,
+      "confidence": 40,
+      "locations": [{"path": "src/auth/service.py", "line": "55", "role": "primary"}],
+      "issue": "No log statement at this branch point.",
+      "why_it_matters": "Could help debugging.",
+      "suggested_fix": "Consider adding a debug log."
+    }
+  ]
+}
