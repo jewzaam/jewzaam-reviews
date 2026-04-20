@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests", "skills"]
+# importlib avoids the conftest-module name collision between plugin-root
+# tests/conftest.py and skills/review/tests/conftest.py.
+addopts = ["--import-mode=importlib"]

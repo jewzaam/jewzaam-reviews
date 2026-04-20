@@ -1,0 +1,26 @@
+{
+  "schema_version": "0.2.0",
+  "source": "standards",
+  "project": {"name": "sample", "scope_slug": "standards"},
+  "findings": [
+    {
+      "id": "I0",
+      "title": "Module uses 'unit' instead of 'unit_of_measure'",
+      "severity": "important",
+      "content_hash": "0123456789abcdef",
+      "subdomain": "common",
+      "locations": [{"path": "src/metrics.py", "line": "17", "role": "primary"}],
+      "issue": "Variable named `unit` drops meaningful context per common/naming.md.",
+      "why_it_matters": "Standards require descriptive names that carry domain context.",
+      "suggested_fix": "Rename to `unit_of_measure` and update call sites."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "warning",
+      "kind": "tool_unavailable",
+      "message": "ruff not installed; subdomain 'python' style checks skipped.",
+      "source_component": "standards/python sub-agent"
+    }
+  ]
+}

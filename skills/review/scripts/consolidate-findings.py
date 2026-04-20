@@ -31,7 +31,6 @@ Validates the final document against consolidated.schema.json before writing.
 """
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -41,6 +40,10 @@ import jsonschema
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_DIR = REPO_ROOT / "schemas"
+PLUGIN_ROOT = REPO_ROOT.parent.parent
+
+sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.envelope import content_hash  # noqa: E402
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
@@ -89,10 +92,12 @@ def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
 def _content_hash(
     *, concern_slug: str, dimension_slug: str, primary: dict, title: str
 ) -> str:
-    payload = (
-        f"{concern_slug}|{dimension_slug}|{primary['path']}:{primary['line']}|{title}"
+    return content_hash(
+        concern_slug,
+        dimension_slug,
+        f"{primary['path']}:{primary['line']}",
+        title,
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _merge_findings(group: list[dict]) -> dict:

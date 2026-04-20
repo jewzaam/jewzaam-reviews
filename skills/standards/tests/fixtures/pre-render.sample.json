@@ -1,0 +1,52 @@
+{
+  "project": {"name": "sample"},
+  "findings": [
+    {
+      "subdomain": "common",
+      "severity": "important",
+      "title": "Module uses 'unit' instead of 'unit_of_measure'",
+      "locations": [{"path": "src/metrics.py", "line": "17"}],
+      "issue": "Variable named `unit` drops meaningful context per common/naming.md.",
+      "why_it_matters": "Standards require descriptive names that carry domain context.",
+      "suggested_fix": "Rename to `unit_of_measure` and update call sites."
+    },
+    {
+      "subdomain": "python",
+      "severity": "critical",
+      "title": "Tests shell out to system python instead of venv",
+      "locations": [{"path": "Makefile", "line": "12"}],
+      "issue": "Tests run via bare `python` instead of `$(PYTHON)` from venv.",
+      "why_it_matters": "Non-reproducible test env; CI will use the wrong interpreter.",
+      "suggested_fix": "Change `python -m pytest` to `$(PYTHON) -m pytest`."
+    },
+    {
+      "subdomain": "common",
+      "severity": "suggestion",
+      "title": "README missing install section",
+      "locations": [{"path": "README.md", "line": "1"}],
+      "issue": "README doesn't explain how to install the package.",
+      "why_it_matters": "common/readme-format.md lists install as required.",
+      "suggested_fix": "Add an `## Install` section with pip/npm instructions."
+    }
+  ],
+  "supplementary": {
+    "tldr": "Audited 2 subdomains; 3 gaps total. 1 critical in Makefile, 2 in naming/docs.",
+    "applicability": [
+      {"subdomain": "common", "standard": "naming.md", "applies": true, "gap_count": 1},
+      {"subdomain": "common", "standard": "readme-format.md", "applies": true, "gap_count": 1},
+      {"subdomain": "python", "standard": "style.md", "applies": true, "gap_count": 1},
+      {"subdomain": "python", "standard": "tkinter/windows.md", "applies": false, "gap_count": 0}
+    ],
+    "not_applicable": [
+      {"standard": "python/tkinter/windows.md", "reason": "Project has no GUI"}
+    ],
+    "strengths": [
+      "Uses SemVer per common/versioning.md",
+      "Makefile follows build/makefile.md target naming"
+    ],
+    "subdomain_notes": {
+      "common": "Naming and README gaps identified.",
+      "python": "Makefile deviates from python/project-structure.md venv convention."
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": "0.2.0",
+  "source": "review",
+  "project": {"name": "sample"},
+  "decomposition": [
+    {"dimension_name": "auth", "dimension_slug": "auth"}
+  ],
+  "findings": [
+    {
+      "id": "C0",
+      "title": "no concern_slug",
+      "severity": "critical",
+      "content_hash": "aaaaaaaaaaaaaaaa",
+      "source_dimensions": ["auth"],
+      "impact": 90,
+      "likelihood": 70,
+      "effort_to_fix": 40,
+      "confidence": 85,
+      "locations": [{"path": "x.js", "line": "1"}],
+      "issue": "missing concern_slug",
+      "why_it_matters": "schema rejects",
+      "suggested_fix": "add concern_slug"
+    }
+  ],
+  "issues": []
+}

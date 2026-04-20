@@ -7,6 +7,18 @@ description: Incorporate feedback into a pull request. Fetches PR review comment
 
 This skill performs NO write operations on GitHub. No comments, no pushes, no PR updates, no review submissions, no thread resolution. All GitHub interactions are read-only fetches. The user posts replies and pushes commits themselves.
 
+## Pre-Fetch
+
+### Workspace Bootstrap (auto-executed)
+
+Wipes and recreates `.tmp-update-pr/` at the project root with a `.gitignore` of `*`. Holds the pre-render JSON and any meta-issues collected during the run.
+
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-update-pr`
+
+### Shared Handoff Contract (auto-injected)
+
+!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
+
 ## Overview
 
 The workflow has three phases:
@@ -116,67 +128,68 @@ Report the filtering result before starting Phase 2: "N comments fetched, M alre
 
 ### Generate Review Traceability Document
 
-After filtering, generate `Review-PR-<number>.md` in the repository root. This document maps every PR comment to a finding and every finding back to its source comments, giving the user a complete picture before the interactive walkthrough begins.
+After filtering, build a pre-render JSON at `.tmp-update-pr/pre-render.json`. The workspace bootstrap pre-fetch already created the dir with its `.gitignore`. This is the structured input that `render-update-pr.py` turns into the authoritative JSON + rendered markdown.
 
 **Constraint: no new findings.** Findings consolidate what reviewers raised — nothing more. If a comment doesn't map to a broader finding, it stands alone. The skill's role is to organize and present reviewer feedback, not to perform independent code review.
 
-Use this structure:
+**Pre-render JSON shape (Phase 1 state — no resolutions yet):**
 
-```markdown
-# Review Traceability: PR <number>
-
-PR: <title>
-Generated: <date>
-Total comments: <N fetched> (<M resolved>, <K unresolved>)
-
-## Comment Traceability
-
-All unresolved PR comments, mapped to findings. Resolved comments are excluded.
-
-### <Reviewer Handle> (<count> threads)
-
-| # | Comment | File | Finding |
-|---|---------|------|---------|
-| 1 | <condensed feedback> | `<file:line>` | <Finding ID (e.g., I0, S1) or "—"> |
-| 2 | ... | ... | ... |
-
-(repeat table per reviewer)
-
-### Summary
-
-| Status | Count |
-|--------|-------|
-| Mapped to finding | <count> |
-| Standalone (no finding) | <count> |
-| Already resolved on GitHub | <M> |
-| **Total** | **<N>** |
-
-## Findings
-
-Consolidated findings from unresolved PR comments. Each finding groups related comments and traces back to its sources.
-
-**<I0>: <Short title>**
-- **PR comments:** <reviewer> #<number>, <reviewer> #<number>
-- **File:** `<file:line>`
-- **Description:** <what the reviewers flagged>
-- **Suggested fix:** <from reviewer comments, not independent analysis>
-
-(repeat for each finding)
+```json
+{
+  "project": {"name": "<repo-or-project-name>"},
+  "findings": [
+    {
+      "id": "I0",
+      "title": "<short title>",
+      "severity": "important|suggestion",
+      "locations": [{"path": "<file>", "line": "<N>", "role": "primary"}],
+      "issue": "<what reviewers flagged>",
+      "why_it_matters": "<why it matters, paraphrased from reviewer comments>",
+      "suggested_fix": "<from reviewer comments, not independent analysis>",
+      "pr_comment": {"author": "<reviewer>", "id": <comment_id>}
+    }
+  ],
+  "supplementary": {
+    "pr_title": "<PR title>",
+    "counts": {"total": <N>, "resolved": <M>, "unresolved": <K>},
+    "traceability": {
+      "<reviewer_handle>": [
+        {
+          "summary": "<condensed feedback>",
+          "location": "<file:line>",
+          "finding": "<finding-id or —>"
+        }
+      ]
+    }
+  }
+}
 ```
 
-Format rules:
+Then invoke:
 
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/update-pr/scripts/render-update-pr.py \
+  --input .tmp-update-pr/pre-render.json \
+  --out-dir <repo root> \
+  --pr-number <number>
+```
+
+Skill-specific renderer behavior (on top of the shared handoff contract):
+- Emits `source: "review"` (PR review is a review with `pr_comment` extensions on findings).
+- Writes `Findings-update-pr-<number>.json` (authoritative) and `Findings-update-pr-<number>.md` (rendered traceability).
+
+Format rules (enforced by schema and/or script):
 - **Finding IDs** use standard review prefixes — `I0`, `I1` for important issues, `S0`, `S1` for suggestions, `C0`, `C1` for clarifications — sequential within each category. Severity assessment is out of scope; the prefix indicates the type of reviewer feedback (proposed fix vs. suggestion vs. question), not a priority ranking.
-- **Every finding must trace to at least one PR comment.** If a finding has no comment link, it was invented — remove it. This is the hard constraint.
-- **Every unresolved comment must appear in exactly one reviewer table.** Cross-check the total against the filtered count.
-- **Comment numbering is local** — the `#` column starts at 1 per reviewer table and is only meaningful within this document. Finding references like `matburt #5` refer to row 5 in matburt's table, not a GitHub comment ID.
-- **Standalone comments** (mapped to "—") are valid — not every comment needs to be part of a broader finding. These proceed to Phase 2 as individual items.
-- **Resolved comments are excluded** from the traceability tables. They appear only in the summary count.
+- **Every finding must trace to at least one PR comment.** If a finding has no `pr_comment` link in the pre-render JSON, it was invented — remove it. This is the hard constraint.
+- **Every unresolved comment must appear in exactly one reviewer's traceability list.** Cross-check the total against the filtered count before invoking the renderer.
+- **Comment numbering is local** — the rendered table's `#` column starts at 1 per reviewer and is only meaningful within this document.
+- **Standalone comments** (finding field "—") are valid — not every comment needs to be part of a broader finding. These proceed to Phase 2 as individual items.
+- **Resolved comments are excluded** from the traceability — they appear only in the `counts` summary.
 
 Use `AskUserQuestion` to present the document and wait for confirmation before proceeding to Phase 2:
 
 ```
-Review traceability document generated: Review-PR-<number>.md
+Review traceability document generated: Findings-update-pr-<number>.json (+ .md view)
 
 <K> unresolved comments mapped to <F> findings, <S> standalone.
 <M> resolved comments excluded.
@@ -189,7 +202,7 @@ Please review the document. You can:
 Confirm to proceed, or describe adjustments.
 ```
 
-Incorporate any adjustments before starting the interactive walkthrough.
+Incorporate any adjustments by editing the pre-render JSON and re-running the render script, then proceed to the interactive walkthrough.
 
 ## Phase 2: Review Each Comment
 
@@ -313,64 +326,44 @@ Flag any comment that lacks a resolution path. Every reviewer comment (except pu
 
 ### Step 4: Update Traceability and Generate Summary
 
-Update the `Review-PR-<number>.md` traceability document from Phase 1 with the resolution status for each comment (applied, rejected, deferred, etc.) and the user's decision. Then append the action-item sections below.
+Extend the `.tmp-update-pr/pre-render.json` from Phase 1 by adding `supplementary.resolutions` and resolution columns in the traceability rows. Then re-run the render script (same invocation as Phase 1) to regenerate `Findings-update-pr-<number>.json` and `.md` with resolutions included.
 
-Add these sections to the traceability document:
+**Resolutions shape in `supplementary.resolutions`:**
 
-```markdown
-## Resolutions
-
-### Draft Replies
-
-Replies to post on the PR to acknowledge reviewer feedback and address comment threads.
-
-- [ ] **<reviewer_handle> on <file:line>** [<Decision>]
-  > <condensed feedback>
-  **Draft reply:** <reply text based on user's words from the review>
-
-(repeat for each comment needing a reply)
-
-### Re-Request Reviews
-
-After posting replies and pushing changes, re-request review from these reviewers:
-
-- [ ] **<reviewer_handle>** — <brief note on what was addressed for them>
-
-(repeat for each reviewer who left actionable feedback)
-
-### Applied via GitHub Suggestions
-
-These were applied through GitHub's suggestion feature. Reviewer attribution is preserved.
-No action needed — GitHub auto-resolves these threads.
-
-- <reviewer_handle> on <file:line> — <summary>
-
-### Pending Local Edits
-
-These findings were accepted and will be applied via `/apply-review`. The handoff command is in Step 5.
-
-- <reviewer_handle> on <file:line> — <finding ID> — <summary>
-
-### No Action Needed
-
-Approvals, praise, and informational comments that require no response.
-
-- <reviewer_handle> — <summary>
+```json
+{
+  "resolutions": {
+    "draft_replies": [
+      {
+        "reviewer": "<handle>",
+        "location": "<file:line>",
+        "decision": "Accepted | Rejected | Deferred | Already applied | Discussion answered",
+        "summary": "<condensed feedback>",
+        "reply": "<reply text in user's voice>"
+      }
+    ],
+    "re_request": [
+      {"reviewer": "<handle>", "note": "<brief note on what was addressed>"}
+    ],
+    "applied_via_github_suggestions": [
+      {"reviewer": "<handle>", "location": "<file:line>", "summary": "<short>"}
+    ],
+    "pending_local_edits": [
+      {"reviewer": "<handle>", "location": "<file:line>", "finding": "<ID>", "summary": "<short>"}
+    ],
+    "no_action": [
+      {"reviewer": "<handle>", "summary": "<short>"}
+    ]
+  }
+}
 ```
 
-Also update the Comment Traceability tables to include the resolution status column:
-
-```markdown
-| # | Comment | File | Finding | Resolution |
-|---|---------|------|---------|------------|
-| 1 | <condensed feedback> | `<file:line>` | I0 | Pending — apply-review |
-```
+Also add a `resolution` field to each row in `supplementary.traceability[<reviewer>]` (e.g., `"Pending — apply-review"`, `"Applied via suggestion"`, `"Rejected"`). The render script detects the field's presence and renders an extra column in the traceability table.
 
 Format rules:
-
-- **Checkboxes (`- [ ]`) only on items requiring user action** — draft replies to post and reviews to re-request. Informational items (already applied, no action needed) use plain `- ` bullets. If checking the box doesn't correspond to a discrete action the user performs, it is not a checkbox.
-- **User's voice in draft replies** — resolutions reflect the user's own words from the interactive review. This is the text they'll adapt when posting on the PR, so preserve their intent and tone.
-- **Single document** — all traceability, findings, and resolutions live in `Review-PR-<number>.md`. Do not generate a separate summary file.
+- **Draft replies should use the user's voice** — they reflect the user's own words from the interactive review. This is the text they'll adapt when posting on the PR, so preserve their intent and tone.
+- **Single source of truth** — `pre-render.json` is hand-edited; the script renders both `Findings-update-pr-<number>.json` and `Findings-update-pr-<number>.md` from it. Do not hand-edit either output file.
+- **Checkbox semantics** — the script emits `- [ ]` for draft replies and re-request items (actions the user performs) and plain bullets for informational sections. This is driven by the script, not by your JSON shape.
 
 ### Step 5: Hand Off Local Edits to apply-review
 
@@ -381,10 +374,12 @@ Collect the finding IDs for all accepted local edits. Then use `AskUserQuestion`
 ```
 Local edits are ready to apply. When you're ready, run:
 
-/apply-review Review-PR-<number>.md I0 I2 S0
+/apply-review Findings-update-pr-<number>.json I0 I2 S0
 
 This will apply each finding as an isolated, tested, committed change.
 ```
+
+Note the `.json` extension — `/apply-review` consumes the authoritative JSON directly. The `.md` file is human-readable but not parsed.
 
 The finding IDs listed must be exactly the accepted local edits — exclude GitHub suggestions (already applied), rejected items, deferred items, and discussion-only comments.
 

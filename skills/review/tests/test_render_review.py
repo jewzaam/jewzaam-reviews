@@ -5,10 +5,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+import jsonschema
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "render-review.py"
 SCHEMAS = REPO_ROOT / "schemas"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+PLUGIN_ROOT = REPO_ROOT.parent.parent
+SHARED_SCHEMA = PLUGIN_ROOT / "schemas" / "findings.schema.json"
+
+
+def _plugin_version() -> str:
+    with (PLUGIN_ROOT / ".claude-plugin" / "plugin.json").open("r", encoding="utf-8") as fh:
+        return json.load(fh)["version"]
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess:
@@ -41,7 +51,7 @@ class TestRenderReviewJson:
         )
         assert result.returncode == 0, result.stderr
 
-        json_path = out_dir / "Review-myapp.json"
+        json_path = out_dir / "Findings-review.json"
         assert json_path.exists(), f"expected {json_path} to be created"
         rendered = _load(json_path)
 
@@ -91,7 +101,7 @@ class TestRenderReviewJson:
             ]
         )
         assert result.returncode == 0, result.stderr
-        assert (out_dir / "Review-myapp-pr-565.json").exists()
+        assert (out_dir / "Findings-review-pr-565.json").exists()
 
 
 class TestRenderReviewMarkdown:
@@ -109,13 +119,13 @@ class TestRenderReviewMarkdown:
             ]
         )
         assert result.returncode == 0, result.stderr
-        body = (tmp_path / "Review-myapp.md").read_text(encoding="utf-8")
+        body = (tmp_path / "Findings-review.md").read_text(encoding="utf-8")
         assert "# Code Review: myapp" in body
         assert "## Findings" in body
         assert "### Critical" in body
         assert "C0" in body
         assert "SQL injection" in body
-        assert "Review-myapp-supplementary.md" in body
+        assert "Findings-review-supplementary.md" in body
 
     def test_supplementary_lists_decomposition_and_needs_review(self, tmp_path):
         result = _run(
@@ -131,10 +141,113 @@ class TestRenderReviewMarkdown:
             ]
         )
         assert result.returncode == 0, result.stderr
-        body = (tmp_path / "Review-myapp-supplementary.md").read_text(encoding="utf-8")
+        body = (tmp_path / "Findings-review-supplementary.md").read_text(encoding="utf-8")
         assert "## Decomposition" in body
         assert "auth subsystem" in body
         assert "## Needs Review" in body
         assert "Maybe we should log here" in body
         assert "## Detailed Analysis" in body
         assert "### Security" in body or "### security" in body.lower()
+
+
+class TestSharedSchemaCompliance:
+    def _render(self, tmp_path, extra_args=None):
+        args = [
+            "--input",
+            str(FIXTURES / "post-validation.sample.json"),
+            "--config",
+            str(SCHEMAS / "render-config.default.json"),
+            "--out-dir",
+            str(tmp_path),
+            "--project-name",
+            "myapp",
+        ]
+        if extra_args:
+            args.extend(extra_args)
+        return _run(args)
+
+    def test_rendered_json_validates_against_shared_schema(self, tmp_path):
+        result = self._render(tmp_path)
+        assert result.returncode == 0, result.stderr
+        rendered = _load(tmp_path / "Findings-review.json")
+
+        with SHARED_SCHEMA.open("r", encoding="utf-8") as fh:
+            schema = json.load(fh)
+        jsonschema.Draft202012Validator(schema).validate(rendered)
+
+    def test_rendered_json_has_handoff_envelope(self, tmp_path):
+        result = self._render(tmp_path)
+        assert result.returncode == 0, result.stderr
+        rendered = _load(tmp_path / "Findings-review.json")
+        assert rendered["schema_version"] == _plugin_version()
+        assert rendered["source"] == "review"
+        assert rendered["issues"] == []
+
+    def test_issues_passthrough(self, tmp_path):
+        issues_path = tmp_path / "issues.json"
+        issues_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "severity": "warning",
+                        "kind": "subagent_failure",
+                        "message": "auth/security agent returned malformed JSON after 3 tries",
+                        "source_component": "security/auth",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        result = self._render(tmp_path, ["--issues", str(issues_path)])
+        assert result.returncode == 0, result.stderr
+        rendered = _load(tmp_path / "Findings-review.json")
+        assert len(rendered["issues"]) == 1
+        assert rendered["issues"][0]["kind"] == "subagent_failure"
+
+    def test_render_fails_on_invalid_input_and_writes_no_files(self, tmp_path):
+        # post-validation data with a finding missing 'content_hash' — renderer
+        # produces a shape that violates the shared schema.
+        bad_input = tmp_path / "bad.json"
+        bad_input.write_text(
+            json.dumps(
+                {
+                    "project": {"name": "myapp"},
+                    "decomposition": [
+                        {"dimension_name": "x", "dimension_slug": "x"}
+                    ],
+                    "findings": [
+                        {
+                            "concern_slug": "security",
+                            "source_dimensions": ["x"],
+                            "title": "missing content_hash",
+                            "impact": 80,
+                            "likelihood": 80,
+                            "effort_to_fix": 40,
+                            "confidence": 90,
+                            "locations": [{"path": "a.py", "line": "1"}],
+                            "issue": "i",
+                            "why_it_matters": "w",
+                            "suggested_fix": "f",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = _run(
+            [
+                "--input",
+                str(bad_input),
+                "--config",
+                str(SCHEMAS / "render-config.default.json"),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--project-name",
+                "myapp",
+            ]
+        )
+        assert result.returncode != 0
+        assert "does not validate" in result.stderr
+        assert not (tmp_path / "out").exists() or not any(
+            (tmp_path / "out").iterdir()
+        )

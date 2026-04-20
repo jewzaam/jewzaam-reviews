@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/jewzaam/claude-skill-review/schemas/validation-output.schema.json",
+  "$id": "https://github.com/jewzaam/jewzaam-reviews/skills/review/schemas/validation-output.schema.json",
   "title": "Validation Output",
   "description": "Verdicts from one validator agent for one batch of findings.",
   "type": "object",

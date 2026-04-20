@@ -53,14 +53,14 @@ class TestSchemaAutoDetectionByDirectory:
         dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
     def test_raw_dir_implies_agent_output(self, tmp_path):
-        target = tmp_path / ".tmp-review-findings" / "raw" / "architecture-auth.json"
+        target = tmp_path / ".tmp-review" / "raw" / "architecture-auth.json"
         self._copy_fixture_as(FIXTURES / "agent-output.valid.json", target)
         result = _run([str(target)])
         assert result.returncode == 0, result.stderr
         assert "agent-output" in result.stdout
 
     def test_validation_input_dir_and_suffix(self, tmp_path):
-        target = tmp_path / ".tmp-review-findings" / "validation" / "batch-1-input.json"
+        target = tmp_path / ".tmp-review" / "validation" / "batch-1-input.json"
         self._copy_fixture_as(FIXTURES / "validation-input.valid.json", target)
         result = _run([str(target)])
         assert result.returncode == 0, result.stderr
@@ -68,7 +68,7 @@ class TestSchemaAutoDetectionByDirectory:
 
     def test_validation_output_dir_and_suffix(self, tmp_path):
         target = (
-            tmp_path / ".tmp-review-findings" / "validation" / "batch-1-output.json"
+            tmp_path / ".tmp-review" / "validation" / "batch-1-output.json"
         )
         self._copy_fixture_as(FIXTURES / "validation-output.valid.json", target)
         result = _run([str(target)])
@@ -77,7 +77,7 @@ class TestSchemaAutoDetectionByDirectory:
 
     def test_validation_dir_with_unknown_suffix_fails(self, tmp_path):
         target = (
-            tmp_path / ".tmp-review-findings" / "validation" / "batch-1-mystery.json"
+            tmp_path / ".tmp-review" / "validation" / "batch-1-mystery.json"
         )
         self._copy_fixture_as(FIXTURES / "validation-input.valid.json", target)
         result = _run([str(target)])

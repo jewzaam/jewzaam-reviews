@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/jewzaam/claude-skill-review/schemas/render-config.schema.json",
+  "$id": "https://github.com/jewzaam/jewzaam-reviews/skills/review/schemas/render-config.schema.json",
   "title": "Render Config",
   "description": "Configuration for severity-bucket thresholds applied at render time.",
   "type": "object",

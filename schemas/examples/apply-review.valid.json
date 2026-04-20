@@ -1,0 +1,19 @@
+{
+  "schema_version": "0.2.0",
+  "source": "apply-review",
+  "project": {"name": "sample"},
+  "applied": [
+    {"finding_id": "C0", "outcome": "applied", "detail": "Fix committed in 3a7f91c"},
+    {"finding_id": "I1", "outcome": "skipped", "detail": "Out of scope per user filter"},
+    {"finding_id": "S0", "outcome": "failed", "detail": "Test suite failed after patch; reverted"}
+  ],
+  "findings": [],
+  "issues": [
+    {
+      "severity": "error",
+      "kind": "subagent_failure",
+      "message": "fix-applier sub-agent exited with error: 'make test' returned non-zero",
+      "source_component": "fix-applier/S0"
+    }
+  ]
+}

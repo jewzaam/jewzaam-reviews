@@ -1,23 +1,37 @@
 ---
 name: apply-review
-description: Apply findings from a Review-*.md file as iterative, committed fixes.
+description: Apply findings from a Findings-*.json file as iterative, committed fixes.
 allowed-tools: Bash, Read, Edit, Write, Glob, Grep, AskUserQuestion, Agent, TaskCreate, TaskUpdate, TaskGet, TaskList
-argument-hint: "[Review-file.md] [C0 I1 S2...]"
+argument-hint: "[Findings-file.json] [C0 I1 S2...]"
 ---
 
 # Apply Review
 
+## Pre-Fetch
+
+### Workspace Bootstrap (auto-executed)
+
+Wipes and recreates `.tmp-apply-review/` at the project root with a `.gitignore` of `*`. The final step writes a pre-render JSON here for `render-apply-report.py`.
+
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-apply-review`
+
+### Shared Handoff Contract (auto-injected)
+
+!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
+
 ## Purpose
 
-Take a `Review-*.md` file produced by the `/review` skill and systematically apply its findings as code changes — one finding at a time, with test validation and user review before each commit.
+Take a `Findings-*.json` file produced by any producer skill in this plugin (`/review`, `/standards`, `/c4-reverse-engineer`, `/update-pr`) and systematically apply its findings as code changes — one finding at a time, with test validation and user review before each commit. Output a `Report-apply-review.json` summarizing what was applied.
+
+The input is the authoritative JSON handoff (validated against `${CLAUDE_PLUGIN_ROOT}/schemas/findings.schema.json`). The companion `.md` files are human-readable views — this skill does not parse them.
 
 The key value is discipline: each finding becomes an isolated, tested, committed change with a targeted commit message. The user controls staging and can reject or modify any change before it lands.
 
-## Finding the Review File
+## Finding the Findings File
 
-1. If an argument is provided, use it as the review file path.
-2. If no argument, search for `Review-*.md` files at the project root (exclude `*-supplementary.md`).
-3. If multiple review files exist, use AskUserQuestion to let the user pick.
+1. If an argument is provided, use it as the findings file path. Accept `.json` only — if given `.md`, look for a sibling `.json` with the same basename and use that; if none exists, stop and tell the user the producer skill must re-run.
+2. If no argument, search for `Findings-*.json` files at the project root.
+3. If multiple findings files exist, use AskUserQuestion to let the user pick.
 4. If none exist, tell the user and stop.
 
 ## Process
@@ -32,15 +46,23 @@ If any check fails, use AskUserQuestion to present the failures and ask:
 
 A clean starting state is strongly preferred. When pre-existing failures exist and the user chooses to proceed, record the exact failure signatures (test names, lint rules, error messages) so they can be filtered out during per-finding validation in Step 3b.
 
-### 1. Parse the Review
+### 1. Parse the Findings
 
-Read the review file and extract all findings from the **Findings** section. Each finding has:
-- **ID**: The prefix code — `C` (critical), `I` (important), `S` (suggestion) — followed by a sequence number (e.g., `C0`, `I3`, `S1`)
-- **Title**: The finding name
-- **File references**: Source file paths and line numbers
-- **Fix description**: What the review recommends changing
+Read the `Findings-*.json` file and iterate `findings[]`. Each finding is a structured object with (at minimum) the shared schema's base fields:
+- `id` — prefix `C` / `I` / `S` / `N` followed by a zero-indexed sequence number per bucket (e.g., `C0`, `I3`, `S1`, `N0`)
+- `severity` — `critical | important | suggestion | needs-review`
+- `title` — short summary
+- `locations[]` — array of `{path, line, role?}` objects
+- `issue`, `why_it_matters`, `suggested_fix` — prose fields
+- `content_hash` — stable identifier; useful for log/commit references
 
-**Scoped finding IDs:** If the user provided specific finding IDs as arguments (e.g., `/apply-review Review-PR-123.md C0 I2 S3`), only process those findings. Skip all others — they are out of scope for this run. This is how the `update-pr` skill delegates accepted local edits: it produces a `Review-PR-*.md` with the full traceability, then hands off only the findings that need code changes.
+Source-specific extras (`concern_slug` for review, `subdomain` for standards, `artifact`/`verdict`/`spec_says`/`code_says`/`evidence` for c4-validation) are present when the producer adds them — use them for context but don't require them.
+
+**Read the top-level `issues[]` array** before beginning. These are meta-issues from the producer skill (sub-agent failures, permission denials, validation rejections). If an issue with `severity: "error"` is present, surface it to the user and confirm they still want to proceed — the review may be incomplete.
+
+**Skip `needs-review` findings.** By convention, `N*` findings are low-confidence and belong to manual triage, not automatic application.
+
+**Scoped finding IDs:** If the user provided specific finding IDs as arguments (e.g., `/apply-review Findings-update-pr-123.json C0 I2 S3`), only process those findings. Skip all others — they are out of scope for this run. This is how the `update-pr` skill delegates accepted local edits: it produces a `Findings-update-pr-<number>.json` with the full traceability, then hands off only the finding IDs that need code changes.
 
 Sort findings by implementation order — dependencies and risk:
 1. Smallest/most isolated changes first (one-line fixes, no test changes)
@@ -122,6 +144,35 @@ EOF
 ### 4. Final Verification
 
 After all findings are applied, re-run all available validation targets from the Makefile (the same set used in Step 0). Report the results. If any check fails and it's not pre-existing, investigate and fix before declaring done.
+
+### 5. Emit Apply Report
+
+After verification, record what was applied by invoking the apply-report renderer:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/apply-review/scripts/render-apply-report.py \
+  --input .tmp-apply-review/pre-render.json \
+  --out-dir <project root> \
+  --project-name <project name from the consumed review>
+```
+
+Before invoking, write `.tmp-apply-review/pre-render.json` with:
+
+```json
+{
+  "project": {"name": "<project-name>"},
+  "applied": [
+    {"finding_id": "C0", "outcome": "applied|skipped|failed", "detail": "<short note>"}
+  ],
+  "issues": [
+    {"severity": "error|warning", "kind": "<from shared schema>", "message": "..."}
+  ]
+}
+```
+
+The script validates against the shared schema (`source: "apply-review"`, `findings: []`, required `applied[]`) and writes `Report-apply-review.json` at `--out-dir`. It does **not** emit markdown — apply-review is a consumer skill producing an action report, not a review document.
+
+Exits non-zero on validation failure; no file is written in that case.
 
 ## Critical Rules
 

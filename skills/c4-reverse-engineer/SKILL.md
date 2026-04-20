@@ -5,7 +5,7 @@ description: >
   specification from a codebase. Produces documentation of WHAT the system does — not how it's
   coded.
 disable-model-invocation: true
-allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/*), Bash(python ${CLAUDE_SKILL_DIR}/scripts/*), Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/*), Read(${CLAUDE_SKILL_DIR}/references/*)
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Read(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/*), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *), Bash(cat ${CLAUDE_PLUGIN_ROOT}/resources/*)
 
 ---
 
@@ -32,7 +32,7 @@ All output goes to `docs/c4/` in the project directory:
 | `l2-c4-container.md` | L2 — Internal runtime containers (processes, threads, services) |
 | `l3-c4-component.md` | L3 — Component decomposition per container |
 | `behavioral-spec.md` | Full behavioral specification |
-| `Review-c4-validation.md` | Quality record documenting what was verified |
+| `Findings-c4-reverse-engineer.md` | Quality record documenting what was verified |
 
 Diagrams use standard Mermaid `flowchart` notation with `classDef` styling to distinguish C4
 element types. Include ASCII fallback for the primary data flow diagram. Use these class
@@ -50,6 +50,18 @@ flowchart TD
 
 Apply classes to nodes: `NodeId["Label<br/><i>description</i>"]:::person`. Use `<br/>` and
 `<i>` tags for multi-line labels with technology descriptions.
+
+## Pre-Fetch
+
+### Workspace Bootstrap (auto-executed)
+
+Wipes and recreates `.tmp-c4-reverse-engineer/` at the project root with a `.gitignore` of `*`. Phase 6 uses this dir for the validation pre-render JSON and any meta-issues.
+
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-c4-reverse-engineer`
+
+### Shared Handoff Contract (auto-injected)
+
+!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
 
 ## Workflow — 7 Phases
 
@@ -97,7 +109,7 @@ In that case, acknowledge what you heard and proceed.
 Read the project directly to establish context and vocabulary before dispatching subagents.
 
 1. Read README, CLAUDE.md, or equivalent project docs
-2. Measure project size to pick the tier. Use `${CLAUDE_SKILL_DIR}/scripts/count_source_lines.py`
+2. Measure project size to pick the tier. Use `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/count_source_lines.py`
    (see Reference Files) — it counts non-test, non-generated, non-vendored lines in the project's primary
    languages. Without the script, estimate by globbing source files and summing `wc -l`
    across them, excluding tests/vendored/generated trees.
@@ -111,7 +123,7 @@ Read the project directly to establish context and vocabulary before dispatching
    File count is a poor proxy — a repo with 200 JSON fixtures is not large, and a repo with
    one 3,000-line controller is not small. Count lines, not files. Polyglot repos: sum lines
    across all primary languages (e.g., Python backend + TypeScript frontend). See
-   `${CLAUDE_SKILL_DIR}/references/subagent-prompts.md` for polyglot partition guidance.
+   `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/subagent-prompts.md` for polyglot partition guidance.
 3. Identify and read entry points — enumerate every CLI arg, HTTP endpoint, event handler
 4. Read vocabulary files: enums, constants, settings/config dataclasses, shared types
 5. Identify integration points: find file(s) with the most imports from other project modules.
@@ -131,7 +143,7 @@ to Phase 3 and verify the claims you already have.
 
 **Large tier:** Dispatch 3 subagents in parallel.
 
-Before composing subagent prompts, read `${CLAUDE_SKILL_DIR}/references/subagent-prompts.md`
+Before composing subagent prompts, read `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/subagent-prompts.md`
 in full. Include all 7 instructions from that file in every subagent prompt.
 
 Partition by concern, not by file:
@@ -153,14 +165,14 @@ major stack (e.g., Python backend, TypeScript frontend, Rust extension). Each su
 receives the 7 prompt instructions, specialized for its stack via the framework calibration
 table.
 
-Each subagent prompt must include all 7 instructions from `${CLAUDE_SKILL_DIR}/references/subagent-prompts.md`.
+Each subagent prompt must include all 7 instructions from `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/subagent-prompts.md`.
 These instructions prevent the 9 known failure modes — omitting them produces specs that look
 right but have hidden errors.
 
 ### Phase 3: Structured Verification (targeted reads + templates)
 
 For each behavioral claim from the subagent reports, verify it against the code using
-structured templates. Read `${CLAUDE_SKILL_DIR}/references/verification-templates.md` for the
+structured templates. Read `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/verification-templates.md` for the
 full template format, trigger-word heuristics, and priority tiers.
 
 **Key concept:** Each template produces a claim AND its evidence simultaneously. Don't extract
@@ -172,10 +184,10 @@ overrides, entry point inventory). Sample medium-risk (interaction bindings, pla
 event suppression, degradation paths). Skip low-risk (enum values, file paths, static labels).
 
 For mechanical work in this phase, use the helper scripts:
-- `${CLAUDE_SKILL_DIR}/scripts/find_platform_conditionals.py` — enumerates every
+- `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/find_platform_conditionals.py` — enumerates every
   `sys.platform`, `platform.system()`, `os.name`, and project-specific platform constant.
   Feeds PLATFORM claims.
-- `${CLAUDE_SKILL_DIR}/scripts/find_external_calls.py` — lists every `subprocess.`,
+- `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/find_external_calls.py` — lists every `subprocess.`,
   `urllib`, `requests`, `socket`, `open(` call. Feeds DEGRADATION claims and the L1
   external systems list.
 
@@ -264,10 +276,22 @@ Run these consistency checks:
 **Fix-before-delivery:** Fix Critical and Important findings in the artifacts (return to Phases
 4–5), then re-run checks. Minor findings are documented but not fixed.
 
-Produce `Review-c4-validation.md` using the format in `${CLAUDE_SKILL_DIR}/references/review-format.md`. The
-review documents the post-fix state as a quality record. It MAY also include an optional
-"Resolved during generation" section listing issues caught by Phase 6 and fixed before
-delivery — this preserves the audit trail without cluttering the main findings list.
+Produce the validation output via `render-c4-validation.py`. Collect findings into `.tmp-c4-reverse-engineer/pre-render.json` using the pre-render shape documented in `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/review-format.md`, then invoke:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/render-c4-validation.py \
+  --input .tmp-c4-reverse-engineer/pre-render.json \
+  --issues .tmp-c4-reverse-engineer/issues.json \
+  --out-dir <project root> \
+  --project-name <project name>
+```
+
+Skill-specific renderer behavior (on top of the shared handoff contract):
+- Assigns IDs per bucket (`C0..`, `I0..`, `S0..` — note: `suggestion` replaces the old `Minor` tier).
+- Computes `content_hash` per finding.
+- Writes `Findings-c4-reverse-engineer.json` and `Findings-c4-reverse-engineer.md` at `--out-dir`.
+
+The validation documents the post-fix state as a quality record. Meta-issues from the run (sub-agent failures, missing artifacts, verification scripts that couldn't run) go in the shared `issues[]` via `--issues`. Supplementary metadata (the Summary table, Confirmed claims list) goes under `supplementary` in the pre-render JSON — it flows into the markdown and travels in the handoff JSON but is not part of the `findings[]` contract.
 
 ## What This Skill Is NOT
 
@@ -287,11 +311,11 @@ Read these during the phases that need them:
 
 | File | When to read | Content |
 |------|-------------|---------|
-| `${CLAUDE_SKILL_DIR}/references/subagent-prompts.md` | Phase 2, before dispatching subagents | 7 prompt instructions + framework calibration table |
-| `${CLAUDE_SKILL_DIR}/references/verification-templates.md` | Phase 3, before verification | 8 templates, trigger-word heuristics, priority tiers |
-| `${CLAUDE_SKILL_DIR}/references/review-format.md` | Phase 6, before writing review | Severity levels, finding format, document layout |
-| `${CLAUDE_SKILL_DIR}/references/failure-modes.md` | When diagnosing a verification failure | 9 failure modes with root causes and detection methods |
-| `${CLAUDE_SKILL_DIR}/references/example-output.md` | Phase 5, for phrasing calibration | Toy project with a mechanical-phrasing §9 Degradation excerpt and a side-by-side bad/good comparison |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/subagent-prompts.md` | Phase 2, before dispatching subagents | 7 prompt instructions + framework calibration table |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/verification-templates.md` | Phase 3, before verification | 8 templates, trigger-word heuristics, priority tiers |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/review-format.md` | Phase 6, before writing pre-render JSON | Severity bucket mapping, pre-render JSON shape consumed by `render-c4-validation.py` |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/failure-modes.md` | When diagnosing a verification failure | 9 failure modes with root causes and detection methods |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/example-output.md` | Phase 5, for phrasing calibration | Toy project with a mechanical-phrasing §9 Degradation excerpt and a side-by-side bad/good comparison |
 
 ## Scripts
 
@@ -300,11 +324,11 @@ results to stdout.
 
 | Script | When to run | What it does |
 |--------|-------------|--------------|
-| `${CLAUDE_SKILL_DIR}/scripts/count_source_lines.py` | Phase 1, step 2 | Counts non-test, non-generated source lines per language and recommends a tier. |
-| `${CLAUDE_SKILL_DIR}/scripts/find_platform_conditionals.py` | Phase 3, PLATFORM claims | Enumerates every `sys.platform`, `platform.system()`, `os.name`, `IS_*` constant, Go build tag, Rust `cfg(target_os)`, and C/C++ platform ifdef. |
-| `${CLAUDE_SKILL_DIR}/scripts/find_external_calls.py` | Phase 3, DEGRADATION claims and L1 external systems | Enumerates subprocess, network, and filesystem calls across Python/Node/Go/Rust/Java/C#. Use `--group` for a category-grouped report. Comment detection is line-based — multi-line comment blocks and docstrings may produce false positives. |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/count_source_lines.py` | Phase 1, step 2 | Counts non-test, non-generated source lines per language and recommends a tier. |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/find_platform_conditionals.py` | Phase 3, PLATFORM claims | Enumerates every `sys.platform`, `platform.system()`, `os.name`, `IS_*` constant, Go build tag, Rust `cfg(target_os)`, and C/C++ platform ifdef. |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/find_external_calls.py` | Phase 3, DEGRADATION claims and L1 external systems | Enumerates subprocess, network, and filesystem calls across Python/Node/Go/Rust/Java/C#. Use `--group` for a category-grouped report. Comment detection is line-based — multi-line comment blocks and docstrings may produce false positives. |
 
-Invoke directly: `${CLAUDE_SKILL_DIR}/scripts/<name>.py [project-root]`. The scripts have
+Invoke directly: `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/<name>.py [project-root]`. The scripts have
 shebang lines and are executable. Defaults to the current working directory. All three
 exclude tests and vendored code by default; pass `--include-tests` on the finder scripts
 if you need the full picture.

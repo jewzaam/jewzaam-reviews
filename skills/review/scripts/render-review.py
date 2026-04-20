@@ -15,8 +15,24 @@ import json
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-SCHEMAS_DIR = REPO_ROOT / "schemas"
+import jsonschema
+
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+PLUGIN_ROOT = SKILL_ROOT.parent.parent
+SCHEMAS_DIR = SKILL_ROOT / "schemas"
+
+# Add plugin root to sys.path so `scripts.envelope` is importable when this
+# script runs as a subprocess.
+sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.envelope import (  # noqa: E402
+    assign_ids_per_bucket,
+    build_envelope,
+    format_validation_error,
+    load_issues_file,
+    validate_envelope,
+)
+
+SOURCE = "review"
 
 BUCKET_PREFIX = {
     "critical": "C",
@@ -45,34 +61,13 @@ def assign_bucket(finding: dict, config: dict) -> str:
     return "suggestion"
 
 
-def sort_key_within_bucket(finding: dict) -> tuple:
-    primary = next(
-        (
-            loc
-            for loc in finding["locations"]
-            if loc.get("role", "primary") == "primary"
-        ),
-        finding["locations"][0],
-    )
-    return (primary["path"], primary["line"], finding["title"])
-
-
 def assign_buckets_and_ids(findings: list[dict], config: dict) -> list[dict]:
-    annotated = []
-    for f in findings:
-        bucket = assign_bucket(f, config)
-        annotated.append({**f, "severity": bucket})
-
-    by_bucket: dict[str, list[dict]] = {b: [] for b in BUCKET_ORDER}
-    for f in annotated:
-        by_bucket[f["severity"]].append(f)
-
-    out: list[dict] = []
-    for bucket in BUCKET_ORDER:
-        for i, f in enumerate(sorted(by_bucket[bucket], key=sort_key_within_bucket)):
-            f["id"] = f"{BUCKET_PREFIX[bucket]}{i}"
-            out.append(f)
-    return out
+    annotated = [{**f, "severity": assign_bucket(f, config)} for f in findings]
+    return assign_ids_per_bucket(
+        annotated,
+        bucket_order=BUCKET_ORDER,
+        prefix_map=BUCKET_PREFIX,
+    )
 
 
 def _format_finding_block(f: dict) -> str:
@@ -96,7 +91,7 @@ def render_main_markdown(rendered: dict, project_name: str, scope_slug: str) -> 
     findings = rendered["findings"]
     by_bucket = {b: [f for f in findings if f["severity"] == b] for b in BUCKET_ORDER}
 
-    base = file_basename(project_name, scope_slug)
+    base = file_basename(scope_slug)
     supp_path = f"{base}-supplementary.md"
 
     parts: list[str] = []
@@ -196,10 +191,16 @@ def render_supplementary_markdown(
     return "\n".join(parts)
 
 
-def file_basename(project_name: str, scope_slug: str) -> str:
+def file_basename(scope_slug: str) -> str:
+    """Filename stem: `Findings-review[-<scope-slug>]`.
+
+    The skill name (not the user's project name) identifies the producer.
+    Project identity still lives in the JSON envelope's `project.name`.
+    `Findings-` signals the document type — things the reviewer found.
+    """
     if scope_slug:
-        return f"Review-{project_name}-{scope_slug}"
-    return f"Review-{project_name}"
+        return f"Findings-review-{scope_slug}"
+    return "Findings-review"
 
 
 def main(argv: list[str]) -> int:
@@ -225,6 +226,15 @@ def main(argv: list[str]) -> int:
         default="",
         help="optional slug appended to filenames (PR number, theme, etc.)",
     )
+    parser.add_argument(
+        "--issues",
+        type=Path,
+        default=None,
+        help=(
+            "optional path to a JSON array of issue objects (meta-issues "
+            "from the run, e.g. sub-agent failures). Empty array if omitted."
+        ),
+    )
     args = parser.parse_args(argv)
 
     with args.input.open("r", encoding="utf-8") as fh:
@@ -232,16 +242,29 @@ def main(argv: list[str]) -> int:
     with args.config.open("r", encoding="utf-8") as fh:
         config = json.load(fh)
 
-    args.out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        issues = load_issues_file(args.issues)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     rendered_findings = assign_buckets_and_ids(data.get("findings", []), config)
-    rendered = {
-        "project": data.get("project", {"name": args.project_name}),
-        "decomposition": data.get("decomposition", []),
-        "findings": rendered_findings,
-    }
+    rendered = build_envelope(
+        source=SOURCE,
+        project=data.get("project", {"name": args.project_name}),
+        decomposition=data.get("decomposition", []),
+        findings=rendered_findings,
+        issues=issues,
+    )
 
-    base = file_basename(args.project_name, args.scope_slug)
+    try:
+        validate_envelope(rendered)
+    except jsonschema.ValidationError as exc:
+        print(format_validation_error(exc, "review"), file=sys.stderr)
+        return 1
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    base = file_basename(args.scope_slug)
     json_path = args.out_dir / f"{base}.json"
     md_main_path = args.out_dir / f"{base}.md"
     md_supp_path = args.out_dir / f"{base}-supplementary.md"

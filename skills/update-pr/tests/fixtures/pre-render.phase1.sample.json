@@ -1,0 +1,46 @@
+{
+  "project": {"name": "demo-repo"},
+  "repo": "demo-repo",
+  "findings": [
+    {
+      "id": "I0",
+      "title": "Extract duplicated error-handling into helper",
+      "severity": "important",
+      "locations": [{"path": "src/handlers.py", "line": "42", "role": "primary"}],
+      "issue": "Two handlers repeat the same try/except block verbatim.",
+      "why_it_matters": "Future edits risk diverging the two copies.",
+      "suggested_fix": "Introduce `handle_api_error` and call it from both sites.",
+      "pr_comment": {"author": "reviewer1", "id": 987654321}
+    },
+    {
+      "id": "S0",
+      "title": "Rename variable for clarity",
+      "severity": "suggestion",
+      "locations": [{"path": "src/handlers.py", "line": "58", "role": "primary"}],
+      "issue": "`x` in line 58 is opaque.",
+      "why_it_matters": "Readers lose context.",
+      "suggested_fix": "Rename `x` to `request_timeout`.",
+      "pr_comment": {"author": "reviewer2", "id": 987654322}
+    }
+  ],
+  "supplementary": {
+    "pr_title": "Add retry logic to API client",
+    "counts": {"total": 5, "resolved": 3, "unresolved": 2},
+    "traceability": {
+      "reviewer1": [
+        {
+          "summary": "Too much duplication in handlers",
+          "location": "src/handlers.py:42",
+          "finding": "I0"
+        }
+      ],
+      "reviewer2": [
+        {
+          "summary": "What does `x` mean?",
+          "location": "src/handlers.py:58",
+          "finding": "S0"
+        }
+      ]
+    }
+  }
+}

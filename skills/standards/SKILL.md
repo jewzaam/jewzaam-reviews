@@ -1,8 +1,8 @@
 ---
 name: standards
-description: Audit a repository for conformance with the user's personal coding standards at ~/source/standards/. Spawns one agent per standards subdomain, reports applicability and gaps as a Review-<project>-standards.md file compatible with /apply-review. Use when the user asks to check, audit, or validate a codebase against their standards library.
+description: Audit a repository for conformance with the user's personal coding standards at ~/source/standards/. Spawns one agent per standards subdomain, reports applicability and gaps as a Findings-standards.json handoff consumable by /apply-review. Use when the user asks to check, audit, or validate a codebase against their standards library.
 disable-model-invocation: true
-allowed-tools: Bash(git remote -v),Bash(bash ~/.claude/skills/standards/scripts/applicability.sh)
+allowed-tools: Bash(git remote -v),Bash(bash ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/applicability.sh),Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/render-standards.py *),Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *),Bash(cat ${CLAUDE_PLUGIN_ROOT}/resources/*)
 ---
 
 # Standards Skill
@@ -17,9 +17,11 @@ Audit a repository against the user's personal standards library at `~/source/st
 - **No program execution.** Never run the target project, install dependencies, or invoke language runtimes (`python`, `node`, `go run`, etc.).
 - **No package management.** Never run `pip`, `npm`, `cargo`, etc.
 - **User-owned repos only.** If the pre-fetch emits `NOT_APPLICABLE`, print the reason and stop — do not write any review files.
-- **Output is two files** at the project root, always with the `-standards` slug:
-  - `Review-<project-name>-standards.md` — actionable findings (Critical, Important, Suggestions all in this file)
-  - `Review-<project-name>-standards-supplementary.md` — per-subdomain detail, strengths, full list of non-applicable standards with reasoning
+- **Output is three files** at the project root, always with the `-standards` slug:
+  - `Findings-standards.json` — authoritative structured findings, validated against `${CLAUDE_PLUGIN_ROOT}/schemas/findings.schema.json` with `source: "standards"`. Consumed by `/apply-review`.
+  - `Findings-standards.md` — human-readable actionable findings. **Rendered from the JSON — never hand-authored.**
+  - `Findings-standards-supplementary.md` — per-subdomain detail, strengths, non-applicable standards. **Rendered from the JSON — never hand-authored.**
+- **All three files are produced by `render-standards.py`.** The main agent writes an intermediate pre-render JSON; the script validates, then emits all three outputs atomically. If validation fails, no files are written — investigate and fix the pre-render JSON.
 - **If review files already exist, overwrite them.**
 
 ## Pre-Fetch
@@ -32,7 +34,17 @@ Audit a repository against the user's personal standards library at `~/source/st
 
 Runs `scripts/applicability.sh`. Validates origin owner (`jewzaam` / `nmalik`) and `~/source/standards/CLAUDE.md` presence. On success emits one `SUBDOMAIN: <name>` line followed by `FILE: <absolute path>` lines for each standards file. On failure emits `NOT_APPLICABLE: <reason>`.
 
-!`bash ~/.claude/skills/standards/scripts/applicability.sh`
+!`bash ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/applicability.sh`
+
+### Workspace Bootstrap (auto-executed)
+
+Wipes and recreates `.tmp-standards/` at the project root with a `.gitignore` of `*`. Each run starts from a clean slate.
+
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-standards`
+
+### Shared Handoff Contract (auto-injected)
+
+!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
 
 ## Process
 
@@ -61,99 +73,81 @@ Each agent produces, for every standards file in its subdomain, one of:
 - `NOT_APPLICABLE` — with a one-line reason (e.g., "project is Go, not Python")
 - `APPLICABLE` — with a structured list of gaps, each tagged with severity, confidence, `file:line`, description, why it matters, suggested fix
 
-### 4. Consolidate Review
+### 4. Consolidate Findings into Pre-Render JSON
 
-After all subdomain agents complete, synthesize findings into two documents at the project root.
+After all subdomain agents complete, synthesize findings into a single pre-render JSON file at `.tmp-standards/pre-render.json`. The workspace bootstrap pre-fetch already created the dir with its `.gitignore`.
 
 **Deduplication rules:**
 - When two agents flag the same `file:line + standard`, keep the finding from the subdomain whose standard is the better fit. Preserve the most specific reference and the most actionable fix.
 - When agents disagree on severity, take the higher severity.
 
-**Finding numbering:** Critical → `C0, C1, …`; Important → `I0, I1, …`; Suggestions → `S0, S1, …`. The prefixes must be unique across the document so `/apply-review` can target each finding.
+**Pre-render JSON shape:**
 
-#### Main document: `Review-<project-name>-standards.md`
-
-```markdown
-# Standards Review: <project-name>
-
-## TL;DR
-<3-5 sentence executive summary: number of subdomains audited, applicability breakdown, top gaps>
-
-## Applicability Matrix
-
-| Subdomain | Standard | Applies | Gap Count |
-|-----------|----------|---------|-----------|
-| Common | naming.md | ✅ | 2 |
-| Common | versioning.md | ❌ | — |
-| ... | ... | ... | ... |
-
-## Findings
-
-### Critical
-<Issues that must be fixed — bugs, security issues, data loss risks. Number C0, C1, ...
- If none: "No critical issues identified.">
-
-### Important
-<Issues that should be fixed — error handling gaps, design problems, missing tests. Number I0, I1, ...
- If none: "No important issues identified.">
-
-### Suggestions
-<Standards-style gaps: naming, formatting, minor structure. Number S0, S1, ...
- If none: "No suggestions.">
-
-## Recommendations
-<Prioritized list of actionable next steps. End with: "Run `/apply-review Review-<project-name>-standards.md` to iteratively fix findings.">
+```json
+{
+  "project": {"name": "<project-name>"},
+  "findings": [
+    {
+      "subdomain": "<subdomain>",
+      "severity": "critical|important|suggestion",
+      "title": "<short title, ≤120 chars>",
+      "locations": [{"path": "<file>", "line": "<N>"}],
+      "issue": "<what is wrong>",
+      "why_it_matters": "<grounded in the standard>",
+      "suggested_fix": "<recommended change>"
+    }
+  ],
+  "supplementary": {
+    "tldr": "<executive summary>",
+    "applicability": [
+      {"subdomain": "...", "standard": "...", "applies": true, "gap_count": 2}
+    ],
+    "not_applicable": [
+      {"standard": "...", "reason": "..."}
+    ],
+    "strengths": ["<standard the project follows well>"],
+    "subdomain_notes": {"<subdomain>": "<notes>"}
+  }
+}
 ```
 
-#### Supplementary document: `Review-<project-name>-standards-supplementary.md`
+Do **not** assign `id` or `content_hash` — the render script computes those. Do **not** compose the markdown — the script renders it.
 
-```markdown
-# Standards Review (Supplementary): <project-name>
+### 5. Validate Review (pre-render)
 
-## Strengths
-<Standards the project follows well — cite the standard and where the project demonstrates it>
-
-## Per-Subdomain Notes
-
-### Common
-<Consolidated notes from the Common agent>
-
-### Python
-<Consolidated notes from the Python agent>
-
-<... one section per subdomain that ran ...>
-
-## Non-Applicable Standards
-
-| Standard | Reason |
-|----------|--------|
-| python/tkinter/windows.md | Project has no GUI |
-| ... | ... |
-```
-
-### 5. Validate Review
-
-For each severity tier (`Critical`, `Important`, `Suggestions`) that has **at least one finding**, spawn one validator (`model: "sonnet"`, `subagent_type: "feature-dev:code-reviewer"`) in parallel. **Skip validation entirely for any tier with zero findings** and state so in the validation summary.
+For each severity tier (`Critical`, `Important`, `Suggestions`) that has **at least one finding**, spawn one validator (`model: "sonnet"`, `subagent_type: "feature-dev:code-reviewer"`) in parallel. **Skip validation entirely for any tier with zero findings** and note it in `supplementary.subdomain_notes` or as an entry in the shared `issues[]` array if relevant.
 
 Each validator:
-- Reads the main review document and extracts every finding in its assigned tier
+- Receives the subset of findings in its assigned tier from the pre-render JSON
 - For every finding, reads the referenced source file at the referenced line
-- Challenges the finding: is the issue real, is the severity justified, is the `file:line` reference accurate, is the cited standard actually violated
-- Returns a list of findings that survived, plus any that should be removed or downgraded with reasoning
+- Challenges: is the issue real, is the severity justified, is `file:line` accurate, is the cited standard actually violated
+- Returns findings that survived, plus those to remove or downgrade with reasoning
 
-After validators complete, update the main review document:
-- Remove failed findings (renumber remaining to stay contiguous)
-- Adjust severity for downgraded findings (re-prefix and renumber)
-- Append:
+After validators complete:
+- Remove failed findings from the pre-render JSON
+- Adjust severity for downgraded findings (the script will assign fresh IDs)
+- Collect any operational problems (sub-agent errors, permission denials, missing standards files) into a separate `issues.json` file with entries matching the shared schema's `issue` shape
 
-```markdown
-## Review Validation
-<For each tier: findings validated, removed, and downgraded with brief reasoning. For skipped tiers: "Suggestions tier skipped — no findings to validate.">
+### 6. Render Outputs
+
+Invoke the render script:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/render-standards.py \
+  --input .tmp-standards/pre-render.json \
+  --issues .tmp-standards/issues.json \
+  --out-dir <project root> \
+  --project-name <project name>
 ```
 
-### 6. Present Summary
+Skill-specific renderer behavior (on top of the shared handoff contract):
+- Assigns IDs per bucket: `C0..`, `I0..`, `S0..` (sorted deterministically by subdomain + location + title).
+- Computes `content_hash` per finding.
+- Writes three files: `Findings-standards.json`, `.md`, and `-supplementary.md` at `--out-dir`.
 
-Print the TL;DR, the applicability matrix row counts (`N/M standards applicable`), and the count of Critical + Important findings. Tell the user: "Run `/apply-review Review-<project-name>-standards.md` to fix findings iteratively."
+### 7. Present Summary
+
+Print the `supplementary.tldr`, the applicability matrix row counts (`N/M standards applicable`), and the count of Critical + Important findings. Tell the user: "Run `/apply-review Findings-standards.json` to fix findings iteratively." — note the `.json` extension; apply-review consumes the JSON directly.
 
 ## Agent Prompt Template
 
@@ -236,6 +230,6 @@ GAP:
 - **All gaps need file:line references** — no vague complaints
 - **Severity must be justified** — explain why something is critical vs. suggestion
 - **Acknowledge strengths** — a good audit recognizes what the project already does right
-- **Only write `Review-<project-name>-standards.md` and its supplementary file** — never create or modify any other file
+- **Only write `.tmp-standards/` intermediate files and let `render-standards.py` produce the final outputs** (shared handoff contract applies)
 - **Skip empty validation tiers** — do not spawn a validator for a severity with zero findings
 - **Audit is observation, not action** — `/apply-review` is the follow-up that applies fixes

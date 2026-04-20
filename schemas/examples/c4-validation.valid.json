@@ -1,0 +1,26 @@
+{
+  "schema_version": "0.2.0",
+  "source": "c4-validation",
+  "project": {"name": "sample"},
+  "findings": [
+    {
+      "id": "C0",
+      "title": "Container diagram shows PostgreSQL but code uses MongoDB",
+      "severity": "critical",
+      "content_hash": "fedcba9876543210",
+      "artifact": "l2-c4-container.md",
+      "verdict": "DISCREPANCY",
+      "spec_says": "Application → PostgreSQL (primary datastore)",
+      "code_says": "src/db/client.js connects to MongoDB via mongoose",
+      "evidence": "src/db/client.js:12 imports 'mongoose'; no postgres driver in package.json",
+      "locations": [
+        {"path": "docs/c4/l2-c4-container.md", "line": "34", "role": "requirement"},
+        {"path": "src/db/client.js", "line": "12", "role": "primary"}
+      ],
+      "issue": "C4 container diagram claims PostgreSQL but the code uses MongoDB.",
+      "why_it_matters": "Architecture docs misrepresent the system, misleading readers.",
+      "suggested_fix": "Update l2-c4-container.md to reflect MongoDB, or migrate to PostgreSQL."
+    }
+  ],
+  "issues": []
+}
