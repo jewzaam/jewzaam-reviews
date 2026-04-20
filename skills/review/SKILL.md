@@ -35,7 +35,6 @@ allowed-tools:
   - Bash(bash ${CLAUDE_PLUGIN_ROOT}/**)
   - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh:*)
   - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh:*)
-  - Bash(echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|")
 ---
 
 # Review Skill
@@ -60,7 +59,7 @@ Perform a multi-agent review of a codebase by spinning up parallel review agents
 
 Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
 
-!`echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|"`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh`
 
 ### Project Root (auto-detected)
 

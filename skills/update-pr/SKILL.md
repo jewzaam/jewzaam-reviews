@@ -1,6 +1,12 @@
 ---
 name: update-pr
 description: Incorporate feedback into a pull request. Fetches PR review comments from GitHub, accepts additional feedback from any text source (review transcripts, emails, Slack threads), generates a traceability document mapping comments to findings for upfront confirmation, walks through each comment one at a time with before/after context, and updates the document with resolutions and draft replies. This skill is invoked explicitly by the user via /update-pr -- do not trigger it automatically.
+allowed-tools:
+  - Bash(bash */scripts/bootstrap-tmp.sh *)
+  - Bash(bash */scripts/print-handoff-contract.sh)
+  - Bash(bash */scripts/print-plugin-home.sh)
+  - Bash(python */scripts/render-update-pr.py *)
+  - Bash(python3 */scripts/render-update-pr.py *)
 ---
 
 # Update PR with Review Feedback
@@ -15,7 +21,7 @@ This skill performs NO write operations on GitHub. No comments, no pushes, no PR
 
 Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
 
-!`echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|"`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh`
 
 ### Project Root (auto-detected)
 

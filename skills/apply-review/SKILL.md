@@ -13,7 +13,7 @@ argument-hint: "[Findings-file.json] [C0 I1 S2...]"
 
 Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
 
-!`echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|"`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh`
 
 ### Project Root (auto-detected)
 
