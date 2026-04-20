@@ -23,11 +23,11 @@ A Claude Code plugin bundling a connected pipeline of review skills. Producer sk
 
 ```mermaid
 graph LR
-    review["review"] -->|"Findings-review.json"| apply["apply-review"]
-    standards["standards"] -->|"Findings-standards.json"| apply
-    update_pr["update-pr"] -->|"Findings-update-pr-*.json"| apply
-    c4["c4-reverse-engineer"] -->|"Findings-c4-reverse-engineer.json"| apply
-    apply -->|"Report-apply-review.json"| done((done))
+    review[review] -->|Findings-review.json| apply[apply-review]
+    standards[standards] -->|Findings-standards.json| apply
+    updatepr[update-pr] -->|Findings-update-pr-N.json| apply
+    c4[c4-reverse-engineer] -->|Findings-c4-reverse-engineer.json| apply
+    apply -->|Report-apply-review.json| done((done))
 ```
 
 ## Usage
