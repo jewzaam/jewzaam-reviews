@@ -52,6 +52,10 @@ If validation fails, surface the error to the user and **stop** — do not fall 
 
 On success, proceed to Step 0.
 
+## Constraints
+
+- **Script paths use `~`:** When invoking any plugin script via Bash, replace the absolute home directory prefix with `~`. If a code block below shows `python /home/user/.claude/plugins/cache/.../script.py`, run it as `python ~/.claude/plugins/cache/.../script.py`. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
+
 ## Process
 
 ### 0. Establish a Clean Baseline

@@ -22,6 +22,8 @@ allowed-tools:
 
 Produce C4 architecture diagrams and a behavioral specification from a codebase. No code changes.
 
+**Script paths use `~`:** When invoking any plugin script via Bash, replace the absolute home directory prefix with `~`. If a code block below shows `python /home/user/.claude/plugins/cache/.../script.py`, run it as `python ~/.claude/plugins/cache/.../script.py`. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
+
 **Core principle:** Subagents tell you WHAT to look at. Direct reads tell you what's TRUE.
 
 Subagent exploration produces plausible-looking specs with subtle errors — wrong refresh rates,
