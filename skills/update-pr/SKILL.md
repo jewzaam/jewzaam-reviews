@@ -9,9 +9,15 @@ This skill performs NO write operations on GitHub. No comments, no pushes, no PR
 
 ## Pre-Fetch
 
+### Project Root (auto-detected)
+
+Absolute path of the project root. The main agent MUST substitute this value for any `./.tmp-update-pr/...` path it passes to a dispatched sub-agent, so the sub-agent has an unambiguous absolute Write target and cannot drift to `/tmp/` or any other directory.
+
+!`pwd`
+
 ### Workspace Bootstrap (auto-executed)
 
-Wipes and recreates `.tmp-update-pr/` at the project root with a `.gitignore` of `*`. Holds the pre-render JSON and any meta-issues collected during the run.
+Wipes and recreates `./.tmp-update-pr/` at the project root with a `.gitignore` of `*`. Holds the pre-render JSON and any meta-issues collected during the run.
 
 !`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-update-pr`
 
@@ -136,7 +142,7 @@ Report the filtering result before starting Phase 2: "N comments fetched, M alre
 
 ### Generate Review Traceability Document
 
-After filtering, build a pre-render JSON at `.tmp-update-pr/pre-render.json`. The workspace bootstrap pre-fetch already created the dir with its `.gitignore`. This is the structured input that `render-update-pr.py` turns into the authoritative JSON + rendered markdown.
+After filtering, build a pre-render JSON at `./.tmp-update-pr/pre-render.json`. The workspace bootstrap pre-fetch already created the dir with its `.gitignore`. This is the structured input that `render-update-pr.py` turns into the authoritative JSON + rendered markdown.
 
 **Constraint: no new findings.** Findings consolidate what reviewers raised — nothing more. If a comment doesn't map to a broader finding, it stands alone. The skill's role is to organize and present reviewer feedback, not to perform independent code review.
 
@@ -177,7 +183,7 @@ Then invoke:
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/update-pr/scripts/render-update-pr.py \
-  --input .tmp-update-pr/pre-render.json \
+  --input ./.tmp-update-pr/pre-render.json \
   --out-dir <repo root> \
   --pr-number <number>
 ```
@@ -336,7 +342,7 @@ Flag any comment that lacks a resolution path. Every reviewer comment (except pu
 
 ### Step 4: Update Traceability and Generate Summary
 
-Extend the `.tmp-update-pr/pre-render.json` from Phase 1 by adding `supplementary.resolutions` and resolution columns in the traceability rows. Then re-run the render script (same invocation as Phase 1) to regenerate `Findings-update-pr-<number>.json` and `.md` with resolutions included.
+Extend the `./.tmp-update-pr/pre-render.json` from Phase 1 by adding `supplementary.resolutions` and resolution columns in the traceability rows. Then re-run the render script (same invocation as Phase 1) to regenerate `Findings-update-pr-<number>.json` and `.md` with resolutions included.
 
 **Resolutions shape in `supplementary.resolutions`:**
 

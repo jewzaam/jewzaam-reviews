@@ -28,14 +28,76 @@ def _run(args: list[str] | None = None) -> subprocess.CompletedProcess:
 
 
 class TestHappyPath:
-    def test_current_repo_state_passes(self):
-        """Running against the repo as-is should pass — the two version
-        sources are kept in sync and semver is valid."""
+    def test_current_repo_state_exits_cleanly(self):
+        """Running against the repo as-is must exit 0 (PASS) or 1 (clean FAIL)
+        and emit a structured summary line. The exact outcome is state-dependent
+        — the working-tree gate FAILs when schemas/ or skills/ have uncommitted
+        changes without a version bump, so this test cannot assume clean trees.
+        It only guards against the script crashing or emitting no summary."""
         result = _run()
-        assert result.returncode == 0, (
-            f"unexpected failure:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+        assert result.returncode in (0, 1), (
+            f"unexpected crash:\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
-        assert "version-check: PASS" in result.stdout
+        if result.returncode == 0:
+            assert "version-check: PASS" in result.stdout
+        else:
+            assert "version-check: FAIL" in result.stderr
+
+
+class TestWorkingTreeGate:
+    """Uncommitted working-tree changes in source_dirs must be treated as
+    'source changed' for the bump check (preflight-before-commit use case)."""
+
+    def test_uncommitted_changes_without_bump_exits_nonzero(
+        self, monkeypatch, tmp_path
+    ):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("vcheck", SCRIPT)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text(
+            json.dumps({"version": "0.2.0"}), encoding="utf-8"
+        )
+        (plugin_dir / "marketplace.json").write_text(
+            json.dumps(
+                {"plugins": [{"name": "jewzaam-reviews", "version": "0.2.0"}]}
+            ),
+            encoding="utf-8",
+        )
+        examples = tmp_path / "schemas" / "examples"
+        examples.mkdir(parents=True)
+        (examples / "aligned.valid.json").write_text(
+            json.dumps({"schema_version": "0.2.0"}), encoding="utf-8"
+        )
+
+        monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "PLUGIN_JSON", plugin_dir / "plugin.json")
+        monkeypatch.setattr(
+            mod, "MARKETPLACE_JSON", plugin_dir / "marketplace.json"
+        )
+        monkeypatch.setattr(mod, "SCHEMA_EXAMPLES_DIR", examples)
+
+        # HEAD == mainline (merge-base returns HEAD), so committed diff is
+        # empty — only the working-tree gate can fire.
+        monkeypatch.setattr(mod, "find_mainline", lambda: "origin/main")
+        monkeypatch.setattr(
+            mod, "_git", lambda *a, **kw: "deadbeef" if a and a[0] == "merge-base" else ""
+        )
+        monkeypatch.setattr(
+            mod, "source_changed", lambda base, head, source_dirs: False
+        )
+        monkeypatch.setattr(
+            mod, "working_tree_changed", lambda source_dirs: True
+        )
+        monkeypatch.setattr(mod, "version_at_revision", lambda rev: "0.2.0")
+
+        exit_code = mod.main([])
+        assert exit_code == 1
 
 
 class TestVersionMismatch:

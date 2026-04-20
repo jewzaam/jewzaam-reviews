@@ -2,7 +2,7 @@
 name: standards
 description: Audit a repository for conformance with the user's personal coding standards at ~/source/standards/. Spawns one agent per standards subdomain, reports applicability and gaps as a Findings-standards.json handoff consumable by /apply-review. Use when the user asks to check, audit, or validate a codebase against their standards library.
 disable-model-invocation: true
-allowed-tools: Bash(git remote -v),Bash(bash ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/applicability.sh),Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/render-standards.py *),Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *),Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh)
+allowed-tools: Bash(git remote -v),Bash(pwd),Bash(bash ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/applicability.sh),Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/render-standards.py *),Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *),Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh)
 ---
 
 # Standards Skill
@@ -26,6 +26,12 @@ Audit a repository against the user's personal standards library at `~/source/st
 
 ## Pre-Fetch
 
+### Project Root (auto-detected)
+
+Absolute path of the project root. The main agent MUST substitute this value for any `./.tmp-standards/...` path it passes to a dispatched sub-agent, so the sub-agent has an unambiguous absolute Write target and cannot drift to `/tmp/` or any other directory.
+
+!`pwd`
+
 ### Remotes (auto-executed)
 
 !`git remote -v || true`
@@ -38,7 +44,7 @@ Runs `scripts/applicability.sh`. Validates origin owner (`jewzaam` / `nmalik`) a
 
 ### Workspace Bootstrap (auto-executed)
 
-Wipes and recreates `.tmp-standards/` at the project root with a `.gitignore` of `*`. Each run starts from a clean slate.
+Wipes and recreates `./.tmp-standards/` at the project root with a `.gitignore` of `*`. Each run starts from a clean slate.
 
 !`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-standards`
 
@@ -76,7 +82,7 @@ Each agent produces, for every standards file in its subdomain, one of:
 
 ### 4. Consolidate Findings into Pre-Render JSON
 
-After all subdomain agents complete, synthesize findings into a single pre-render JSON file at `.tmp-standards/pre-render.json`. The workspace bootstrap pre-fetch already created the dir with its `.gitignore`.
+After all subdomain agents complete, synthesize findings into a single pre-render JSON file at `./.tmp-standards/pre-render.json`. The workspace bootstrap pre-fetch already created the dir with its `.gitignore`.
 
 **Deduplication rules:**
 - When two agents flag the same `file:line + standard`, keep the finding from the subdomain whose standard is the better fit. Preserve the most specific reference and the most actionable fix.
@@ -135,8 +141,8 @@ Invoke the render script:
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/render-standards.py \
-  --input .tmp-standards/pre-render.json \
-  --issues .tmp-standards/issues.json \
+  --input ./.tmp-standards/pre-render.json \
+  --issues ./.tmp-standards/issues.json \
   --out-dir <project root> \
   --project-name <project name>
 ```
@@ -231,6 +237,6 @@ GAP:
 - **All gaps need file:line references** — no vague complaints
 - **Severity must be justified** — explain why something is critical vs. suggestion
 - **Acknowledge strengths** — a good audit recognizes what the project already does right
-- **Only write `.tmp-standards/` intermediate files and let `render-standards.py` produce the final outputs** (shared handoff contract applies)
+- **Only write `./.tmp-standards/` intermediate files and let `render-standards.py` produce the final outputs** (shared handoff contract applies)
 - **Skip empty validation tiers** — do not spawn a validator for a severity with zero findings
 - **Audit is observation, not action** — `/apply-review` is the follow-up that applies fixes

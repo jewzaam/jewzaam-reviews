@@ -81,7 +81,7 @@ deterministically.
 
 Problems the Phase 6 run itself hit — sub-agent failures, missing artifacts,
 verification scripts that couldn't execute — go in a separate
-`.tmp-c4-reverse-engineer/issues.json` file (JSON array of `issue` objects per the
+`./.tmp-c4-reverse-engineer/issues.json` file (JSON array of `issue` objects per the
 shared schema). Pass it via `--issues` to `render-c4-reverse-engineer.py`.
 
 ## Rendered markdown layout

@@ -5,7 +5,7 @@ description: >
   specification from a codebase. Produces documentation of WHAT the system does — not how it's
   coded.
 disable-model-invocation: true
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Read(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/*), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh)
+allowed-tools: Bash(pwd), Bash(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Read(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/*), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh)
 
 ---
 
@@ -53,9 +53,15 @@ Apply classes to nodes: `NodeId["Label<br/><i>description</i>"]:::person`. Use `
 
 ## Pre-Fetch
 
+### Project Root (auto-detected)
+
+Absolute path of the project root. The main agent MUST substitute this value for any `./.tmp-c4-reverse-engineer/...` or `docs/c4/...` path it passes to a dispatched sub-agent, so the sub-agent has an unambiguous absolute Write target and cannot drift to `/tmp/` or any other directory.
+
+!`pwd`
+
 ### Workspace Bootstrap (auto-executed)
 
-Wipes and recreates `.tmp-c4-reverse-engineer/` at the project root with a `.gitignore` of `*`. Phase 6 uses this dir for the validation pre-render JSON and any meta-issues.
+Wipes and recreates `./.tmp-c4-reverse-engineer/` at the project root with a `.gitignore` of `*`. Phase 6 uses this dir for the validation pre-render JSON and any meta-issues.
 
 !`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-c4-reverse-engineer`
 
@@ -293,12 +299,12 @@ Run these consistency checks:
 **Fix-before-delivery:** Fix Critical and Important findings in the artifacts (return to Phases
 4–5), then re-run checks. Minor findings are documented but not fixed.
 
-Produce the validation output via `render-c4-reverse-engineer.py`. Collect findings into `.tmp-c4-reverse-engineer/pre-render.json` using the pre-render shape documented in `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/review-format.md`, then invoke:
+Produce the validation output via `render-c4-reverse-engineer.py`. Collect findings into `./.tmp-c4-reverse-engineer/pre-render.json` using the pre-render shape documented in `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/review-format.md`, then invoke:
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/render-c4-reverse-engineer.py \
-  --input .tmp-c4-reverse-engineer/pre-render.json \
-  --issues .tmp-c4-reverse-engineer/issues.json \
+  --input ./.tmp-c4-reverse-engineer/pre-render.json \
+  --issues ./.tmp-c4-reverse-engineer/issues.json \
   --out-dir <project root> \
   --project-name <project name>
 ```
