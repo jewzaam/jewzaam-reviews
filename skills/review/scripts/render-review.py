@@ -46,6 +46,11 @@ BUCKET_ORDER = ["critical", "important", "suggestion", "needs-review"]
 
 
 def assign_bucket(finding: dict, config: dict) -> str:
+    """Map a finding to a severity bucket based on confidence and priority scores.
+
+    Returns 'needs-review' when confidence is below the floor, otherwise
+    'critical', 'important', or 'suggestion' based on priority thresholds.
+    """
     confidence = finding["confidence"]
     if confidence < config["confidence_floor"]:
         return "needs-review"
@@ -85,6 +90,7 @@ def _format_finding_block(f: dict) -> str:
 
 
 def render_main_markdown(rendered: dict, project_name: str, scope_slug: str) -> str:
+    """Render the main findings markdown: TL;DR, critical/important inline, suggestions/needs-review by reference."""
     findings = rendered["findings"]
     by_bucket = {b: [f for f in findings if f["severity"] == b] for b in BUCKET_ORDER}
 
@@ -140,6 +146,7 @@ def render_main_markdown(rendered: dict, project_name: str, scope_slug: str) -> 
 def render_supplementary_markdown(
     rendered: dict, project_name: str, scope_slug: str
 ) -> str:
+    """Render the supplementary markdown: decomposition, detailed analysis by concern, suggestions, and needs-review."""
     findings = rendered["findings"]
     by_bucket = {b: [f for f in findings if f["severity"] == b] for b in BUCKET_ORDER}
 
@@ -189,12 +196,7 @@ def render_supplementary_markdown(
 
 
 def file_basename(scope_slug: str) -> str:
-    """Filename stem: `Findings-review[-<scope-slug>]`.
-
-    The skill name (not the user's project name) identifies the producer.
-    Project identity still lives in the JSON envelope's `project.name`.
-    `Findings-` signals the document type — things the reviewer found.
-    """
+    """Return the filename stem ``Findings-review[-<scope-slug>]``."""
     if scope_slug:
         return f"Findings-review-{scope_slug}"
     return "Findings-review"

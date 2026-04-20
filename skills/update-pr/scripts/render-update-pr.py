@@ -61,6 +61,12 @@ def _content_hash_for_finding(finding: dict) -> str:
 
 
 def _build_pr_envelope(pre_render: dict, pr_number: int, issues: list[dict]) -> dict:
+    """Build the update-pr envelope with review-shaped findings and optional pr_comment links.
+
+    Normalizes findings with default severity ('important') and scores
+    (impact/likelihood/effort_to_fix=50, confidence=80) when fields are
+    absent from the pre-render input.
+    """
     project = pre_render.get("project") or {"name": pre_render.get("repo", "pr")}
     project.setdefault("scope_slug", f"pr-{pr_number}")
 
@@ -249,6 +255,7 @@ def _render_resolutions(supplementary: dict) -> list[str]:
 
 
 def render_markdown(envelope: dict) -> str:
+    """Render the update-pr traceability markdown: header, comment traceability, findings, and resolutions."""
     supplementary = envelope.get("supplementary", {})
     parts: list[str] = []
     parts.extend(_render_header(supplementary))
