@@ -288,7 +288,10 @@ def main(argv: list[str]) -> int:
         logger.error("input file not found: %s", args.input)
         return 1
     except json.JSONDecodeError as exc:
-        logger.error("could not parse --input %s: %s", args.input, exc)
+        logger.error(
+            "could not parse --input %s: %s (line %d, col %d)",
+            args.input, exc, exc.lineno, exc.colno,
+        )
         return 1
 
     try:

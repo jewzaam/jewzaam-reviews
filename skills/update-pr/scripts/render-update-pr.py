@@ -300,7 +300,11 @@ def main(argv: list[str]) -> int:
         print(f"error: input file not found: {args.input}", file=sys.stderr)
         return 1
     except json.JSONDecodeError as exc:
-        print(f"error: could not parse --input {args.input}: {exc}", file=sys.stderr)
+        print(
+            f"error: could not parse --input {args.input}: {exc}"
+            f" (line {exc.lineno}, col {exc.colno})",
+            file=sys.stderr,
+        )
         return 1
 
     try:

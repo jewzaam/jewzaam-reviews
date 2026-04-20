@@ -173,7 +173,7 @@ def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.root).resolve()
     if not root.is_dir():
-        print(f"error: not a directory: {root}", file=sys.stderr)
+        print(f"find_external_calls: error: not a directory: {root}", file=sys.stderr)
         return 1
 
     by_category: dict[str, list[tuple[Path, int, str]]] = {}

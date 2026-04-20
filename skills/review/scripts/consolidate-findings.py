@@ -317,7 +317,10 @@ def _load_and_validate_raw(
         try:
             instance = _load_json(path)
         except json.JSONDecodeError as exc:
-            warnings.append(f"skipping {path.name}: invalid JSON ({exc})")
+            warnings.append(
+                f"skipping {path.name}: invalid JSON at line {exc.lineno},"
+                f" col {exc.colno}: {exc.msg}"
+            )
             continue
 
         # Fast-path: a raw file with envelope-only keys is almost certainly

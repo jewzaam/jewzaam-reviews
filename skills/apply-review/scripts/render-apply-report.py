@@ -56,7 +56,11 @@ def _validate_input(path: Path) -> int:
         with path.open("r", encoding="utf-8") as fh:
             doc = json.load(fh)
     except json.JSONDecodeError as exc:
-        print(f"error: {path} is not valid JSON: {exc}", file=sys.stderr)
+        print(
+            f"error: {path} is not valid JSON: {exc}"
+            f" (line {exc.lineno}, col {exc.colno})",
+            file=sys.stderr,
+        )
         return 1
     try:
         validate_envelope(doc)
@@ -118,7 +122,11 @@ def main(argv: list[str]) -> int:
         print(f"error: input file not found: {args.input}", file=sys.stderr)
         return 1
     except json.JSONDecodeError as exc:
-        print(f"error: invalid JSON in {args.input}: {exc}", file=sys.stderr)
+        print(
+            f"error: invalid JSON in {args.input}: {exc}"
+            f" (line {exc.lineno}, col {exc.colno})",
+            file=sys.stderr,
+        )
         return 1
 
     envelope = _build_apply_review_envelope(pre_render, args.project_name)
