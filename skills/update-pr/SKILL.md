@@ -17,7 +17,7 @@ Wipes and recreates `.tmp-update-pr/` at the project root with a `.gitignore` of
 
 ### Shared Handoff Contract (auto-injected)
 
-!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh`
 
 ## Overview
 
@@ -27,11 +27,19 @@ The workflow has three phases:
 2. **Review** — walk through each unresolved comment one at a time with the user, showing before/after context
 3. **Apply & Update** — handle GitHub suggestions, update the traceability document with resolutions and draft replies, hand off accepted local edits to apply-review
 
+## Prerequisites
+
+Before doing anything else, verify the environment can support the workflow:
+
+1. **`gh` CLI installed and authenticated.** Run `gh auth status` and stop with a clear message if it fails — the rest of this skill depends on `gh` for fetching PR comments, and there is no graceful fallback.
+2. **PR number provided.** Either as an argument (e.g., `/update-pr 1234`) or in the conversation. If missing, ask via `AskUserQuestion` before doing anything else.
+3. **Repo is a GitHub remote.** Derive owner/name from `git remote -v`; if the origin isn't a GitHub URL, stop and tell the user.
+
+Fail fast on missing prerequisites — a broken `gh` mid-Phase-1 leaves the skill in a confusing state with partial data.
+
 ## Before You Start
 
-The user must provide the PR number — either as an argument (e.g., `/update-pr 1234`) or in the conversation. If they didn't provide one, ask before doing anything else.
-
-Once you have the PR number, derive the repo owner/name from the git remote (do not run `gh repo view` — it's unnecessary). Then confirm scope with the user before fetching comments:
+Once you have the PR number and the prerequisite checks above have passed, confirm scope with the user before fetching comments:
 
 1. **Scope** — check which files the PR touches (`gh pr diff <PR> --name-only`) to suggest a default scope.
 2. **Supplementary feedback** — note whether the user mentioned any non-GitHub feedback sources (transcripts, pasted text, files).
@@ -282,6 +290,8 @@ After the review pass, separate accepted changes into two groups:
 
 **GitHub-mergeable suggestions** — accepted items that have a GitHub `suggestion` block. Applying these through the GitHub UI creates a commit credited to the reviewer, which is valuable for team dynamics and PR history. If the user accepted a suggestion but added modifications via free-form text, apply the suggestion on GitHub first, then apply the user's revision locally after pulling — this preserves reviewer attribution for the base change while layering the user's modifications.
 
+**Traceability for modified suggestions:** when a local revision is layered on top of a merged GitHub suggestion, the local commit message must reference the suggestion commit's SHA (e.g., `Revises: <sha>` footer) so the audit trail links the two. Use `git log --author="<reviewer-github-email>" --since="<timestamp>" -1` to find the SHA of the applied suggestion after the `git pull`. Without this reference the commit history shows two unrelated changes and the reviewer's contribution is lost.
+
 **Local edits** — everything else (items without suggestion blocks, alternatives, revisions on top of merged suggestions, and cleanup work).
 
 ### Step 2: GitHub Suggestions First
@@ -369,7 +379,15 @@ Format rules:
 
 Do not apply local code changes directly. Delegate to the `apply-review` skill, which has the per-finding discipline (implement, validate, handoff, stage, commit).
 
-Collect the finding IDs for all accepted local edits. Then use `AskUserQuestion` to hand off:
+**Standalone comments that become accepted local edits must be promoted to findings first.** A comment entered Phase 1 as `finding: "—"` has no corresponding entry in the envelope's `findings[]`, so `apply-review` cannot see it. Before collecting IDs below:
+
+1. For every Phase 2/3 accepted local edit whose originating comment was a standalone (i.e. the traceability row still has `finding: "—"`), add a minimal finding entry to the pre-render JSON using the schema's `review_finding` shape. Copy the comment's `pr_comment` link, derive `title`/`issue`/`suggested_fix` from the comment body, cite the commented code line as the `primary` location, and use severity `important` (the default bucket for local edits unless the user chose otherwise).
+2. Update the traceability row so `finding` is the new ID rather than `"—"`.
+3. Re-run `render-update-pr.py` — the renderer will assign stable IDs per severity bucket via `assign_ids_per_bucket`, so the newly-added findings get the next available `I<N>` / `S<N>` index.
+
+This promotion is what turns the "standalone comment is valid" rule (Phase 1) into a concrete apply-review handoff. Without it, the accepted edit sits only in the markdown traceability and is silently dropped by the JSON consumer.
+
+Collect the finding IDs for all accepted local edits (including the newly-promoted ones). Then use `AskUserQuestion` to hand off:
 
 ```
 Local edits are ready to apply. When you're ready, run:

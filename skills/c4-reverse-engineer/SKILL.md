@@ -5,7 +5,7 @@ description: >
   specification from a codebase. Produces documentation of WHAT the system does — not how it's
   coded.
 disable-model-invocation: true
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Read(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/*), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *), Bash(cat ${CLAUDE_PLUGIN_ROOT}/resources/*)
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Read(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/*), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh)
 
 ---
 
@@ -61,7 +61,16 @@ Wipes and recreates `.tmp-c4-reverse-engineer/` at the project root with a `.git
 
 ### Shared Handoff Contract (auto-injected)
 
-!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh`
+
+## Prerequisites
+
+Before running the 7-phase workflow, verify the target:
+
+1. **Non-empty codebase.** Use `scripts/count_source_lines.py` (also needed for Phase 1 tier sizing); if it reports zero source lines, stop and tell the user there's nothing to reverse-engineer.
+2. **Readable source tree.** Glob typical source directories (`src/`, the root, language-specific conventions). If everything is generated or vendored, tell the user the skill can't produce meaningful C4 artifacts on this shape of repo.
+
+Fail fast with a clear message when prerequisites aren't met — entering Phase 1 on an empty codebase wastes sub-agent dispatches and produces empty diagrams.
 
 ## Workflow — 7 Phases
 
@@ -194,6 +203,14 @@ For mechanical work in this phase, use the helper scripts:
 These scripts give you a deterministic inventory to diff subagent reports against — any
 item in the script output that isn't in a subagent report is a gap to close.
 
+**Gap-closure gate (before Phase 4):** every script-detected item that is still not
+accounted for in the working set of verified claims MUST be materialised as a
+`MISSING` finding in the Phase 6 pre-render JSON. No silent drops — the script
+output is authoritative for its category, so an omission means the diagram/spec
+would underreport what the code actually does. Record the script path and line
+number as the finding's primary location and `find_external_calls.py` /
+`find_platform_conditionals.py` as the contributing source in `evidence`.
+
 ### Phase 4: C4 Diagram Generation
 
 Write diagrams from verified claims only. Respect the artifact set from Phase 0 — skip
@@ -276,10 +293,10 @@ Run these consistency checks:
 **Fix-before-delivery:** Fix Critical and Important findings in the artifacts (return to Phases
 4–5), then re-run checks. Minor findings are documented but not fixed.
 
-Produce the validation output via `render-c4-validation.py`. Collect findings into `.tmp-c4-reverse-engineer/pre-render.json` using the pre-render shape documented in `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/review-format.md`, then invoke:
+Produce the validation output via `render-c4-reverse-engineer.py`. Collect findings into `.tmp-c4-reverse-engineer/pre-render.json` using the pre-render shape documented in `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/review-format.md`, then invoke:
 
 ```
-python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/render-c4-validation.py \
+python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/render-c4-reverse-engineer.py \
   --input .tmp-c4-reverse-engineer/pre-render.json \
   --issues .tmp-c4-reverse-engineer/issues.json \
   --out-dir <project root> \
@@ -313,7 +330,7 @@ Read these during the phases that need them:
 |------|-------------|---------|
 | `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/subagent-prompts.md` | Phase 2, before dispatching subagents | 7 prompt instructions + framework calibration table |
 | `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/verification-templates.md` | Phase 3, before verification | 8 templates, trigger-word heuristics, priority tiers |
-| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/review-format.md` | Phase 6, before writing pre-render JSON | Severity bucket mapping, pre-render JSON shape consumed by `render-c4-validation.py` |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/review-format.md` | Phase 6, before writing pre-render JSON | Severity bucket mapping, pre-render JSON shape consumed by `render-c4-reverse-engineer.py` |
 | `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/failure-modes.md` | When diagnosing a verification failure | 9 failure modes with root causes and detection methods |
 | `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/example-output.md` | Phase 5, for phrasing calibration | Toy project with a mechanical-phrasing §9 Degradation excerpt and a side-by-side bad/good comparison |
 
@@ -327,6 +344,7 @@ results to stdout.
 | `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/count_source_lines.py` | Phase 1, step 2 | Counts non-test, non-generated source lines per language and recommends a tier. |
 | `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/find_platform_conditionals.py` | Phase 3, PLATFORM claims | Enumerates every `sys.platform`, `platform.system()`, `os.name`, `IS_*` constant, Go build tag, Rust `cfg(target_os)`, and C/C++ platform ifdef. |
 | `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/find_external_calls.py` | Phase 3, DEGRADATION claims and L1 external systems | Enumerates subprocess, network, and filesystem calls across Python/Node/Go/Rust/Java/C#. Use `--group` for a category-grouped report. Comment detection is line-based — multi-line comment blocks and docstrings may produce false positives. |
+| `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/render-c4-reverse-engineer.py` | Phase 6, after validating findings | Assigns stable IDs (`C0..`, `I0..`, `S0..`) per severity bucket, computes content hashes, builds the shared-schema envelope with `source: "c4-reverse-engineer"`, validates against `findings.schema.json`, and writes `Findings-c4-reverse-engineer.{json,md}`. Exits non-zero if validation fails — no files are written on failure. |
 
 Invoke directly: `${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/<name>.py [project-root]`. The scripts have
 shebang lines and are executable. Defaults to the current working directory. All three

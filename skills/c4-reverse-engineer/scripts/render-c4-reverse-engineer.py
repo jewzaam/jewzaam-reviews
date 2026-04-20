@@ -8,7 +8,7 @@ spec_says + code_says + evidence + impact) into a pre-render JSON. This script:
 
 1. Assigns stable IDs (C0.., I0.., S0..) per severity bucket.
 2. Computes a content hash per finding.
-3. Builds the shared-schema envelope with source='c4-validation'.
+3. Builds the shared-schema envelope with source='c4-reverse-engineer'.
 4. Validates against `${plugin_root}/schemas/findings.schema.json`.
 5. Writes `Findings-c4-reverse-engineer.json` + `.md`. Markdown is always rendered
    from the JSON.
@@ -31,12 +31,13 @@ from scripts.envelope import (  # noqa: E402
     assign_ids_per_bucket,
     build_envelope,
     content_hash,
+    format_locations_block,
     format_validation_error,
     load_issues_file,
     validate_envelope,
 )
 
-SOURCE = "c4-validation"
+SOURCE = "c4-reverse-engineer"
 
 BUCKET_PREFIX = {"critical": "C", "important": "I", "suggestion": "S"}
 BUCKET_ORDER = ["critical", "important", "suggestion"]
@@ -50,14 +51,14 @@ def _build_c4_envelope(
     pre_render: dict, project_name: str, issues: list[dict]
 ) -> dict:
     project = pre_render.get("project") or {"name": project_name}
-    project.setdefault("scope_slug", "c4-validation")
+    project.setdefault("scope_slug", "c4-reverse-engineer")
 
     findings: list[dict] = []
     for raw in pre_render.get("findings", []):
         locations = raw.get("locations") or []
         if not locations:
             raise ValueError(
-                f"c4-validation finding '{raw.get('title', '<no title>')}' has no "
+                f"c4-reverse-engineer finding '{raw.get('title', '<no title>')}' has no "
                 "locations; must cite both the artifact section and the code line"
             )
         findings.append(
@@ -97,11 +98,7 @@ def _build_c4_envelope(
 
 
 def _format_finding_block(f: dict) -> str:
-    locs = "\n".join(
-        f"- `{loc['path']}:{loc['line']}`"
-        + (f" ({loc['role']})" if loc.get("role") and loc["role"] != "primary" else "")
-        for loc in f["locations"]
-    )
+    locs = format_locations_block(f["locations"])
     return (
         f"### {f['id']}: {f['title']}\n\n"
         f"**Artifact:** {f['artifact']}\n\n"
@@ -212,7 +209,7 @@ def main(argv: list[str]) -> int:
     try:
         validate_envelope(envelope)
     except jsonschema.ValidationError as exc:
-        print(format_validation_error(exc, "c4-validation"), file=sys.stderr)
+        print(format_validation_error(exc, "c4-reverse-engineer"), file=sys.stderr)
         return 1
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -225,7 +222,7 @@ def main(argv: list[str]) -> int:
         fh.write("\n")
     md_path.write_text(render_markdown(envelope, args.project_name), encoding="utf-8")
 
-    print(f"render-c4-validation: wrote {json_path}, {md_path}")
+    print(f"render-c4-reverse-engineer: wrote {json_path}, {md_path}")
     return 0
 
 

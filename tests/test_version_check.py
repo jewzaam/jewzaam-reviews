@@ -170,6 +170,101 @@ class TestFixtureAlignment:
         assert result[0][0].name == "stale.valid.json"
         assert result[0][1] == "0.1.0"
 
+    def test_misaligned_fixture_causes_main_to_exit_nonzero(
+        self, monkeypatch, tmp_path
+    ):
+        """Wire-up test for I39: _find_misaligned_fixtures returning a
+        non-empty list must propagate into main() exit code 1."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("vcheck", SCRIPT)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text(
+            json.dumps({"version": "0.2.0"}), encoding="utf-8"
+        )
+        (plugin_dir / "marketplace.json").write_text(
+            json.dumps(
+                {"plugins": [{"name": "jewzaam-reviews", "version": "0.2.0"}]}
+            ),
+            encoding="utf-8",
+        )
+        examples = tmp_path / "schemas" / "examples"
+        examples.mkdir(parents=True)
+        # One misaligned fixture is enough to trip the gate.
+        (examples / "stale.valid.json").write_text(
+            json.dumps({"schema_version": "0.1.0"}), encoding="utf-8"
+        )
+
+        monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "PLUGIN_JSON", plugin_dir / "plugin.json")
+        monkeypatch.setattr(
+            mod, "MARKETPLACE_JSON", plugin_dir / "marketplace.json"
+        )
+        monkeypatch.setattr(mod, "SCHEMA_EXAMPLES_DIR", examples)
+
+        exit_code = mod.main([])
+        assert exit_code == 1
+
+
+class TestBumpRequired:
+    """I38: the bump-required branch in main() (source changed but version
+    did not) is now exercised end-to-end."""
+
+    def test_source_changed_without_bump_exits_nonzero(
+        self, monkeypatch, tmp_path
+    ):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("vcheck", SCRIPT)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        plugin_dir = tmp_path / ".claude-plugin"
+        plugin_dir.mkdir()
+        (plugin_dir / "plugin.json").write_text(
+            json.dumps({"version": "0.2.0"}), encoding="utf-8"
+        )
+        (plugin_dir / "marketplace.json").write_text(
+            json.dumps(
+                {"plugins": [{"name": "jewzaam-reviews", "version": "0.2.0"}]}
+            ),
+            encoding="utf-8",
+        )
+        # Aligned fixtures so the earlier gate passes.
+        examples = tmp_path / "schemas" / "examples"
+        examples.mkdir(parents=True)
+        (examples / "aligned.valid.json").write_text(
+            json.dumps({"schema_version": "0.2.0"}), encoding="utf-8"
+        )
+
+        monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+        monkeypatch.setattr(mod, "PLUGIN_JSON", plugin_dir / "plugin.json")
+        monkeypatch.setattr(
+            mod, "MARKETPLACE_JSON", plugin_dir / "marketplace.json"
+        )
+        monkeypatch.setattr(mod, "SCHEMA_EXAMPLES_DIR", examples)
+
+        # Simulate: mainline exists, merge-base exists, source changed,
+        # mainline version is same as current (so bump is required but
+        # hasn't happened).
+        monkeypatch.setattr(mod, "find_mainline", lambda: "origin/main")
+        monkeypatch.setattr(
+            mod, "_git", lambda *a, **kw: "deadbeef" if a and a[0] == "merge-base" else ""
+        )
+        monkeypatch.setattr(
+            mod, "source_changed", lambda base, head, source_dirs: True
+        )
+        monkeypatch.setattr(mod, "version_at_revision", lambda rev: "0.2.0")
+
+        exit_code = mod.main([])
+        assert exit_code == 1
+
 
 class TestMarketplaceLookup:
     def test_finds_plugin_by_name_even_if_first(self, monkeypatch, tmp_path):

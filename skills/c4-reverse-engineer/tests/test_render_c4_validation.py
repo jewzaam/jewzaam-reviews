@@ -1,4 +1,4 @@
-"""Tests for skills/c4-reverse-engineer/scripts/render-c4-validation.py."""
+"""Tests for skills/c4-reverse-engineer/scripts/render-c4-reverse-engineer.py."""
 
 import json
 import subprocess
@@ -8,7 +8,7 @@ from pathlib import Path
 import jsonschema
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT = SKILL_ROOT / "scripts" / "render-c4-validation.py"
+SCRIPT = SKILL_ROOT / "scripts" / "render-c4-reverse-engineer.py"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 PLUGIN_ROOT = SKILL_ROOT.parent.parent
 SHARED_SCHEMA = PLUGIN_ROOT / "schemas" / "findings.schema.json"
@@ -51,7 +51,7 @@ class TestRenderC4ValidationJson:
             schema = json.load(fh)
         jsonschema.Draft202012Validator(schema).validate(envelope)
 
-        assert envelope["source"] == "c4-validation"
+        assert envelope["source"] == "c4-reverse-engineer"
         assert envelope["schema_version"] == _plugin_version()
         assert envelope["issues"] == []
 
@@ -154,3 +154,102 @@ class TestValidationFailure:
         )
         assert result.returncode != 0
         assert not (tmp_path / "out" / "Findings-c4-reverse-engineer.json").exists()
+
+
+class TestRenderC4ValidationEdgeCases:
+    """Covers paths missing from the primary fixture (I12)."""
+
+    def test_empty_findings_produces_valid_envelope(self, tmp_path):
+        pre_render = tmp_path / "empty.json"
+        pre_render.write_text(
+            json.dumps({"project": {"name": "sample"}, "findings": []}),
+            encoding="utf-8",
+        )
+        result = _run(
+            [
+                "--input",
+                str(pre_render),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--project-name",
+                "sample",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = _load(tmp_path / "out" / "Findings-c4-reverse-engineer.json")
+        with SHARED_SCHEMA.open("r", encoding="utf-8") as fh:
+            schema = json.load(fh)
+        jsonschema.Draft202012Validator(schema).validate(envelope)
+        assert envelope["findings"] == []
+
+    def test_suggestion_severity_gets_s_prefix(self, tmp_path):
+        pre_render = tmp_path / "sugg.json"
+        pre_render.write_text(
+            json.dumps(
+                {
+                    "project": {"name": "sample"},
+                    "findings": [
+                        {
+                            "artifact": "l2-c4-container.md",
+                            "verdict": "MISSING",
+                            "severity": "suggestion",
+                            "title": "Minor doc nit",
+                            "spec_says": "n/a",
+                            "code_says": "n/a",
+                            "evidence": "-",
+                            "locations": [
+                                {"path": "docs/x.md", "line": "1"}
+                            ],
+                            "issue": "minor",
+                            "why_it_matters": "nit",
+                            "suggested_fix": "fix",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = _run(
+            [
+                "--input",
+                str(pre_render),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--project-name",
+                "sample",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = _load(tmp_path / "out" / "Findings-c4-reverse-engineer.json")
+        assert envelope["findings"][0]["id"].startswith("S")
+
+    def test_issues_file_populated_in_envelope(self, tmp_path):
+        issues_path = tmp_path / "issues.json"
+        issues_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "severity": "warning",
+                        "kind": "tool_unavailable",
+                        "message": "find_external_calls.py skipped (missing lib)",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        result = _run(
+            [
+                "--input",
+                str(FIXTURES / "pre-render.sample.json"),
+                "--out-dir",
+                str(tmp_path),
+                "--project-name",
+                "sample",
+                "--issues",
+                str(issues_path),
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = _load(tmp_path / "Findings-c4-reverse-engineer.json")
+        assert len(envelope["issues"]) == 1
+        assert envelope["issues"][0]["kind"] == "tool_unavailable"

@@ -43,7 +43,7 @@ SCHEMAS_DIR = REPO_ROOT / "schemas"
 PLUGIN_ROOT = REPO_ROOT.parent.parent
 
 sys.path.insert(0, str(PLUGIN_ROOT))
-from scripts.envelope import content_hash  # noqa: E402
+from scripts.envelope import _line_start, content_hash  # noqa: E402
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
@@ -241,6 +241,7 @@ def _merge_by_title_similarity(
         merged["title"] = dominant["title"]
         merged["issue"] = dominant["issue"]
         merged["why_it_matters"] = dominant["why_it_matters"]
+        merged["suggested_fix"] = dominant["suggested_fix"]
         if force_concern:
             merged["concern_slug"] = dominant["concern_slug"]
 
@@ -272,6 +273,28 @@ def _build_decomposition(agent_outputs: list[dict]) -> list[dict]:
     return [seen[k] for k in sorted(seen)]
 
 
+# Top-level keys that only appear in the cross-skill envelope, never in
+# an agent-output document. Their presence in a raw/*.json is a strong
+# signal the sub-agent wrote the wrong schema (an envelope instead of an
+# agent-output); we surface that up front with an actionable message
+# rather than letting the generic schema validator emit a wall of
+# "additional property not allowed" / "required key missing" errors.
+_ENVELOPE_ONLY_KEYS = frozenset(
+    {"schema_version", "source", "project", "decomposition", "issues",
+     "supplementary", "applied"}
+)
+
+
+def _detect_envelope_shape(instance: object) -> list[str]:
+    """Return the envelope-only keys found at the top level of `instance`,
+    or an empty list if none are present (i.e., the file looks like an
+    attempt at agent-output).
+    """
+    if not isinstance(instance, dict):
+        return []
+    return sorted(set(instance.keys()) & _ENVELOPE_ONLY_KEYS)
+
+
 def _load_and_validate_raw(
     raw_dir: Path, agent_schema: Path
 ) -> tuple[list[dict], list[str]]:
@@ -287,12 +310,35 @@ def _load_and_validate_raw(
         except json.JSONDecodeError as exc:
             warnings.append(f"skipping {path.name}: invalid JSON ({exc})")
             continue
+
+        # Fast-path: a raw file with envelope-only keys is almost certainly
+        # a sub-agent that confused the cross-skill envelope schema for the
+        # agent-output schema. Emit a targeted warning so the cause is
+        # obvious instead of drowning in schema errors.
+        envelope_keys = _detect_envelope_shape(instance)
+        if envelope_keys:
+            warnings.append(
+                f"skipping {path.name}: file has cross-skill envelope shape "
+                f"(top-level keys {envelope_keys}), not agent-output shape. "
+                "The sub-agent wrote the wrong schema — it must emit agent-output "
+                "({'agent_id', 'concern', 'concern_slug', 'dimension_name', "
+                "'dimension_slug', 'dimension_scope', 'findings'[, "
+                "'cross_cutting_observations']}), NOT the final envelope. "
+                "Excluded from consolidation."
+            )
+            continue
+
         errors = list(validator.iter_errors(instance))
         if errors:
-            warnings.append(
+            header = (
                 f"skipping {path.name}: schema validation failed "
-                f"({len(errors)} error(s); first: {errors[0].message})"
+                f"({len(errors)} error(s))"
             )
+            details = [
+                f"  [{i}] at {'/'.join(str(p) for p in err.absolute_path) or '<root>'}: {err.message}"
+                for i, err in enumerate(errors, start=1)
+            ]
+            warnings.append(header + "\n" + "\n".join(details))
             continue
         valid.append(instance)
     return valid, warnings
@@ -373,11 +419,12 @@ def consolidate(
         final_findings.append(ordered)
 
     # Sort findings deterministically: concern, then primary location.
+    # Line is parsed as int so '9' sorts before '10' (was lexicographic before).
     final_findings.sort(
         key=lambda f: (
             f["concern_slug"],
             _primary_location(f)["path"],
-            _primary_location(f)["line"],
+            _line_start(_primary_location(f).get("line", "")),
             f["title"],
         )
     )
@@ -395,6 +442,38 @@ def consolidate(
         "decomposition": decomposition,
         "findings": final_findings,
     }
+
+
+def _append_issues(path: Path, warnings: list[str]) -> None:
+    """Append one issue object per warning to the issues file. Creates the
+    file (as a fresh JSON array) if missing; preserves existing entries
+    otherwise. Each warning produces a `schema_rejected_input` issue so
+    the final envelope carries a machine-readable record of skipped inputs.
+    """
+    existing: list[dict] = []
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                loaded = json.load(fh)
+            if isinstance(loaded, list):
+                existing = loaded
+        except (OSError, json.JSONDecodeError):
+            existing = []
+
+    new_entries = [
+        {
+            "severity": "warning",
+            "kind": "schema_rejected_input",
+            "message": w,
+            "source_component": "consolidate-findings",
+        }
+        for w in warnings
+    ]
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(existing + new_entries, fh, indent=2)
+        fh.write("\n")
 
 
 def main(argv: list[str]) -> int:
@@ -432,6 +511,19 @@ def main(argv: list[str]) -> int:
             "shared location already evidences they are the same observation"
         ),
     )
+    parser.add_argument(
+        "--issues-out",
+        type=Path,
+        default=None,
+        help=(
+            "optional path to write/append skip warnings as shared-schema "
+            "issue objects. Each skipped raw file becomes one issue with "
+            "kind='schema_rejected_input'. If the file already exists and "
+            "contains a JSON array, the new issues are appended; otherwise "
+            "the file is created with a fresh array. This lets the render "
+            "step consume one combined issues.json via its --issues flag."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not args.raw_dir.is_dir():
@@ -465,6 +557,9 @@ def main(argv: list[str]) -> int:
     valid_agents, warnings = _load_and_validate_raw(args.raw_dir, agent_schema)
     for w in warnings:
         print(f"warning: {w}", file=sys.stderr)
+
+    if args.issues_out is not None and warnings:
+        _append_issues(args.issues_out, warnings)
 
     if not valid_agents:
         print(

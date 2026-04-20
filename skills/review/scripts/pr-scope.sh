@@ -7,16 +7,22 @@
 
 set -euo pipefail
 
+# SKILL.md invokes this as `pr-scope.sh "$ARGUMENTS"` — a single quoted string
+# that may contain multiple space-separated tokens (e.g. "123 focus on auth").
+# Split internally: the first whitespace-separated token is the PR-number
+# candidate; anything after it is guidance handled by guidance.sh.
+
 # Test 1: was an arg sent?
 [ "$#" -ge 1 ] || { echo "no argument, not a PR review"; exit 0; }
 
-# Test 2: is there only one arg?
-[ "$#" -eq 1 ] || { echo "more than one argument, not a PR review"; exit 0; }
+# Extract the first token; empty when ARGUMENTS is blank.
+first_token="${1%% *}"
+[ -n "$first_token" ] || { echo "no argument, not a PR review"; exit 0; }
 
-# Test 3: is that one arg a number?
-[[ "$1" =~ ^[0-9]+$ ]] || { echo "argument is not a PR number, not a PR review"; exit 0; }
+# Test 2: is the first token a number?
+[[ "$first_token" =~ ^[0-9]+$ ]] || { echo "argument is not a PR number, not a PR review"; exit 0; }
 
-pr_number="$1"
+pr_number="$first_token"
 
 # Determine the default branch
 default_branch=""

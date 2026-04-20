@@ -24,8 +24,11 @@ allowed-tools:
   - Bash(${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/*)
   - Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/*)
   - Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/*)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/**)
+  - Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/**)
+  - Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/**)
   - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *)
-  - Bash(cat ${CLAUDE_PLUGIN_ROOT}/resources/*)
+  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh)
 ---
 
 # Review Skill
@@ -63,7 +66,7 @@ Wipes and recreates `.tmp-review/` at the project root with `raw/`, `validation/
 
 ### Shared Handoff Contract (auto-injected)
 
-!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh`
 
 ### PR Scope (auto-executed)
 
@@ -196,14 +199,19 @@ Run the consolidator script — it applies the merge rules deterministically and
 python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/consolidate-findings.py \
   --raw-dir .tmp-review/raw/ \
   --output .tmp-review/consolidated.json \
+  --issues-out .tmp-review/issues.json \
   --project-name <project name> \
-  --scope-slug <slug if PR-number or guidance constrained scope, else omit>
+  --scope-slug <slug if PR-number or guidance constrained scope, else omit> \
+  --cross-concern-threshold 0.4
 ```
+
+`--issues-out` appends one `schema_rejected_input` issue per skipped raw file to `.tmp-review/issues.json`, so the final envelope carries a machine-readable record of any per-agent output that was rejected by the agent-output schema. The render step later reads the same file via its own `--issues` flag.
 
 What the script does (you do **not** re-implement this in your reasoning):
 
 - **Pass 1: group by `(concern_slug, primary location)`.** Primary location is the first entry in `finding.locations` whose `role` is `primary` (or absent — defaulted to primary). Within each group: union `locations` (dedup by `path` + `line`), keep the longest non-trivial `suggested_fix` (tie-break by `dimension_slug`), take **max** of `impact`/`likelihood`/`confidence`, **min** of `effort_to_fix`, sorted union of `dimension_slug` → `source_dimensions`.
-- **Pass 2: cross-cutting merge.** Within the same `concern_slug`, group remaining findings by title similarity (Jaccard over lowercased alphanumeric tokens, default threshold 0.7) and merge near-duplicates using the same numerical aggregation.
+- **Pass 2: cross-cutting merge within concern.** Within the same `concern_slug`, group remaining findings by title similarity (Jaccard over lowercased alphanumeric tokens, default threshold `--similarity-threshold 0.7`) and merge near-duplicates using the same numerical aggregation.
+- **Pass 3: cross-concern merge at same location.** Across different `concern_slug` values, findings whose primary location is identical are grouped and sub-clustered by title similarity at a (typically lower) threshold of `--cross-concern-threshold` (default 0.4). The merged finding's `concern_slug` is taken from the highest-priority contributor (`impact * likelihood / 100`, alphabetical tie-break). Same numerical aggregation rules as Pass 1.
 - **Content hash.** Each merged finding gets a 16-char hex SHA-256 prefix over `(concern_slug, dimension_slug of first contributor, primary location path:line, title)`.
 - **Decomposition.** Built from the per-agent `dimension_name`/`dimension_slug`/`dimension_scope`, deduplicated by `dimension_slug`.
 - **No IDs. No severity buckets.** Both are assigned only at render time.
@@ -238,7 +246,7 @@ Spawn `total_batches` validator agents in **parallel** in a single message:
   - `"action": "confirm"` — finding stands as-is.
   - `"action": "rescore"` — provide `new_scores` with any subset of the four fields. Validators may *increase* `confidence` if they find stronger evidence.
   - `"action": "remove"` — finding is wrong (e.g., cited line does not exist, issue is not real).
-- Each verdict carries `finding_ref: {index, content_hash}` so the main agent can detect array drift.
+- Each verdict carries `finding_ref: {index, content_hash}` so the main agent can detect array drift. **Copy the `index` and `content_hash` verbatim from the input batch finding** — do NOT renumber by batch-local position (0..N within the batch), do NOT recompute the hash, and do NOT pair a `content_hash` from one finding with the `index` of another. The main agent drops any verdict whose `content_hash` doesn't match `consolidated.findings[index].content_hash` — this is the guardrail against silent mutation of the wrong finding, but it also means a drift-producing verdict is silently discarded.
 
 After each validator returns, write its response to `.tmp-review/validation/batch-<N>-output.json` and re-validate it against `validation-output.schema.json`.
 
@@ -252,7 +260,17 @@ Apply verdicts to `consolidated.json` in memory:
 - `"remove"`: drop the finding from the list.
 - Findings with low `confidence` are kept; the renderer segregates them.
 
-Write the post-validation findings to `.tmp-review/post-validation.json` (same shape as `consolidated.json`) and any meta-issues to `.tmp-review/issues.json` (see the injected Shared Handoff Contract for the issue shape). Then run the renderer:
+Write the post-validation findings to `.tmp-review/post-validation.json` (same shape as `consolidated.json`) and any meta-issues to `.tmp-review/issues.json` (see the injected Shared Handoff Contract for the issue shape).
+
+Before invoking the renderer, validate `post-validation.json` against the shared consolidated schema — this catches any malformed rescore values before a partial artifact can be written:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py .tmp-review/post-validation.json
+```
+
+(Auto-detection recognises `.tmp-review/post-validation.json` as the `consolidated` schema; passing `--schema consolidated` explicitly is equivalent.)
+
+Then run the renderer:
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/render-review.py \
@@ -316,7 +334,21 @@ Read enough code in scope to understand the project's existing conventions for t
 Phase 2 — Assess against baseline:
 Evaluate whether the codebase follows its own patterns consistently. Flag deviations, gaps, and concrete issues. For each finding, fill all required fields per the agent-output schema.
 
-FINDING SCHEMA — every finding object MUST contain exactly these fields. Use these field names verbatim — do NOT invent alternatives like `description`, `details`, `severity`, `id`, etc. (the schema rejects unknown fields):
+OUTPUT SHAPE — two schemas exist in this plugin; use the right one:
+
+Your output is an **agent-output** document (schema: `${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/agent-output.schema.json`), NOT the cross-skill envelope. Top-level keys of your output file are exactly:
+
+- `agent_id` (required)
+- `concern`, `concern_slug` (required — set to the values this prompt was parameterized with)
+- `dimension_name`, `dimension_slug`, `dimension_scope` (required — set to the values this prompt was parameterized with)
+- `findings` (array — see FINDING SCHEMA below)
+- `cross_cutting_observations` (optional array of strings)
+
+The shared handoff contract you may have seen in the skill's pre-fetch context describes the **final envelope** assembled by the main agent AFTER all sub-agents finish. Do NOT emit envelope-level keys — `schema_version`, `source`, `project`, `decomposition`, `issues`, `supplementary`, `applied` — in your output. They are the main agent's job; including them here causes your output to fail agent-output validation and your entire file is dropped from consolidation.
+
+Run `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py <OUTPUT PATH>` immediately after writing to confirm the shape is correct before finishing.
+
+FINDING SCHEMA — every finding object inside `findings[]` MUST contain exactly these fields. Use these field names verbatim — do NOT invent alternatives like `description`, `details`, `severity`, `id`, etc. (the schema rejects unknown fields):
 
 - `title`: short summary, ≤120 chars
 - `impact`: integer 0–100, blast radius if the issue manifests

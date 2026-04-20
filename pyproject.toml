@@ -1,3 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jewzaam-reviews"
+version = "0.2.0"
+description = "Claude Code plugin bundling the review pipeline skills."
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache-2.0"}
+dependencies = [
+    "jsonschema>=4.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+]
+
+[tool.setuptools]
+# This repo is a Claude Code plugin, not a Python package. The [project]
+# block exists only so CI can `pip install -e .[test]` to get pytest and
+# jsonschema. Empty py-modules suppresses setuptools package auto-discovery,
+# which otherwise chokes on the flat layout's multiple top-level dirs
+# (skills/, schemas/, resources/).
+py-modules = []
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests", "skills"]

@@ -68,6 +68,7 @@ def read_marketplace_version() -> str:
 
 
 def _git(*args: str) -> str:
+    """Run `git <args>` and return stdout. Non-zero exit re-emits stderr prefixed."""
     result = subprocess.run(
         ["git", *args],
         cwd=REPO_ROOT,
@@ -75,10 +76,21 @@ def _git(*args: str) -> str:
         text=True,
         check=False,
     )
+    if result.returncode != 0 and result.stderr.strip():
+        print(
+            f"version-check: git {' '.join(args)} failed: {result.stderr.strip()}",
+            file=sys.stderr,
+        )
     return result.stdout.strip()
 
 
-def _git_ok(*args: str) -> bool:
+def _git_ok(*args: str, quiet: bool = False) -> bool:
+    """Return True if `git <args>` exits zero.
+
+    When `quiet=False` (default), stderr on failure is forwarded so CI can
+    diagnose git configuration problems. Callers that probe for ref existence
+    (like `find_mainline`) pass `quiet=True` to suppress expected noise.
+    """
     result = subprocess.run(
         ["git", *args],
         cwd=REPO_ROOT,
@@ -86,12 +98,19 @@ def _git_ok(*args: str) -> bool:
         text=True,
         check=False,
     )
+    if result.returncode != 0 and result.stderr.strip() and not quiet:
+        print(
+            f"version-check: git {' '.join(args)} failed: {result.stderr.strip()}",
+            file=sys.stderr,
+        )
     return result.returncode == 0
 
 
 def find_mainline() -> str | None:
+    # Ref existence probe: expected to fail for non-matching candidates,
+    # so stderr is suppressed.
     for ref in ("main", "origin/main", "master", "origin/master"):
-        if _git_ok("rev-parse", "--verify", ref):
+        if _git_ok("rev-parse", "--verify", ref, quiet=True):
             return ref
     return None
 

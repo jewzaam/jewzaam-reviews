@@ -17,7 +17,7 @@ Wipes and recreates `.tmp-apply-review/` at the project root with a `.gitignore`
 
 ### Shared Handoff Contract (auto-injected)
 
-!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh`
 
 ## Purpose
 
@@ -33,6 +33,18 @@ The key value is discipline: each finding becomes an isolated, tested, committed
 2. If no argument, search for `Findings-*.json` files at the project root.
 3. If multiple findings files exist, use AskUserQuestion to let the user pick.
 4. If none exist, tell the user and stop.
+
+## Validate the Findings File
+
+Before any code changes, validate the chosen input against the shared schema:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/apply-review/scripts/render-apply-report.py --validate-input <path-to-findings.json>
+```
+
+If validation fails, surface the error to the user and **stop** — do not fall back to a partial parse, do not attempt fixes, do not iterate findings from a malformed envelope. The producer skill is responsible for emitting a valid document; a malformed input is always a bug upstream.
+
+On success, proceed to Step 0.
 
 ## Process
 
@@ -56,7 +68,7 @@ Read the `Findings-*.json` file and iterate `findings[]`. Each finding is a stru
 - `issue`, `why_it_matters`, `suggested_fix` — prose fields
 - `content_hash` — stable identifier; useful for log/commit references
 
-Source-specific extras (`concern_slug` for review, `subdomain` for standards, `artifact`/`verdict`/`spec_says`/`code_says`/`evidence` for c4-validation) are present when the producer adds them — use them for context but don't require them.
+Source-specific extras (`concern_slug` for review, `subdomain` for standards, `artifact`/`verdict`/`spec_says`/`code_says`/`evidence` for c4-reverse-engineer) are present when the producer adds them — use them for context but don't require them.
 
 **Read the top-level `issues[]` array** before beginning. These are meta-issues from the producer skill (sub-agent failures, permission denials, validation rejections). If an issue with `severity: "error"` is present, surface it to the user and confirm they still want to proceed — the review may be incomplete.
 
@@ -110,6 +122,7 @@ If the user says "Need changes", wait for their feedback, apply it, re-validate,
 If the user says "Skip commits, apply all remaining" (or equivalent), enter **batch mode**:
 - Skip steps 3c–3d for all remaining findings (no handoff questions, no commits)
 - Continue implementing and validating each remaining finding (steps 3a–3b), marking tasks complete as you go
+- Record each batch-applied finding with `outcome: "pending-commit"` in the pre-render JSON (step 5) — not `applied` (no commit yet) and not `skipped` (working-tree changes exist). Do not set `commit_sha` for these.
 - At the end, all changes are in the working tree, uncommitted — the user handles staging and committing on their own terms
 - Still run step 4 (final verification) when done
 
@@ -135,6 +148,8 @@ Assisted-by: Claude Code (Claude Opus 4.6)
 EOF
 )"
 ```
+
+After the commit succeeds, run `git rev-parse HEAD` and record the full SHA. When the pre-render JSON is written in Step 5, populate the finding's `commit_sha` field with this value — it's the machine-readable traceability link from finding → commit and is required downstream by any automated revert/audit tooling.
 
 #### 3e. Mark Complete and Continue
 
@@ -162,13 +177,22 @@ Before invoking, write `.tmp-apply-review/pre-render.json` with:
 {
   "project": {"name": "<project-name>"},
   "applied": [
-    {"finding_id": "C0", "outcome": "applied|skipped|failed", "detail": "<short note>"}
+    {"finding_id": "C0", "outcome": "applied", "detail": "Short summary", "commit_sha": "<full-sha-from-git-rev-parse>"},
+    {"finding_id": "I1", "outcome": "pending-commit", "detail": "Batch mode: implemented, user will commit"},
+    {"finding_id": "S0", "outcome": "skipped", "detail": "Out of user-supplied scope"},
+    {"finding_id": "I9", "outcome": "failed", "detail": "Tests regressed after patch; reverted", "error_kind": "validation_failed"}
   ],
   "issues": [
     {"severity": "error|warning", "kind": "<from shared schema>", "message": "..."}
   ]
 }
 ```
+
+Outcome semantics:
+- `applied` — change committed; `commit_sha` is required (full SHA from `git rev-parse HEAD` after the commit).
+- `pending-commit` — change is in the working tree but uncommitted (batch mode). No `commit_sha`.
+- `skipped` — change not made (filtered by scope, invalid finding, etc.).
+- `failed` — attempted but could not complete cleanly; `error_kind` is required (same enum as `issues[].kind`: `permission_denied | subagent_failure | validation_failed | tool_unavailable | schema_rejected_input | other`).
 
 The script validates against the shared schema (`source: "apply-review"`, `findings: []`, required `applied[]`) and writes `Report-apply-review.json` at `--out-dir`. It does **not** emit markdown — apply-review is a consumer skill producing an action report, not a review document.
 

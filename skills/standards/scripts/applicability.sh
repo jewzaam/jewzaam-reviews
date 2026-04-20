@@ -11,9 +11,12 @@
 # Output format (applicable case):
 #   SUBDOMAIN: <name>
 #   FILE: <absolute path>
+#   MISSING_FILE: <absolute path>    # path referenced by ~/source/standards/CLAUDE.md but not found on disk
 #   FILE: <absolute path>
 #   SUBDOMAIN: <name>
 #   ...
+# SKILL.md step 1 maps MISSING_FILE: lines into the issues[] array with
+# kind='tool_unavailable' so silent ghost-path reads become auditable.
 #
 # Merge/skip rules:
 #   - "Python Templates" bullets are appended to the "Python" subdomain
@@ -79,7 +82,13 @@ awk -v root="$standards_dir" '
       n = split(files[name], arr, "\n")
       for (j = 1; j <= n; j++) {
         if (arr[j] == "") continue
-        printf "FILE: %s/%s\n", root, arr[j]
+        resolved = root "/" arr[j]
+        # system("test -f ...") returns 0 when the file exists.
+        if (system("test -f \"" resolved "\"") == 0) {
+          printf "FILE: %s\n", resolved
+        } else {
+          printf "MISSING_FILE: %s\n", resolved
+        }
       }
     }
   }

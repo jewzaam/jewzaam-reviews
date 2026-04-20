@@ -8,6 +8,23 @@ on:
     branches: [main]
 
 jobs:
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[test]"
+
+      - name: Run pytest
+        run: make test
+
   version-check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -20,6 +37,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[test]"
 
       - name: Validate semantic versioning
         run: make version-check

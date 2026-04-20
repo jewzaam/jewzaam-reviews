@@ -251,3 +251,87 @@ class TestSharedSchemaCompliance:
         assert not (tmp_path / "out").exists() or not any(
             (tmp_path / "out").iterdir()
         )
+
+
+class TestAssignBucket:
+    """Direct unit tests for the bucket-boundary classification logic.
+
+    These pin the off-by-one behaviour at each threshold of the default
+    render-config.default.json:
+        confidence_floor = 60
+        critical = {min_priority: 40, min_impact: 70}
+        important = {min_priority: 25}
+    """
+
+    DEFAULT_CONFIG = {
+        "confidence_floor": 60,
+        "critical": {"min_priority": 40, "min_impact": 70},
+        "important": {"min_priority": 25},
+    }
+
+    def _module(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("render_review", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _finding(
+        self,
+        *,
+        impact: int,
+        likelihood: int,
+        confidence: int,
+        effort_to_fix: int = 40,
+    ) -> dict:
+        return {
+            "impact": impact,
+            "likelihood": likelihood,
+            "effort_to_fix": effort_to_fix,
+            "confidence": confidence,
+        }
+
+    def test_confidence_at_floor_not_needs_review(self):
+        # confidence == confidence_floor (60) must NOT go to needs-review;
+        # only confidence < floor does.
+        mod = self._module()
+        f = self._finding(impact=80, likelihood=80, confidence=60)
+        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) != "needs-review"
+
+    def test_confidence_below_floor_needs_review(self):
+        mod = self._module()
+        f = self._finding(impact=80, likelihood=80, confidence=59)
+        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "needs-review"
+
+    def test_critical_at_min_priority_and_impact(self):
+        # priority = 50*80/100 = 40 (at min_priority), impact >= 70 → critical
+        mod = self._module()
+        f = self._finding(impact=70, likelihood=58, confidence=90)  # 70*58/100 ≈ 40.6
+        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "critical"
+
+    def test_critical_priority_below_threshold_drops_to_important(self):
+        # priority just under critical threshold, still above important
+        mod = self._module()
+        f = self._finding(impact=70, likelihood=56, confidence=90)  # 70*56/100 = 39.2
+        bucket = mod.assign_bucket(f, self.DEFAULT_CONFIG)
+        assert bucket == "important"
+
+    def test_critical_impact_below_min_drops_to_important(self):
+        # High priority but impact < 70 → falls out of critical, lands on important
+        mod = self._module()
+        # impact=69, likelihood=80 → priority = 55.2 (>= important threshold)
+        f = self._finding(impact=69, likelihood=80, confidence=90)
+        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "important"
+
+    def test_important_at_min_priority(self):
+        mod = self._module()
+        # priority = 50*50/100 = 25 (exactly at important threshold)
+        f = self._finding(impact=50, likelihood=50, confidence=70)
+        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "important"
+
+    def test_important_below_min_priority_is_suggestion(self):
+        mod = self._module()
+        # priority = 48 * 50 / 100 = 24 (just under important min)
+        f = self._finding(impact=48, likelihood=50, confidence=70)
+        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "suggestion"

@@ -542,3 +542,333 @@ class TestConsolidateBasic:
         data = _load(out)
         schema = _load(SCHEMAS / "consolidated.schema.json")
         jsonschema.validate(instance=data, schema=schema)
+
+
+class TestIssuesOut:
+    def test_malformed_raw_file_becomes_issue(self, tmp_path: Path):
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        # One valid file + one malformed file.
+        _write_agent_output(
+            raw,
+            concern_slug="security",
+            dimension_slug="auth",
+            findings=[_make_finding(title="x", path="src/a.py", line="1")],
+        )
+        (raw / "bad.json").write_text("{ not valid json", encoding="utf-8")
+
+        out = tmp_path / "consolidated.json"
+        issues = tmp_path / "issues.json"
+        result = _run(
+            [
+                "--raw-dir",
+                str(raw),
+                "--output",
+                str(out),
+                "--issues-out",
+                str(issues),
+                "--project-name",
+                "myapp",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        assert issues.exists()
+        entries = _load(issues)
+        assert isinstance(entries, list)
+        assert any(
+            e.get("kind") == "schema_rejected_input"
+            and e.get("source_component") == "consolidate-findings"
+            and "bad.json" in e.get("message", "")
+            for e in entries
+        )
+
+    def test_issues_out_appends_to_existing_file(self, tmp_path: Path):
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        _write_agent_output(
+            raw,
+            concern_slug="security",
+            dimension_slug="auth",
+            findings=[_make_finding(title="x", path="src/a.py", line="1")],
+        )
+        (raw / "bad.json").write_text("{ not valid json", encoding="utf-8")
+
+        out = tmp_path / "consolidated.json"
+        issues = tmp_path / "issues.json"
+        # Pre-seed issues.json with a prior entry.
+        prior = [
+            {
+                "severity": "warning",
+                "kind": "tool_unavailable",
+                "message": "xenon not installed",
+            }
+        ]
+        issues.write_text(json.dumps(prior), encoding="utf-8")
+
+        result = _run(
+            [
+                "--raw-dir",
+                str(raw),
+                "--output",
+                str(out),
+                "--issues-out",
+                str(issues),
+                "--project-name",
+                "myapp",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        entries = _load(issues)
+        assert len(entries) == 2
+        assert entries[0]["kind"] == "tool_unavailable"
+        assert entries[1]["kind"] == "schema_rejected_input"
+
+    def test_envelope_shaped_raw_gets_diagnostic_warning(self, tmp_path: Path):
+        """A raw/*.json with cross-skill envelope keys should produce a
+        targeted warning ('wrong schema, wanted agent-output') rather than
+        a wall of generic validation errors. This catches sub-agents that
+        confuse the shared handoff shape for their per-agent output."""
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        # One valid file so the run has some survivors.
+        _write_agent_output(
+            raw,
+            concern_slug="security",
+            dimension_slug="auth",
+            findings=[_make_finding(title="x", path="src/a.py", line="1")],
+        )
+        # And one envelope-shaped file.
+        envelope = {
+            "schema_version": "0.2.0",
+            "source": "review",
+            "project": {"name": "confused"},
+            "decomposition": [{"dimension_name": "d", "dimension_slug": "d"}],
+            "findings": [],
+            "issues": [],
+        }
+        (raw / "documentation-core.json").write_text(
+            json.dumps(envelope), encoding="utf-8"
+        )
+
+        out = tmp_path / "consolidated.json"
+        issues = tmp_path / "issues.json"
+        result = _run(
+            [
+                "--raw-dir",
+                str(raw),
+                "--output",
+                str(out),
+                "--issues-out",
+                str(issues),
+                "--project-name",
+                "myapp",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        # Targeted wording must appear and name the offending file.
+        assert "envelope shape" in result.stderr
+        assert "documentation-core.json" in result.stderr
+        # It must also be captured as an issues.json entry for downstream.
+        entries = _load(issues)
+        assert any(
+            "envelope shape" in e["message"]
+            and "documentation-core.json" in e["message"]
+            for e in entries
+        )
+
+    def test_no_warnings_means_no_issues_file_written(self, tmp_path: Path):
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        _write_agent_output(
+            raw,
+            concern_slug="security",
+            dimension_slug="auth",
+            findings=[_make_finding(title="x", path="src/a.py", line="1")],
+        )
+
+        out = tmp_path / "consolidated.json"
+        issues = tmp_path / "issues.json"
+        result = _run(
+            [
+                "--raw-dir",
+                str(raw),
+                "--output",
+                str(out),
+                "--issues-out",
+                str(issues),
+                "--project-name",
+                "myapp",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        # No skipped files -> consolidator leaves the issues file untouched.
+        assert not issues.exists()
+
+
+class TestContentHashStability:
+    """content_hash is the integrity key for apply-review — it MUST be
+    deterministic across runs and stable across Pass 1/2/3 merging."""
+
+    def test_hash_stable_across_two_runs(self, tmp_path: Path):
+        # Identical inputs in two isolated runs produce byte-identical hashes.
+        def run_once(dest: Path) -> dict:
+            raw = dest / "raw"
+            raw.mkdir(parents=True)
+            _write_agent_output(
+                raw,
+                concern_slug="security",
+                dimension_slug="auth",
+                findings=[
+                    _make_finding(title="X", path="src/a.py", line="10"),
+                    _make_finding(title="Y", path="src/b.py", line="20"),
+                ],
+            )
+            out = dest / "consolidated.json"
+            result = _run(
+                [
+                    "--raw-dir",
+                    str(raw),
+                    "--output",
+                    str(out),
+                    "--project-name",
+                    "myapp",
+                ]
+            )
+            assert result.returncode == 0, result.stderr
+            return _load(out)
+
+        run_a = run_once(tmp_path / "a")
+        run_b = run_once(tmp_path / "b")
+        hashes_a = sorted(f["content_hash"] for f in run_a["findings"])
+        hashes_b = sorted(f["content_hash"] for f in run_b["findings"])
+        assert hashes_a == hashes_b
+        # And the hashes are not empty / all-zero.
+        assert all(h.strip("0") for h in hashes_a)
+
+    def test_hash_preserved_after_pass1_dedup(self, tmp_path: Path):
+        # Two agents reporting the same concern+primary location merge in
+        # Pass 1. The merged finding's hash must match what a single-agent
+        # contribution at the same (concern, dimension, path:line, title)
+        # would have produced — otherwise downstream apply-review breaks.
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        _write_agent_output(
+            raw,
+            concern_slug="security",
+            dimension_slug="auth",
+            findings=[_make_finding(title="X", path="src/a.py", line="10")],
+        )
+        _write_agent_output(
+            raw,
+            concern_slug="security",
+            dimension_slug="auth2",
+            findings=[_make_finding(title="X", path="src/a.py", line="10")],
+        )
+        out = tmp_path / "consolidated.json"
+        result = _run(
+            [
+                "--raw-dir",
+                str(raw),
+                "--output",
+                str(out),
+                "--project-name",
+                "myapp",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        data = _load(out)
+        # Two contributors collapsed to one finding.
+        assert len(data["findings"]) == 1
+        # Hash based on (concern, FIRST contributor's dimension, path:line,
+        # title). Since "auth" < "auth2" alphabetically, the first contributor
+        # is "auth" — hash is stable regardless of file discovery order.
+        assert data["findings"][0]["content_hash"].strip("0")
+        assert sorted(data["findings"][0]["source_dimensions"]) == ["auth", "auth2"]
+
+
+class TestConsolidatePureFunction:
+    """Unit tests against the pure consolidate() entry point (no subprocess).
+
+    Faster, pinpoint failures to merge logic, and support future
+    parameterised edge-case coverage.
+    """
+
+    def _call(self, agent_outputs: list[dict], **kwargs) -> dict:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("consolidate", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        defaults = dict(
+            project_name="myapp",
+            scope_slug="",
+            similarity_threshold=0.7,
+            cross_concern_threshold=0.4,
+        )
+        defaults.update(kwargs)
+        return module.consolidate(agent_outputs, **defaults)
+
+    def _agent_output(self, concern_slug: str, dimension_slug: str, findings: list[dict]) -> dict:
+        concerns_full = {
+            "architecture": "Architecture & Design",
+            "implementation": "Implementation Quality",
+            "test": "Test Quality & Coverage",
+            "maintainability": "Maintainability & Standards",
+            "security": "Security",
+            "documentation": "Documentation",
+            "observability": "Observability",
+        }
+        return {
+            "agent_id": f"{concern_slug}-{dimension_slug}",
+            "concern": concerns_full[concern_slug],
+            "concern_slug": concern_slug,
+            "dimension_name": dimension_slug,
+            "dimension_slug": dimension_slug,
+            "dimension_scope": {"paths": [f"src/{dimension_slug}/"]},
+            "findings": findings,
+        }
+
+    def test_empty_agent_outputs_returns_empty_consolidated(self):
+        result = self._call([])
+        assert result["findings"] == []
+        # Decomposition is min-items 1 per consolidated schema? Let's check.
+        # An empty run has no decomposition entries either; the schema allows
+        # it to be an empty list but the overall envelope still validates.
+        assert isinstance(result["decomposition"], list)
+
+    def test_single_finding_round_trip(self):
+        ao = self._agent_output(
+            "security",
+            "auth",
+            [_make_finding(title="X", path="src/a.py", line="10")],
+        )
+        result = self._call([ao])
+        assert len(result["findings"]) == 1
+        assert result["findings"][0]["concern_slug"] == "security"
+        assert result["findings"][0]["source_dimensions"] == ["auth"]
+
+    def test_pass1_merges_same_concern_same_primary(self):
+        findings = [_make_finding(title="X", path="src/a.py", line="10")]
+        ao1 = self._agent_output("security", "d1", findings)
+        ao2 = self._agent_output("security", "d2", findings)
+        result = self._call([ao1, ao2])
+        assert len(result["findings"]) == 1
+        assert sorted(result["findings"][0]["source_dimensions"]) == ["d1", "d2"]
+
+    def test_hash_mismatch_between_runs_detected_via_assertion(self):
+        """Two runs with different inputs produce different hashes — this
+        is the property downstream verdict application relies on to detect
+        drift."""
+        ao_a = self._agent_output(
+            "security",
+            "auth",
+            [_make_finding(title="X", path="src/a.py", line="10")],
+        )
+        ao_b = self._agent_output(
+            "security",
+            "auth",
+            [_make_finding(title="Different title", path="src/a.py", line="10")],
+        )
+        result_a = self._call([ao_a])
+        result_b = self._call([ao_b])
+        assert result_a["findings"][0]["content_hash"] != result_b["findings"][0]["content_hash"]

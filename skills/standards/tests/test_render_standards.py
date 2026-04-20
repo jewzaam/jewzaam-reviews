@@ -146,6 +146,104 @@ class TestRenderStandardsMarkdown:
         assert "tkinter/windows.md" in body
 
 
+class TestRenderStandardsEdgeCases:
+    """Covers empty-findings path (I30) and --issues round-trip (I31)."""
+
+    def test_empty_findings_produces_valid_envelope(self, tmp_path):
+        pre_render = tmp_path / "empty.json"
+        pre_render.write_text(
+            json.dumps(
+                {
+                    "project": {"name": "sample"},
+                    "findings": [],
+                    "supplementary": {
+                        "applicability": [],
+                        "strengths": [],
+                        "non_applicable": [],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = _run(
+            [
+                "--input",
+                str(pre_render),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--project-name",
+                "sample",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = _load(tmp_path / "out" / "Findings-standards.json")
+        with SHARED_SCHEMA.open("r", encoding="utf-8") as fh:
+            schema = json.load(fh)
+        jsonschema.Draft202012Validator(schema).validate(envelope)
+        assert envelope["findings"] == []
+        main_md = (tmp_path / "out" / "Findings-standards.md").read_text(
+            encoding="utf-8"
+        )
+        # Empty-bucket branches in the renderer must produce content for a
+        # zero-finding audit — otherwise the render path is dead code.
+        assert "No critical issues identified" in main_md
+        assert "No important issues identified" in main_md
+        # Renderer pluralises the suggestion bucket label.
+        assert "No suggestions issues identified" in main_md
+
+    def test_issues_round_trip(self, tmp_path):
+        issues_path = tmp_path / "issues.json"
+        issues_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "severity": "warning",
+                        "kind": "tool_unavailable",
+                        "message": "standards subdomain 'rust' skipped (missing docs)",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        result = _run(
+            [
+                "--input",
+                str(FIXTURES / "pre-render.sample.json"),
+                "--out-dir",
+                str(tmp_path),
+                "--project-name",
+                "sample",
+                "--issues",
+                str(issues_path),
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        envelope = _load(tmp_path / "Findings-standards.json")
+        assert len(envelope["issues"]) == 1
+        assert envelope["issues"][0]["kind"] == "tool_unavailable"
+
+    def test_malformed_issues_file_fails_cleanly(self, tmp_path):
+        # Non-list issues file must fail with a clean error, not a traceback.
+        bad_issues = tmp_path / "issues.json"
+        bad_issues.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
+        result = _run(
+            [
+                "--input",
+                str(FIXTURES / "pre-render.sample.json"),
+                "--out-dir",
+                str(tmp_path / "out"),
+                "--project-name",
+                "sample",
+                "--issues",
+                str(bad_issues),
+            ]
+        )
+        assert result.returncode != 0
+        # Logging prefixes the level; accept either 'ERROR:' or 'error:' so
+        # tests survive a future logging-config tweak.
+        assert result.stderr.lower().startswith("error:")
+
+
 class TestRenderStandardsValidationFailure:
     def test_bad_severity_exits_nonzero(self, tmp_path):
         bad = tmp_path / "bad.json"

@@ -45,6 +45,10 @@ def detect_schema(input_path: Path) -> str | None:
             return "validation-input"
         if stem.endswith("-output.json"):
             return "validation-output"
+    if parent == ".tmp-review":
+        # Pipeline intermediates at the workspace root; consolidated shape.
+        if stem in ("consolidated.json", "post-validation.json"):
+            return "consolidated"
 
     return None
 

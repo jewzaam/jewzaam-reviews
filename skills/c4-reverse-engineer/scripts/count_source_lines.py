@@ -8,7 +8,7 @@ Feeds the Phase 1 tier decision in the c4-reverse-engineer skill. Tier boundarie
     > 15,000 → large  (3 subagents)
 
 Usage:
-    python -m scripts.count_source_lines [root]
+    python skills/c4-reverse-engineer/scripts/count_source_lines.py [root]
 
 Defaults to the current working directory. Prints a per-language breakdown and the total,
 then recommends a tier.

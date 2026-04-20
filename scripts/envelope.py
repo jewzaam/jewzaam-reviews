@@ -125,6 +125,34 @@ def content_hash(*parts: str) -> str:
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+def format_locations_block(locations: list[dict]) -> str:
+    """Render a locations[] list as a bullet list for markdown output.
+
+    Shared across render scripts so the display format is consistent:
+    each entry becomes ``- `<path>:<line>` (<role>)`` with the role
+    appended only when it is set and not 'primary'. Used by producer
+    render scripts that emit per-finding markdown blocks.
+    """
+    lines: list[str] = []
+    for loc in locations:
+        entry = f"- `{loc['path']}:{loc['line']}`"
+        role = loc.get("role")
+        if role and role != "primary":
+            entry += f" ({role})"
+        lines.append(entry)
+    return "\n".join(lines)
+
+
+def _line_start(line_value: str) -> int:
+    """Numeric start of a line string like '12' or '12-20'; 0 when empty or unparseable."""
+    if not line_value:
+        return 0
+    try:
+        return int(line_value.split("-", 1)[0])
+    except (ValueError, AttributeError):
+        return 0
+
+
 def _default_sort_key(finding: dict) -> tuple:
     """Sort findings within a bucket by primary location + title."""
     locations = finding.get("locations") or [{"path": "", "line": ""}]
@@ -136,7 +164,11 @@ def _default_sort_key(finding: dict) -> tuple:
         ),
         locations[0],
     )
-    return (primary.get("path", ""), primary.get("line", ""), finding.get("title", ""))
+    return (
+        primary.get("path", ""),
+        _line_start(primary.get("line", "")),
+        finding.get("title", ""),
+    )
 
 
 def assign_ids_per_bucket(
