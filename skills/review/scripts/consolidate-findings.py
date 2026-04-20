@@ -4,7 +4,7 @@
 
 Reads every ``*.json`` under --raw-dir, validates each against the
 agent-output schema (skipping malformed files with a warning), then applies
-two merge passes:
+three merge passes:
 
   1. Group by (concern_slug, primary location) — primary location is the
      first entry in finding.locations whose role is 'primary' (or absent,
@@ -15,10 +15,19 @@ two merge passes:
        - effort_to_fix: min
        - source_dimensions: sorted union of dimension_slug values
 
-  2. Cross-cutting merge — within the same concern_slug, group remaining
-     findings by title similarity (Jaccard over lowercased token sets,
-     default threshold 0.7). Merge near-duplicates with the same numerical
-     aggregation rules.
+  2. Cross-cutting merge (threshold 0.7) — within the same concern_slug,
+     group remaining findings by title similarity (Jaccard over lowercased
+     alphanumeric token sets). Catches cases where one concern flags the
+     same issue with slightly different wording.
+
+  3. Cross-concern merge (threshold 0.4) — across different concern_slug
+     values, group findings whose primary location is identical and whose
+     titles have Jaccard similarity above the threshold. Lower threshold
+     than pass 2 because shared location already evidences they are the
+     same observation; different angles (architecture vs. implementation)
+     legitimately rephrase the issue differently. Merged finding's
+     concern_slug is taken from the highest-priority contributor
+     (impact * likelihood, alphabetical tie-break).
 
 Each merged finding gets a stable content_hash: hex SHA-256 (truncated to 16
 chars) over (concern_slug, dimension_slug of first contributor, primary

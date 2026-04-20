@@ -8,6 +8,12 @@
 #   - No args              -> output nothing
 #   - First arg is numeric -> treat it as a PR number; guidance is the remainder
 #   - First arg non-numeric -> entire argument string is guidance
+#
+# Examples:
+#   guidance.sh ""                   # outputs nothing
+#   guidance.sh "focus on auth"      # outputs guidance block
+#   guidance.sh "123"                # outputs nothing (PR only)
+#   guidance.sh "123 focus on auth"  # outputs guidance block
 
 set -euo pipefail
 
