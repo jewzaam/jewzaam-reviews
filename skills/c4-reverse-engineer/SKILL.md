@@ -6,14 +6,14 @@ description: >
   coded.
 disable-model-invocation: true
 allowed-tools:
+  # A: !-injection coverage (load-bearing)
+  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/**)
+  - Bash(python ${CLAUDE_PLUGIN_ROOT}/**)
+  - Bash(python3 ${CLAUDE_PLUGIN_ROOT}/**)
+  # B: Main-agent tools (also covered by global settings)
   - Bash(pwd)
-  - Bash(${CLAUDE_SKILL_DIR}/scripts/*)
-  - Bash(python ${CLAUDE_SKILL_DIR}/scripts/*)
-  - Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/*)
+  # C: Skill file access (also covered by global settings)
   - Read(${CLAUDE_SKILL_DIR}/references/*)
-  - Bash(bash */scripts/bootstrap-tmp.sh *)
-  - Bash(bash */scripts/print-handoff-contract.sh)
-  - Bash(bash */scripts/print-plugin-home.sh *)
 
 ---
 

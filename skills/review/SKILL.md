@@ -4,6 +4,11 @@ description: Perform a multi-agent codebase review by spinning up parallel revie
 disable-model-invocation: true
 argument-hint: "[PR-number] [guidance text...]"
 allowed-tools:
+  # A: !-injection coverage (load-bearing)
+  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/**)
+  - Bash(python ${CLAUDE_PLUGIN_ROOT}/**)
+  - Bash(python3 ${CLAUDE_PLUGIN_ROOT}/**)
+  # B: Main-agent tools (also covered by global settings)
   - Bash(git remote -v)
   - Bash(make -n *)
   - Bash(make format)
@@ -17,24 +22,13 @@ allowed-tools:
   - Bash(ls *)
   - Bash(test -f *)
   - Bash(test -d *)
+  # C: Skill file access (also covered by global settings)
   - Read(${CLAUDE_SKILL_DIR}/**)
   - Glob(${CLAUDE_SKILL_DIR}/**)
   - Grep(${CLAUDE_SKILL_DIR}/**)
-  - Read(${CLAUDE_SKILL_DIR}/*:*)
-  - Glob(${CLAUDE_SKILL_DIR}/*:*)
-  - Grep(${CLAUDE_SKILL_DIR}/*:*)
-  - Read(${CLAUDE_SKILL_DIR}/*)
-  - Glob(${CLAUDE_SKILL_DIR}/*)
-  - Grep(${CLAUDE_SKILL_DIR}/*)
+  # D: Sub-agent output workspace
   - Write(./.tmp-review/raw/**)
   - Write(**/.tmp-review/raw/**)
-  - Bash(${CLAUDE_SKILL_DIR}/scripts/:*)
-  - Bash(python ${CLAUDE_SKILL_DIR}/scripts/:*)
-  - Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/:*)
-  - Bash(bash ${CLAUDE_SKILL_DIR}/**)
-  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/**)
-  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh:*)
-  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh:*)
 ---
 
 # Review Skill
@@ -86,6 +80,14 @@ Wipes and recreates `./.tmp-review/` at the project root with `raw/`, `validatio
 ### Shared Handoff Contract (auto-injected)
 
 !`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh`
+
+### Agent Output Schema (auto-injected)
+
+The JSON schema that every concern agent's output MUST validate against. This is injected here so sub-agents have it in context without needing to Read the file. The main agent MUST include this schema verbatim in every concern agent's prompt.
+
+```json
+!`bash ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/print-agent-output-schema.sh`
+```
 
 ### PR Scope (auto-executed)
 
@@ -360,36 +362,19 @@ Evaluate whether the codebase follows its own patterns consistently. Flag deviat
 
 OUTPUT SHAPE — two schemas exist in this plugin; use the right one:
 
-Your output is an **agent-output** document (schema: `${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/agent-output.schema.json`), NOT the cross-skill envelope. Top-level keys of your output file are exactly:
+Your output is an **agent-output** document, NOT the cross-skill envelope. The full agent-output JSON schema is included in this prompt under "Agent Output Schema (auto-injected)" above. Your output MUST validate against it. Copy the structure exactly.
 
-- `agent_id` (required)
-- `concern`, `concern_slug` (required — set to the values this prompt was parameterized with)
-- `dimension_name`, `dimension_slug`, `dimension_scope` (required — set to the values this prompt was parameterized with)
-- `findings` (array — see FINDING SCHEMA below)
-- `cross_cutting_observations` (optional array of strings)
+Do NOT emit envelope-level keys — `schema_version`, `source`, `project`, `decomposition`, `issues`, `supplementary`, `applied` — in your output. They are the main agent's job; including them here causes your output to fail validation and your entire file is dropped from consolidation.
 
-The shared handoff contract you may have seen in the skill's pre-fetch context describes the **final envelope** assembled by the main agent AFTER all sub-agents finish. Do NOT emit envelope-level keys — `schema_version`, `source`, `project`, `decomposition`, `issues`, `supplementary`, `applied` — in your output. They are the main agent's job; including them here causes your output to fail agent-output validation and your entire file is dropped from consolidation.
-
-Run `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py <OUTPUT PATH>` immediately after writing to confirm the shape is correct before finishing.
-
-FINDING SCHEMA — every finding object inside `findings[]` MUST contain exactly these fields. Use these field names verbatim — do NOT invent alternatives like `description`, `details`, `severity`, `id`, etc. (the schema rejects unknown fields):
-
-- `title`: short summary, ≤120 chars
-- `impact`: integer 0–100, blast radius if the issue manifests
-- `likelihood`: integer 0–100, probability the issue actually occurs in real use
-- `effort_to_fix`: integer 0–100, lower = cheaper to fix
-- `confidence`: integer 0–100, your certainty this is a real issue with concrete evidence
-- `locations`: non-empty array of `{path, line, role?}` objects (see LOCATIONS below)
-- `issue`: 1–3 sentence prose description of the problem
-- `why_it_matters`: prose grounding the finding in the project's own patterns or stated standards
-- `suggested_fix`: prose describing the recommended change
+CRITICAL TYPE TRAPS — agents consistently get these wrong:
+- `impact`, `likelihood`, `effort_to_fix`, `confidence`: **integer** not string. Write `"impact": 80` NOT `"impact": "80"`
+- `locations[].line`: **string** not integer. Write `"line": "42"` NOT `"line": 42`. Ranges are allowed: `"line": "12-20"`
+- `locations[].path`: repo-relative POSIX path, **string**
+- Do NOT include `severity`, `id`, or any field not in the schema — `additionalProperties: false` rejects them
 
 Do NOT drop low-confidence findings. Validators downstream may rescore; the render step segregates low-confidence items into a `needs-review` bucket.
 
-The `agent_output` schema does not include `severity` or `id` fields — do not invent them. The render step assigns both from your numerical scores.
-
 LOCATIONS — every finding requires at least one entry in `locations`:
-- Use file:line or file:line-range under `locations[].path` / `locations[].line`.
 - For "X is missing" findings, cite the spec/plan/standards file:line where the requirement is stated, with `role: "requirement"`.
 - Multiple locations are allowed; mark non-primary entries with `role: "related" | "callsite" | "requirement"`.
 
@@ -414,7 +399,7 @@ OUTPUT PROCEDURE — strict:
 4. If the validator exits non-zero, read its error output, repair the JSON, Write again, validate again.
 5. **Hard cap: 3 attempts total** (1 initial + 2 retries). If the JSON does not validate after 3 attempts, return a structured failure message in your final response: `{"status": "failure", "reason": "<validator output>"}`. Do not return success without a passing validation.
 
-The agent_output schema lives at `${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/agent-output.schema.json`. Read it directly if you need to confirm field names and value constraints.
+The agent_output schema was injected into this prompt above — refer to it for field names and type constraints. Do not guess types.
 ```
 
 ## Critical Rules
