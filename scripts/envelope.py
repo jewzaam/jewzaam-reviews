@@ -23,10 +23,21 @@ layout — all of which are legitimately per-skill.
 
 import hashlib
 import json
+import logging
+import os
 from pathlib import Path
 from typing import Any, Callable
 
 import jsonschema
+
+logger = logging.getLogger("envelope")
+
+if os.environ.get("ENVELOPE_DEBUG"):
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(name)s: %(message)s",
+        stream=__import__("sys").stderr,
+    )
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_MANIFEST_PATH = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
@@ -40,7 +51,9 @@ def plugin_version() -> str:
     share a lifecycle (the schema is an internal contract of the plugin).
     """
     with PLUGIN_MANIFEST_PATH.open("r", encoding="utf-8") as fh:
-        return json.load(fh)["version"]
+        ver = json.load(fh)["version"]
+    logger.debug("plugin_version=%s from %s", ver, PLUGIN_MANIFEST_PATH)
+    return ver
 
 
 def load_shared_schema() -> dict:
@@ -50,7 +63,9 @@ def load_shared_schema() -> dict:
 
 def validate_envelope(envelope: dict) -> None:
     """Raise `jsonschema.ValidationError` on failure; return on success."""
+    logger.debug("validating envelope (source=%s)", envelope.get("source"))
     jsonschema.Draft202012Validator(load_shared_schema()).validate(envelope)
+    logger.debug("envelope validates OK")
 
 
 def build_envelope(
@@ -87,14 +102,30 @@ def build_envelope(
     return envelope
 
 
+MAX_JSON_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+def safe_load_json(path: Path) -> Any:
+    """Load JSON from ``path`` with a file-size guard against JSON bombs.
+
+    Raises ``ValueError`` when the file exceeds ``MAX_JSON_SIZE``.
+    """
+    size = path.stat().st_size
+    if size > MAX_JSON_SIZE:
+        raise ValueError(
+            f"{path} is {size} bytes, exceeds {MAX_JSON_SIZE} byte limit"
+        )
+    with path.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def load_issues_file(path: Path | None) -> list[dict]:
     """Load a JSON array of issue objects from `path`, or return an empty
     list when path is None. Raises `ValueError` if the file's top-level
-    JSON is not a list."""
+    JSON is not a list or exceeds the size limit."""
     if path is None:
         return []
-    with path.open("r", encoding="utf-8") as fh:
-        data = json.load(fh)
+    data = safe_load_json(path)
     if not isinstance(data, list):
         raise ValueError(
             f"--issues file must contain a JSON array, got {type(data).__name__}"
@@ -206,4 +237,8 @@ def assign_ids_per_bucket(
         for i, f in enumerate(sorted(by_bucket[bucket], key=key)):
             f["id"] = f"{prefix_map[bucket]}{i}"
             out.append(f)
+    logger.debug(
+        "assign_ids: %s",
+        ", ".join(f"{b}={len(by_bucket[b])}" for b in bucket_order),
+    )
     return out
