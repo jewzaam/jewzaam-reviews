@@ -27,6 +27,11 @@ Skills invoke Python and Bash scripts from the plugin cache. To avoid repeated p
 {
   "permissions": {
     "allow": [
+      "Bash(bash ~/.claude/plugins/cache/jewzaam-reviews/**)",
+      "Bash(python ~/.claude/plugins/cache/jewzaam-reviews/**)",
+      "Bash(python3 ~/.claude/plugins/cache/jewzaam-reviews/**)",
+      "Bash(~/.claude/plugins/cache/jewzaam-reviews/**)",
+      "Read(~/.claude/plugins/cache/jewzaam-reviews/**)",
       "Bash(bash ~/.claude/plugins/marketplaces/jewzaam-reviews/**)",
       "Bash(python ~/.claude/plugins/marketplaces/jewzaam-reviews/**)",
       "Bash(python3 ~/.claude/plugins/marketplaces/jewzaam-reviews/**)",
