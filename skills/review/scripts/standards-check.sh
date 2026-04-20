@@ -21,4 +21,6 @@ owner=${owner##*[/:]}
 [ -d ~/source/standards ] || exit 0
 [ "$gh_user" = "$owner" ] || exit 0
 
+# Rewrite relative markdown links to absolute ~/source/standards/ paths.
+# Example: [naming](common/naming.md) -> [naming](~/source/standards/common/naming.md)
 sed -E 's|\]\(([^)]+)\)|\](~/source/standards/\1)|g' ~/source/standards/CLAUDE.md

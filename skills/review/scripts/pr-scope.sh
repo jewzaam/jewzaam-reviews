@@ -24,7 +24,9 @@ first_token="${1%% *}"
 
 pr_number="$first_token"
 
-# Determine the default branch
+# Determine the default branch, preferring remote refs (authoritative)
+# over local refs. origin/main first (GitHub/GitLab convention), then
+# origin/master (older convention), then local refs as last resort.
 default_branch=""
 for ref in origin/main origin/master main master; do
   if git rev-parse --verify "$ref" &>/dev/null; then
