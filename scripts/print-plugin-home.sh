@@ -5,4 +5,4 @@
 
 set -euo pipefail
 
-echo "${CLAUDE_PLUGIN_ROOT}" | sed "s|^${HOME}|~|"
+echo "$1" | sed "s|^${HOME}|~|"

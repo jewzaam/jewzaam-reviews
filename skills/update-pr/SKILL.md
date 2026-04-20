@@ -4,7 +4,7 @@ description: Incorporate feedback into a pull request. Fetches PR review comment
 allowed-tools:
   - Bash(bash */scripts/bootstrap-tmp.sh *)
   - Bash(bash */scripts/print-handoff-contract.sh)
-  - Bash(bash */scripts/print-plugin-home.sh)
+  - Bash(bash */scripts/print-plugin-home.sh *)
   - Bash(python */scripts/render-update-pr.py *)
   - Bash(python3 */scripts/render-update-pr.py *)
 ---
@@ -21,7 +21,7 @@ This skill performs NO write operations on GitHub. No comments, no pushes, no PR
 
 Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
 
-!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh ${CLAUDE_PLUGIN_ROOT}`
 
 ### Project Root (auto-detected)
 

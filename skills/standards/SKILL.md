@@ -9,7 +9,7 @@ allowed-tools:
   - Bash(python ${CLAUDE_SKILL_DIR}/scripts/render-standards.py *)
   - Bash(bash */scripts/bootstrap-tmp.sh *)
   - Bash(bash */scripts/print-handoff-contract.sh)
-  - Bash(bash */scripts/print-plugin-home.sh)
+  - Bash(bash */scripts/print-plugin-home.sh *)
 ---
 
 # Standards Skill
@@ -38,7 +38,7 @@ Audit a repository against the user's personal standards library at `~/source/st
 
 Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
 
-!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh ${CLAUDE_PLUGIN_ROOT}`
 
 ### Project Root (auto-detected)
 
