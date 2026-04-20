@@ -202,8 +202,19 @@ def main(argv: list[str]) -> int:
     )
     args = parser.parse_args(argv)
 
-    with args.input.open("r", encoding="utf-8") as fh:
-        pre_render = json.load(fh)
+    try:
+        with args.input.open("r", encoding="utf-8") as fh:
+            pre_render = json.load(fh)
+    except FileNotFoundError:
+        print(f"error: input file not found: {args.input}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(
+            f"error: could not parse --input {args.input}: {exc}"
+            f" (line {exc.lineno}, col {exc.colno})",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         issues = load_issues_file(args.issues)
