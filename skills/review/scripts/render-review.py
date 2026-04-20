@@ -12,10 +12,13 @@ Intermediate JSON in the pipeline carries no severity labels and no IDs.
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
 import jsonschema
+
+logger = logging.getLogger("render-review")
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ROOT = SKILL_ROOT.parent.parent
@@ -234,17 +237,49 @@ def main(argv: list[str]) -> int:
             "from the run, e.g. sub-agent failures). Empty array if omitted."
         ),
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="verbose diagnostic logging to stderr",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the success summary line on stdout",
+    )
     args = parser.parse_args(argv)
 
-    with args.input.open("r", encoding="utf-8") as fh:
-        data = json.load(fh)
-    with args.config.open("r", encoding="utf-8") as fh:
-        config = json.load(fh)
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
+    logger.debug("input=%s out-dir=%s project-name=%s", args.input, args.out_dir, args.project_name)
+
+    try:
+        with args.input.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        logger.error("input file not found: %s", args.input)
+        return 1
+    except json.JSONDecodeError as exc:
+        logger.error(
+            "could not parse --input %s: %s (line %d, col %d)",
+            args.input, exc, exc.lineno, exc.colno,
+        )
+        return 1
+
+    try:
+        with args.config.open("r", encoding="utf-8") as fh:
+            config = json.load(fh)
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        logger.error("could not load --config %s: %s", args.config, exc)
+        return 1
 
     try:
         issues = load_issues_file(args.issues)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        logger.error("%s", exc)
         return 1
 
     rendered_findings = assign_buckets_and_ids(data.get("findings", []), config)
@@ -259,7 +294,7 @@ def main(argv: list[str]) -> int:
     try:
         validate_envelope(rendered)
     except jsonschema.ValidationError as exc:
-        print(format_validation_error(exc, "review"), file=sys.stderr)
+        logger.error("%s", format_validation_error(exc, "review"))
         return 1
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -281,10 +316,11 @@ def main(argv: list[str]) -> int:
     )
 
     issues_count = len(rendered.get("issues") or [])
-    print(
-        f"render: wrote {json_path}, {md_main_path}, {md_supp_path} "
-        f"({issues_count} issue(s) recorded)"
-    )
+    if not args.quiet:
+        print(
+            f"render: wrote {json_path}, {md_main_path}, {md_supp_path} "
+            f"({issues_count} issue(s) recorded)"
+        )
     return 0
 
 

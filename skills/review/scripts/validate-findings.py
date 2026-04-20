@@ -16,7 +16,12 @@ from pathlib import Path
 
 import jsonschema
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "schemas"
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+PLUGIN_ROOT = SKILL_ROOT.parent.parent
+SCHEMAS_DIR = SKILL_ROOT / "schemas"
+
+sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.envelope import safe_load_json  # noqa: E402
 
 KNOWN_SCHEMAS = {
     "agent-output",
@@ -53,11 +58,6 @@ def detect_schema(input_path: Path) -> str | None:
     return None
 
 
-def load_json(path: Path) -> object:
-    with path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
-
-
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="path to JSON file to validate")
@@ -87,8 +87,8 @@ def main(argv: list[str]) -> int:
         return 2
 
     try:
-        instance = load_json(args.input)
-        schema = load_json(schema_path)
+        instance = safe_load_json(args.input)
+        schema = safe_load_json(schema_path)
     except json.JSONDecodeError as exc:
         print(f"error: invalid JSON: {exc}", file=sys.stderr)
         return 1

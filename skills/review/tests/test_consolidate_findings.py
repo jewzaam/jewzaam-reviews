@@ -872,3 +872,61 @@ class TestConsolidatePureFunction:
         result_a = self._call([ao_a])
         result_b = self._call([ao_b])
         assert result_a["findings"][0]["content_hash"] != result_b["findings"][0]["content_hash"]
+
+
+class TestCrossCuttingObservations:
+    """cross_cutting_observations is an optional agent-output field.
+
+    The consolidator intentionally drops it — observations are informational
+    notes for the main agent, not findings that flow into the envelope.
+    These tests document that contract.
+    """
+
+    def _call(self, agent_outputs):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("consolidate", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.consolidate(
+            agent_outputs,
+            project_name="test",
+            scope_slug="",
+            similarity_threshold=0.7,
+        )
+
+    def _agent_output(self, concern_slug, dimension_slug, findings):
+        concerns_full = {
+            "architecture": "Architecture & Design",
+            "security": "Security",
+        }
+        return {
+            "agent_id": f"{concern_slug}-{dimension_slug}",
+            "concern": concerns_full[concern_slug],
+            "concern_slug": concern_slug,
+            "dimension_name": dimension_slug,
+            "dimension_slug": dimension_slug,
+            "dimension_scope": {"paths": [f"src/{dimension_slug}/"]},
+            "findings": findings,
+        }
+
+    def test_observations_do_not_appear_in_consolidated_output(self):
+        ao = self._agent_output(
+            "architecture", "auth",
+            [_make_finding(title="X", path="src/a.py", line="10")],
+        )
+        ao["cross_cutting_observations"] = [
+            "Observed pattern X across multiple modules"
+        ]
+        result = self._call([ao])
+        for finding in result["findings"]:
+            assert "cross_cutting_observations" not in finding
+
+    def test_agent_output_with_observations_still_consolidates(self):
+        ao = self._agent_output(
+            "security", "auth",
+            [_make_finding(title="Y", path="src/b.py", line="5")],
+        )
+        ao["cross_cutting_observations"] = ["Note about patterns"]
+        result = self._call([ao])
+        assert len(result["findings"]) == 1

@@ -92,6 +92,38 @@ class TestSourceDiscrimination:
             jsonschema.validate(instance=instance, schema=schema)
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+class TestPreRenderFixtures:
+    """Smoke-test that pre-render sample fixtures are valid JSON with expected keys."""
+
+    @pytest.mark.parametrize(
+        "fixture_path,expected_key",
+        [
+            (
+                "skills/c4-reverse-engineer/tests/fixtures/pre-render.sample.json",
+                "findings",
+            ),
+            (
+                "skills/standards/tests/fixtures/pre-render.sample.json",
+                "findings",
+            ),
+            (
+                "skills/update-pr/tests/fixtures/pre-render.phase1.sample.json",
+                "findings",
+            ),
+        ],
+    )
+    def test_fixture_loads_and_has_findings(self, fixture_path, expected_key):
+        path = REPO_ROOT / fixture_path
+        assert path.exists(), f"fixture missing: {fixture_path}"
+        data = _load_json(path)
+        assert isinstance(data, dict)
+        assert expected_key in data, f"missing '{expected_key}' in {fixture_path}"
+        assert isinstance(data[expected_key], list)
+
+
 class TestIssuesArray:
     def test_issues_array_required(self, schema, examples_dir: Path):
         instance = _load_json(examples_dir / "review.valid.json")

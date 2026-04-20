@@ -46,6 +46,19 @@ skills/
 
 When editing any `SKILL.md`, grep for `~/.claude/skills/` references and convert them.
 
+## Script Execution Environment
+
+Python scripts under `skills/*/scripts/` import from `scripts.envelope` (the plugin root's shared plumbing). Each script computes the plugin root from its own `__file__` path and inserts it into `sys.path`:
+
+```python
+SKILL_ROOT = Path(__file__).resolve().parent.parent   # e.g. skills/review/
+PLUGIN_ROOT = SKILL_ROOT.parent.parent                # plugin root
+sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.envelope import validate_envelope, ...   # now importable
+```
+
+For local development and testing, ensure the working directory is the plugin root or that `sys.path` includes it. `pytest` discovers tests via `pyproject.toml` `testpaths` and runs from the repo root, so imports resolve automatically.
+
 ## Skill Sources
 
 These skills were copied from standalone repos (now retired):

@@ -52,18 +52,13 @@ SCHEMAS_DIR = REPO_ROOT / "schemas"
 PLUGIN_ROOT = REPO_ROOT.parent.parent
 
 sys.path.insert(0, str(PLUGIN_ROOT))
-from scripts.envelope import _line_start, content_hash  # noqa: E402
+from scripts.envelope import _line_start, content_hash, safe_load_json  # noqa: E402
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
 
-def _load_json(path: Path) -> object:
-    with path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
-
-
 def _validate(instance: object, schema_path: Path) -> list[str]:
-    schema = _load_json(schema_path)
+    schema = safe_load_json(schema_path)
     validator = jsonschema.Draft202012Validator(schema)
     return [
         f"{'/'.join(str(p) for p in err.absolute_path) or '<root>'}: {err.message}"
@@ -310,12 +305,12 @@ def _load_and_validate_raw(
     """Return (valid_agent_outputs, warnings)."""
     valid: list[dict] = []
     warnings: list[str] = []
-    schema = _load_json(agent_schema)
+    schema = safe_load_json(agent_schema)
     validator = jsonschema.Draft202012Validator(schema)
 
     for path in sorted(raw_dir.glob("*.json")):
         try:
-            instance = _load_json(path)
+            instance = safe_load_json(path)
         except json.JSONDecodeError as exc:
             warnings.append(
                 f"skipping {path.name}: invalid JSON at line {exc.lineno},"

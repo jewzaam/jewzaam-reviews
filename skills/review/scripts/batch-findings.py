@@ -27,6 +27,10 @@ import jsonschema
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMAS_DIR = REPO_ROOT / "schemas"
+PLUGIN_ROOT = REPO_ROOT.parent.parent
+
+sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.envelope import safe_load_json  # noqa: E402
 
 # Keep this in sync with validation-input.schema.json $defs/batch_finding.required
 BATCH_FINDING_FIELDS = (
@@ -45,10 +49,6 @@ BATCH_FINDING_FIELDS = (
 
 MAX_BATCH_SIZE = 8
 
-
-def _load_json(path: Path) -> object:
-    with path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
 
 
 def _priority(f: dict) -> float:
@@ -109,7 +109,7 @@ def main(argv: list[str]) -> int:
         print(f"error: schema not found: {schema_path}", file=sys.stderr)
         return 2
 
-    consolidated = _load_json(args.input)
+    consolidated = safe_load_json(args.input)
     findings = consolidated.get("findings", [])
 
     if not findings:
@@ -126,7 +126,7 @@ def main(argv: list[str]) -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    schema = _load_json(schema_path)
+    schema = safe_load_json(schema_path)
     validator = jsonschema.Draft202012Validator(schema)
 
     written = 0
@@ -161,6 +161,15 @@ def main(argv: list[str]) -> int:
             json.dump(batch, fh, indent=2)
             fh.write("\n")
         written += 1
+
+        top_hash = batch["findings"][0]["content_hash"] if batch["findings"] else "N/A"
+        pri_hi = _priority(slice_[0][1])
+        pri_lo = _priority(slice_[-1][1])
+        print(
+            f"  batch {batch_num}: {len(batch['findings'])} finding(s),"
+            f" priority {pri_hi:.1f}..{pri_lo:.1f}, top={top_hash}",
+            file=sys.stderr,
+        )
 
     print(
         f"OK: wrote {written} batch file(s) covering {total} finding(s) "

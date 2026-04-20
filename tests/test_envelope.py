@@ -158,6 +158,35 @@ class TestContentHash:
         assert envelope.content_hash("a", "b", "c") == expected
 
 
+class TestLineStart:
+    def test_simple_number(self):
+        assert envelope._line_start("12") == 12
+
+    def test_range(self):
+        assert envelope._line_start("12-20") == 12
+
+    def test_empty_string(self):
+        assert envelope._line_start("") == 0
+
+    def test_non_numeric(self):
+        assert envelope._line_start("abc") == 0
+
+    def test_non_numeric_range(self):
+        assert envelope._line_start("abc-def") == 0
+
+    def test_leading_dash(self):
+        assert envelope._line_start("-5") == 0
+
+    def test_trailing_dash(self):
+        assert envelope._line_start("5-") == 5
+
+    def test_single_digit(self):
+        assert envelope._line_start("1") == 1
+
+    def test_large_number(self):
+        assert envelope._line_start("99999") == 99999
+
+
 class TestAssignIdsPerBucket:
     def _f(self, severity, title, path="x.py", line="1"):
         return {

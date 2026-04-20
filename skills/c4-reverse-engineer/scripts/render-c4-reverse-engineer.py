@@ -18,10 +18,13 @@ Exits non-zero if validation fails; no files are written on validation failure.
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
 import jsonschema
+
+logger = logging.getLogger("render-c4-reverse-engineer")
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ROOT = SKILL_ROOT.parent.parent
@@ -200,26 +203,42 @@ def main(argv: list[str]) -> int:
         default=None,
         help="optional path to a JSON array of meta-issue objects",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="verbose diagnostic logging to stderr",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the success summary line on stdout",
+    )
     args = parser.parse_args(argv)
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
+    logger.debug("input=%s out-dir=%s project-name=%s", args.input, args.out_dir, args.project_name)
 
     try:
         with args.input.open("r", encoding="utf-8") as fh:
             pre_render = json.load(fh)
     except FileNotFoundError:
-        print(f"error: input file not found: {args.input}", file=sys.stderr)
+        logger.error("input file not found: %s", args.input)
         return 1
     except json.JSONDecodeError as exc:
-        print(
-            f"error: could not parse --input {args.input}: {exc}"
-            f" (line {exc.lineno}, col {exc.colno})",
-            file=sys.stderr,
+        logger.error(
+            "could not parse --input %s: %s (line %d, col %d)",
+            args.input, exc, exc.lineno, exc.colno,
         )
         return 1
 
     try:
         issues = load_issues_file(args.issues)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        logger.error("%s", exc)
         return 1
 
     envelope = _build_c4_envelope(pre_render, args.project_name, issues)
@@ -227,7 +246,7 @@ def main(argv: list[str]) -> int:
     try:
         validate_envelope(envelope)
     except jsonschema.ValidationError as exc:
-        print(format_validation_error(exc, "c4-reverse-engineer"), file=sys.stderr)
+        logger.error("%s", format_validation_error(exc, "c4-reverse-engineer"))
         return 1
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -240,7 +259,8 @@ def main(argv: list[str]) -> int:
         fh.write("\n")
     md_path.write_text(render_markdown(envelope, args.project_name), encoding="utf-8")
 
-    print(f"render-c4-reverse-engineer: wrote {json_path}, {md_path}")
+    if not args.quiet:
+        print(f"render-c4-reverse-engineer: wrote {json_path}, {md_path}")
     return 0
 
 

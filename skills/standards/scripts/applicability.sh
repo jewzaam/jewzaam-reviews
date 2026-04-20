@@ -83,8 +83,13 @@ awk -v root="$standards_dir" '
       for (j = 1; j <= n; j++) {
         if (arr[j] == "") continue
         resolved = root "/" arr[j]
-        # system("test -f ...") returns 0 when the file exists.
-        if (system("test -f \"" resolved "\"") == 0) {
+        # Probe file existence without invoking the shell — getline
+        # returns >0 when it can read a line, 0 at EOF (empty file),
+        # and -1 on error (missing/unreadable). Avoids the injection
+        # risk of system("test -f \"...\"").
+        probe = (getline _discard < resolved)
+        if (probe >= 0) {
+          close(resolved)
           printf "FILE: %s\n", resolved
         } else {
           printf "MISSING_FILE: %s\n", resolved
