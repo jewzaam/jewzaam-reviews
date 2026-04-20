@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.root).resolve()
     if not root.is_dir():
-        print(f"error: not a directory: {root}", file=sys.stderr)
+        print(f"find_platform_conditionals: error: not a directory: {root}", file=sys.stderr)
         return 1
 
     total = 0
