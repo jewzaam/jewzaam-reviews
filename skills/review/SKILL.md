@@ -17,16 +17,24 @@ allowed-tools:
   - Bash(ls *)
   - Bash(test -f *)
   - Bash(test -d *)
-  - Read(${CLAUDE_PLUGIN_ROOT}/skills/review/**)
-  - Glob(${CLAUDE_PLUGIN_ROOT}/skills/review/**)
-  - Grep(${CLAUDE_PLUGIN_ROOT}/skills/review/**)
+  - Read(${CLAUDE_SKILL_DIR}/**)
+  - Glob(${CLAUDE_SKILL_DIR}/**)
+  - Grep(${CLAUDE_SKILL_DIR}/**)
+  - Read(${CLAUDE_SKILL_DIR}/*:*)
+  - Glob(${CLAUDE_SKILL_DIR}/*:*)
+  - Grep(${CLAUDE_SKILL_DIR}/*:*)
+  - Read(${CLAUDE_SKILL_DIR}/*)
+  - Glob(${CLAUDE_SKILL_DIR}/*)
+  - Grep(${CLAUDE_SKILL_DIR}/*)
   - Write(./.tmp-review/raw/**)
   - Write(**/.tmp-review/raw/**)
-  - Bash(${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/:*)
-  - Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/:*)
-  - Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/:*)
-  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *)
-  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh)
+  - Bash(${CLAUDE_SKILL_DIR}/scripts/:*)
+  - Bash(python ${CLAUDE_SKILL_DIR}/scripts/:*)
+  - Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/:*)
+  - Bash(bash ${CLAUDE_SKILL_DIR}/**)
+  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/**)
+  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh:*)
+  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh:*)
 ---
 
 # Review Skill
@@ -60,7 +68,7 @@ Absolute path of the project root. The main agent MUST substitute this value for
 
 Runs `scripts/standards-check.sh`. For user-owned repos (origin owner matches `gh` login and `~/source/standards/` exists), injects the external standards CLAUDE.md with all relative links rewritten to absolute paths (e.g., `common/naming.md` becomes `~/source/standards/common/naming.md`). For non-owned repos, outputs nothing — project standards are already in context via Claude Code.
 
-!`${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/standards-check.sh`
+!`bash ${CLAUDE_SKILL_DIR}/scripts/standards-check.sh`
 
 ### Findings Workspace Bootstrap (auto-executed)
 
@@ -76,13 +84,13 @@ Wipes and recreates `./.tmp-review/` at the project root with `raw/`, `validatio
 
 If the first argument is numeric, computes the changed files against the default branch merge base. Output is injected as PR scope context for diff-scoped reviews. Any non-numeric trailing arguments are handled by the User Guidance step below. Outputs nothing if no numeric leading argument is given.
 
-!`${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/pr-scope.sh "$ARGUMENTS"`
+!`bash ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/pr-scope.sh "$ARGUMENTS"`
 
 ### User Guidance (auto-executed)
 
 Extracts free-form guidance text from the arguments (everything after a leading PR number, or all arguments if none is numeric) and emits it as a "User Guidance" section. The main agent interprets the guidance and decides how it affects the review. Outputs nothing if no guidance is supplied.
 
-!`${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/guidance.sh "$ARGUMENTS"`
+!`bash ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/guidance.sh "$ARGUMENTS"`
 
 ## Process
 

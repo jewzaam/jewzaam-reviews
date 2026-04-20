@@ -5,7 +5,14 @@ description: >
   specification from a codebase. Produces documentation of WHAT the system does — not how it's
   coded.
 disable-model-invocation: true
-allowed-tools: Bash(pwd), Bash(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/scripts/*), Read(${CLAUDE_PLUGIN_ROOT}/skills/c4-reverse-engineer/references/*), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *), Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh)
+allowed-tools:
+  - Bash(pwd)
+  - Bash(${CLAUDE_SKILL_DIR}/scripts/*)
+  - Bash(python ${CLAUDE_SKILL_DIR}/scripts/*)
+  - Bash(python3 ${CLAUDE_SKILL_DIR}/scripts/*)
+  - Read(${CLAUDE_SKILL_DIR}/references/*)
+  - Bash(bash */scripts/bootstrap-tmp.sh *)
+  - Bash(bash */scripts/print-handoff-contract.sh)
 
 ---
 
