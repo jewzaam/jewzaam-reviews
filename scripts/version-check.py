@@ -132,6 +132,21 @@ def source_changed(base: str, head: str, source_dirs: list[str]) -> bool:
     return bool(changed.strip())
 
 
+def working_tree_changed(source_dirs: list[str]) -> bool:
+    """Return True if the working tree has any change (staged, unstaged, or
+    untracked) under any of `source_dirs`. This lets `make version-check` act
+    as a preflight gate before commit — committed-only source_changed() can't
+    see uncommitted skill edits that will require a bump at the next commit.
+    """
+    modified = _git("diff", "HEAD", "--name-only", "--", *source_dirs)
+    if modified.strip():
+        return True
+    untracked = _git(
+        "ls-files", "--others", "--exclude-standard", "--", *source_dirs
+    )
+    return bool(untracked.strip())
+
+
 def _find_misaligned_fixtures(plugin_ver: str) -> list[tuple[Path, str]]:
     """Return [(path, bad_version), ...] for every fixture whose
     schema_version differs from the plugin version. Empty list = all aligned."""
@@ -242,7 +257,10 @@ def main(argv: list[str]) -> int:
         )
         return 0
 
-    if not source_changed(base, "HEAD", source_dirs):
+    committed = source_changed(base, "HEAD", source_dirs)
+    uncommitted = working_tree_changed(source_dirs)
+
+    if not committed and not uncommitted:
         print(
             f"version-check: PASS — {plugin_ver} (no source changes in: "
             f"{' '.join(source_dirs)})"
@@ -251,11 +269,17 @@ def main(argv: list[str]) -> int:
 
     base_ver = version_at_revision(base)
     if base_ver and base_ver == plugin_ver:
+        kinds = []
+        if committed:
+            kinds.append("committed")
+        if uncommitted:
+            kinds.append("uncommitted working-tree")
+        kind_str = " and ".join(kinds)
         print(
             f"version-check: FAIL — version not bumped: both current and "
-            f"{mainline} have '{plugin_ver}'. Source files in "
-            f"{source_dirs} changed; bump the MINOR or MAJOR in both "
-            f"plugin.json and marketplace.json.",
+            f"{mainline} have '{plugin_ver}'. {kind_str.capitalize()} "
+            f"changes in {source_dirs}; version in plugin.json and "
+            f"marketplace.json must be updated before the next commit.",
             file=sys.stderr,
         )
         return 1

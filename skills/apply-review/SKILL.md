@@ -9,9 +9,15 @@ argument-hint: "[Findings-file.json] [C0 I1 S2...]"
 
 ## Pre-Fetch
 
+### Project Root (auto-detected)
+
+Absolute path of the project root. The main agent MUST substitute this value for any `./.tmp-apply-review/...` path it passes to a dispatched sub-agent, so the sub-agent has an unambiguous absolute Write target and cannot drift to `/tmp/` or any other directory.
+
+!`pwd`
+
 ### Workspace Bootstrap (auto-executed)
 
-Wipes and recreates `.tmp-apply-review/` at the project root with a `.gitignore` of `*`. The final step writes a pre-render JSON here for `render-apply-report.py`.
+Wipes and recreates `./.tmp-apply-review/` at the project root with a `.gitignore` of `*`. The final step writes a pre-render JSON here for `render-apply-report.py`.
 
 !`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-apply-review`
 
@@ -166,12 +172,12 @@ After verification, record what was applied by invoking the apply-report rendere
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/apply-review/scripts/render-apply-report.py \
-  --input .tmp-apply-review/pre-render.json \
+  --input ./.tmp-apply-review/pre-render.json \
   --out-dir <project root> \
   --project-name <project name from the consumed review>
 ```
 
-Before invoking, write `.tmp-apply-review/pre-render.json` with:
+Before invoking, write `./.tmp-apply-review/pre-render.json` with:
 
 ```json
 {
