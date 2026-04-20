@@ -117,6 +117,7 @@ def _build_standards_envelope(
 
 
 def _format_finding_block(f: dict) -> str:
+    """Format a single finding as a markdown block with subdomain, locations, and prose fields."""
     locations = format_locations_block(f["locations"])
     return (
         f"#### {f['id']}: {f['title']}\n\n"
@@ -129,6 +130,7 @@ def _format_finding_block(f: dict) -> str:
 
 
 def render_main_markdown(envelope: dict, project_name: str) -> str:
+    """Render the main standards markdown: TL;DR, applicability matrix, and findings by severity bucket."""
     findings = envelope["findings"]
     by_bucket = {b: [f for f in findings if f["severity"] == b] for b in BUCKET_ORDER}
     supplementary = envelope.get("supplementary", {})
@@ -179,6 +181,7 @@ def render_main_markdown(envelope: dict, project_name: str) -> str:
 
 
 def render_supplementary_markdown(envelope: dict, project_name: str) -> str:
+    """Render supplementary markdown: strengths, per-subdomain notes, non-applicable standards, and detail by subdomain."""
     findings = envelope["findings"]
     supplementary = envelope.get("supplementary", {})
 

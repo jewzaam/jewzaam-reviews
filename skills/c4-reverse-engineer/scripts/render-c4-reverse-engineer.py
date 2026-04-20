@@ -50,6 +50,12 @@ def _c4_sort_key(f: dict) -> tuple:
 def _build_c4_envelope(
     pre_render: dict, project_name: str, issues: list[dict]
 ) -> dict:
+    """Build the c4-reverse-engineer envelope from pre-render input.
+
+    Validates each finding has non-empty locations, computes content hashes
+    keyed on (artifact, primary location, title), and maps c4-specific
+    fields (artifact, verdict, spec_says, code_says, evidence).
+    """
     project = pre_render.get("project") or {"name": project_name}
     project.setdefault("scope_slug", "c4-reverse-engineer")
 
@@ -114,6 +120,7 @@ def _format_finding_block(f: dict) -> str:
 
 
 def render_markdown(envelope: dict, project_name: str) -> str:
+    """Render the c4-reverse-engineer markdown with summary table, findings by severity, and confirmed claims."""
     findings = envelope["findings"]
     by_bucket = {b: [f for f in findings if f["severity"] == b] for b in BUCKET_ORDER}
     supplementary = envelope.get("supplementary", {})
