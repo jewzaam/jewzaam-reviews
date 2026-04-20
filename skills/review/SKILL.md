@@ -35,6 +35,7 @@ allowed-tools:
   - Bash(bash ${CLAUDE_PLUGIN_ROOT}/**)
   - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh:*)
   - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh:*)
+  - Bash(echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|")
 ---
 
 # Review Skill
