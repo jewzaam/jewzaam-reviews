@@ -1,7 +1,21 @@
 ---
 name: apply-review
 description: Apply findings from a Findings-*.json file as iterative, committed fixes.
-allowed-tools: Bash, Read, Edit, Write, Glob, Grep, AskUserQuestion, Agent, TaskCreate, TaskUpdate, TaskGet, TaskList
+allowed-tools:
+  # Unrestricted — this skill edits user code, runs tests, and commits changes.
+  # Sub-agent permissions come from global settings, not from here.
+  - Bash
+  - Read
+  - Edit
+  - Write
+  - Glob
+  - Grep
+  - AskUserQuestion
+  - Agent
+  - TaskCreate
+  - TaskUpdate
+  - TaskGet
+  - TaskList
 argument-hint: "[Findings-file.json] [C0 I1 S2...]"
 ---
 

@@ -3,13 +3,13 @@ name: standards
 description: Audit a repository for conformance with the user's personal coding standards at ~/source/standards/. Spawns one agent per standards subdomain, reports applicability and gaps as a Findings-standards.json handoff consumable by /apply-review. Use when the user asks to check, audit, or validate a codebase against their standards library.
 disable-model-invocation: true
 allowed-tools:
+  # A: !-injection coverage (load-bearing)
+  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/**)
+  - Bash(python ${CLAUDE_PLUGIN_ROOT}/**)
+  - Bash(python3 ${CLAUDE_PLUGIN_ROOT}/**)
+  # B: Main-agent tools (also covered by global settings)
   - Bash(git remote -v)
   - Bash(pwd)
-  - Bash(bash ${CLAUDE_SKILL_DIR}/scripts/applicability.sh)
-  - Bash(python ${CLAUDE_SKILL_DIR}/scripts/render-standards.py *)
-  - Bash(bash */scripts/bootstrap-tmp.sh *)
-  - Bash(bash */scripts/print-handoff-contract.sh)
-  - Bash(bash */scripts/print-plugin-home.sh *)
 ---
 
 # Standards Skill
