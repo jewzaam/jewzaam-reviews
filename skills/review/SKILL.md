@@ -5,8 +5,6 @@ disable-model-invocation: true
 argument-hint: "[PR-number] [guidance text...]"
 allowed-tools:
   - Bash(git remote -v)
-  - Bash(python ~/.claude/skills/review/scripts/*)
-  - Bash(python */.claude/skills/review/scripts/*)
   - Bash(make -n *)
   - Bash(make format)
   - Bash(make format-check)
@@ -19,14 +17,15 @@ allowed-tools:
   - Bash(ls *)
   - Bash(test -f *)
   - Bash(test -d *)
-  - Read(*/.claude/skills/review/**)
-  - Read(*/claude-skill-review/**)
-  - Glob(*/.claude/skills/review/**)
-  - Glob(*/claude-skill-review/**)
-  - Grep(*/.claude/skills/review/**)
-  - Grep(*/claude-skill-review/**)
-  - Write(.tmp-review-findings/raw/**)
-  - Write(*/.tmp-review-findings/raw/**)
+  - Read(${CLAUDE_PLUGIN_ROOT}/skills/review/**)
+  - Glob(${CLAUDE_PLUGIN_ROOT}/skills/review/**)
+  - Grep(${CLAUDE_PLUGIN_ROOT}/skills/review/**)
+  - Write(.tmp-review/raw/**)
+  - Bash(${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/*)
+  - Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/*)
+  - Bash(python3 ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/*)
+  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *)
+  - Bash(cat ${CLAUDE_PLUGIN_ROOT}/resources/*)
 ---
 
 # Review Skill
@@ -40,8 +39,8 @@ Perform a multi-agent review of a codebase by spinning up parallel review agents
 - **Read-only analysis of source code.** Never modify the user's source code or tests.
 - **No program execution.** Never install dependencies, run the program, or execute language runtimes directly (no `python -c`, `node`, `go run`, etc.) against the user's code.
 - **No package management.** Never run `pip`, `npm`, `cargo`, etc.
-- **Output is two markdown files plus one JSON file** at the project root: `Review-<project-name>.md` (actionable findings), `Review-<project-name>-supplementary.md` (detailed analysis, strengths, decomposition), and `Review-<project-name>.json` (structured findings for downstream skills). If the user provides constrained context (a PR number, specific area, topic), append a slug (max 12 chars, lowercase, hyphens) to all three filenames.
-- **Intermediate workspace is `.tmp-review-findings/` at the project root** — created by the bootstrap pre-fetch, contains a `.gitignore` of `*` so it is never committed. Holds raw per-agent JSON, the consolidated set, and validation batches.
+- **Output is two markdown files plus one JSON file** at the project root: `Findings-review.md` (actionable findings), `Findings-review-supplementary.md` (detailed analysis, strengths, decomposition), and `Findings-review.json` (structured findings for downstream skills). Filenames follow the plugin-wide pattern `Findings-<skill-name>[-<scope-slug>].{json,md}` for producer skills (apply-review is a consumer and emits `Report-apply-review.json`) — the skill name identifies the producer; project identity lives in the JSON envelope's `project.name`. If the user provides constrained context (a PR number, specific area, topic), append a scope slug (max 12 chars, lowercase, hyphens): `Findings-review-<slug>.{json,md,-supplementary.md}`.
+- **Intermediate workspace is `.tmp-review/` at the project root** — created by the bootstrap pre-fetch, contains a `.gitignore` of `*` so it is never committed. Holds raw per-agent JSON, the consolidated set, and validation batches.
 - **If a check requires a tool not present**, note it in the review as a recommendation — do not attempt to install or build it.
 
 ## Pre-Fetch
@@ -54,25 +53,29 @@ Perform a multi-agent review of a codebase by spinning up parallel review agents
 
 Runs `scripts/standards-check.sh`. For user-owned repos (origin owner matches `gh` login and `~/source/standards/` exists), injects the external standards CLAUDE.md with all relative links rewritten to absolute paths (e.g., `common/naming.md` becomes `~/source/standards/common/naming.md`). For non-owned repos, outputs nothing — project standards are already in context via Claude Code.
 
-!`~/.claude/skills/review/scripts/standards-check.sh`
+!`${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/standards-check.sh`
 
 ### Findings Workspace Bootstrap (auto-executed)
 
-Wipes and recreates `.tmp-review-findings/` at the project root with `raw/`, `validation/`, and a `.gitignore` of `*`. Each `/review` invocation starts from a clean slate so stale findings from a prior run cannot leak into consolidation. Sub-agents and the main agent both write JSON into this tree.
+Wipes and recreates `.tmp-review/` at the project root with `raw/`, `validation/`, and a `.gitignore` of `*`. Each `/review` invocation starts from a clean slate so stale findings from a prior run cannot leak into consolidation. Sub-agents and the main agent both write JSON into this tree.
 
-!`~/.claude/skills/review/scripts/bootstrap-findings-dir.sh`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-review raw validation`
+
+### Shared Handoff Contract (auto-injected)
+
+!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
 
 ### PR Scope (auto-executed)
 
 If the first argument is numeric, computes the changed files against the default branch merge base. Output is injected as PR scope context for diff-scoped reviews. Any non-numeric trailing arguments are handled by the User Guidance step below. Outputs nothing if no numeric leading argument is given.
 
-!`~/.claude/skills/review/scripts/pr-scope.sh "$ARGUMENTS"`
+!`${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/pr-scope.sh "$ARGUMENTS"`
 
 ### User Guidance (auto-executed)
 
 Extracts free-form guidance text from the arguments (everything after a leading PR number, or all arguments if none is numeric) and emits it as a "User Guidance" section. The main agent interprets the guidance and decides how it affects the review. Outputs nothing if no guidance is supplied.
 
-!`~/.claude/skills/review/scripts/guidance.sh "$ARGUMENTS"`
+!`${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/guidance.sh "$ARGUMENTS"`
 
 ## Process
 
@@ -142,7 +145,7 @@ After decomposition produces N dimensions, launch **all `1 + 7×N` agents in a s
 
 All seven concern agents use `subagent_type: "general-purpose"`. They need both Write (to put their JSON output on disk) and Bash (to invoke `validate-findings.py`) to self-validate against the schema. The prompt restricts them as follows:
 
-- **Pre-assigned output path:** each agent is told its single allowed Write target (`.tmp-review-findings/raw/<concern_slug>-<dimension_slug>.json`). Any Write to any other path is a violation.
+- **Pre-assigned output path:** each agent is told its single allowed Write target (`.tmp-review/raw/<concern_slug>-<dimension_slug>.json`). Any Write to any other path is a violation.
 - **Bash restricted to one command pattern:** invoking `validate-findings.py` against that exact output path. No other Bash usage is permitted.
 - **Edit, NotebookEdit, and any other state-modifying tool are prohibited.**
 - The agent must stop and report if asked or tempted to deviate.
@@ -180,7 +183,7 @@ The `agent-output` schema does not include `severity` or `id` fields — the sch
 After every concern agent returns, re-run the validator as defense-in-depth:
 
 ```
-python ~/.claude/skills/review/scripts/validate-findings.py .tmp-review-findings/raw/<concern_slug>-<dimension_slug>.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py .tmp-review/raw/<concern_slug>-<dimension_slug>.json
 ```
 
 For any file that fails this re-validation, exclude it from consolidation and log a warning in the supplementary "Decomposition" preamble (you will write that preamble at render time). Do not re-dispatch — sub-agents already had three attempts.
@@ -190,9 +193,9 @@ For any file that fails this re-validation, exclude it from consolidation and lo
 Run the consolidator script — it applies the merge rules deterministically and emits a schema-validated `consolidated.json`:
 
 ```
-python ~/.claude/skills/review/scripts/consolidate-findings.py \
-  --raw-dir .tmp-review-findings/raw/ \
-  --output .tmp-review-findings/consolidated.json \
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/consolidate-findings.py \
+  --raw-dir .tmp-review/raw/ \
+  --output .tmp-review/consolidated.json \
   --project-name <project name> \
   --scope-slug <slug if PR-number or guidance constrained scope, else omit>
 ```
@@ -213,9 +216,9 @@ If a `raw/*.json` file fails its agent-output schema validation, the consolidato
 Run the batcher script — it slices `consolidated.json` into validation-input batches and self-validates each against the schema:
 
 ```
-python ~/.claude/skills/review/scripts/batch-findings.py \
-  --input .tmp-review-findings/consolidated.json \
-  --output-dir .tmp-review-findings/validation/
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/batch-findings.py \
+  --input .tmp-review/consolidated.json \
+  --output-dir .tmp-review/validation/
 ```
 
 What the script does (you do **not** re-implement this in your reasoning):
@@ -237,7 +240,7 @@ Spawn `total_batches` validator agents in **parallel** in a single message:
   - `"action": "remove"` — finding is wrong (e.g., cited line does not exist, issue is not real).
 - Each verdict carries `finding_ref: {index, content_hash}` so the main agent can detect array drift.
 
-After each validator returns, write its response to `.tmp-review-findings/validation/batch-<N>-output.json` and re-validate it against `validation-output.schema.json`.
+After each validator returns, write its response to `.tmp-review/validation/batch-<N>-output.json` and re-validate it against `validation-output.schema.json`.
 
 ### 7. Apply Verdicts and Render
 
@@ -249,21 +252,22 @@ Apply verdicts to `consolidated.json` in memory:
 - `"remove"`: drop the finding from the list.
 - Findings with low `confidence` are kept; the renderer segregates them.
 
-Write the post-validation findings to a temp file (e.g., `.tmp-review-findings/post-validation.json`, same shape as `consolidated.json`) and run the renderer:
+Write the post-validation findings to `.tmp-review/post-validation.json` (same shape as `consolidated.json`) and any meta-issues to `.tmp-review/issues.json` (see the injected Shared Handoff Contract for the issue shape). Then run the renderer:
 
 ```
-python ~/.claude/skills/review/scripts/render-review.py \
-  --input .tmp-review-findings/post-validation.json \
-  --config ~/.claude/skills/review/schemas/render-config.default.json \
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/render-review.py \
+  --input .tmp-review/post-validation.json \
+  --config ${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/render-config.default.json \
+  --issues .tmp-review/issues.json \
   --out-dir <project root> \
   --project-name <project name> \
   --scope-slug <slug if PR-number or guidance constrained scope, else empty>
 ```
 
-The renderer:
+Skill-specific renderer behavior (on top of the shared contract):
 - Maps each finding to a severity bucket (`critical | important | suggestion | needs-review`) using the threshold config.
 - Assigns IDs in stable per-bucket order: `C0..`, `I0..`, `S0..`, `N0..`.
-- Writes the final JSON (`Review-<project-name>[-<slug>].json`) and the two markdown files (`Review-<project-name>[-<slug>].md` + `-supplementary.md`) at `--out-dir`.
+- Writes three files: `Findings-review[-<slug>].json`, `.md`, `-supplementary.md`.
 
 The slug derivation from `/review` arguments matches today's behavior (max 12 chars, lowercase, hyphens; appended when scope is constrained by PR number or guidance text). Pre-existing PR-scope and user-guidance pre-fetch outputs supply the source material.
 
@@ -284,11 +288,11 @@ DIMENSION SCOPE (confine your review to this):
 If you notice issues clearly outside this scope, list them under `cross_cutting_observations` in your output but do not investigate deeply.
 
 OUTPUT PATH (your single allowed Write target):
-.tmp-review-findings/raw/<concern_slug>-<dimension_slug>.json
+.tmp-review/raw/<concern_slug>-<dimension_slug>.json
 
 TOOL RESTRICTIONS — strictly enforced:
 - Write: only to the OUTPUT PATH above. Any Write elsewhere is a violation; stop and report.
-- Bash: only to invoke `python ~/.claude/skills/review/scripts/validate-findings.py <OUTPUT PATH>`. No other Bash usage is permitted.
+- Bash: only to invoke `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py <OUTPUT PATH>`. No other Bash usage is permitted.
 - Edit, NotebookEdit, or any other state-modifying tool: prohibited.
 - TaskCreate, TaskUpdate, TodoWrite, and other task-tracking tools: do NOT use them. Your scope is narrow (one concern × one dimension); track progress inline in your own reasoning — there is no multi-step plan worth persisting, and these tools' schemas are deferred so calls will fail on first attempt and waste context.
 - For reading and searching, use Read, Glob, Grep, LS as needed. Other tools (WebFetch, WebSearch, etc.) are available but rarely useful for in-scope review work.
@@ -350,11 +354,11 @@ PROHIBITED ACTIONS:
 OUTPUT PROCEDURE — strict:
 1. Construct the full agent_output JSON in your response.
 2. Write it to the OUTPUT PATH (single Write call).
-3. Invoke the validator: `python ~/.claude/skills/review/scripts/validate-findings.py <OUTPUT PATH>`. Use whatever path form your environment naturally provides (`~/`, `/c/Users/.../`, Windows-native) — the user's settings.json should permit all forms via wildcard prefix patterns. If the call is denied, abort and report the failure rather than retrying with permutations.
+3. Invoke the validator: `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py <OUTPUT PATH>`. `${CLAUDE_PLUGIN_ROOT}` is substituted by Claude Code to the plugin's install path before the command runs. If the call is denied, abort and report the failure rather than retrying with permutations.
 4. If the validator exits non-zero, read its error output, repair the JSON, Write again, validate again.
 5. **Hard cap: 3 attempts total** (1 initial + 2 retries). If the JSON does not validate after 3 attempts, return a structured failure message in your final response: `{"status": "failure", "reason": "<validator output>"}`. Do not return success without a passing validation.
 
-The agent_output schema lives at `~/.claude/skills/review/schemas/agent-output.schema.json`. Read it directly if you need to confirm field names and value constraints.
+The agent_output schema lives at `${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/agent-output.schema.json`. Read it directly if you need to confirm field names and value constraints.
 ```
 
 ## Critical Rules
@@ -367,11 +371,11 @@ The agent_output schema lives at `~/.claude/skills/review/schemas/agent-output.s
   - No `make install`, `make build`, `make run`, `make deploy`, or any target that installs or executes the program.
   - The Build & Checks agent is the only agent allowed to run anything (`make` check targets only — `format`, `lint`, `typecheck`, `test`, `coverage`).
 - **Writes are restricted by tool boundary, not just intent:**
-  - **Concern agents (`general-purpose` subagent_type)** may Write *only* to their pre-assigned `.tmp-review-findings/raw/<concern_slug>-<dimension_slug>.json` path. Any other Write — anywhere on disk, inside or outside the project — is a violation and the agent must stop and report.
+  - **Concern agents (`general-purpose` subagent_type)** may Write *only* to their pre-assigned `.tmp-review/raw/<concern_slug>-<dimension_slug>.json` path. Any other Write — anywhere on disk, inside or outside the project — is a violation and the agent must stop and report.
   - **Validation agents (`feature-dev:code-reviewer` subagent_type)** are structurally read-only — they cannot Write at all.
-  - **Main agent** writes only to `.tmp-review-findings/` and the three output files at the project root (`Review-<project-name>[-<slug>].json|.md|-supplementary.md`). No edits anywhere else.
+  - **Main agent** writes only to `.tmp-review/` and the three output files at the project root (`Findings-review[-<slug>].json|.md|-supplementary.md`). No edits anywhere else.
 - **Bash is restricted by tool boundary too:**
-  - **Concern agents:** Bash only to invoke `python ~/.claude/skills/review/scripts/validate-findings.py <their assigned output path>`. No other Bash command is permitted.
+  - **Concern agents:** Bash only to invoke `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py <their assigned output path>`. No other Bash command is permitted.
   - **Validation agents:** no Bash (structural).
   - **Main agent:** Bash limited to the skill's allowlisted scripts (bootstrap, validators, renderer, pre-fetch helpers).
 - **Prefer allowlisted commands** — agents receive the allowlist as context. Stick to pre-approved commands to avoid blocking the review on user approval prompts.

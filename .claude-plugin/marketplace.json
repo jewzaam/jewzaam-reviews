@@ -4,7 +4,7 @@
     "name": "Naveen Malik"
   },
   "metadata": {
-    "description": "Connected pipeline of review skills that produce standardized Review-*.md files and apply findings as isolated, tested commits."
+    "description": "Connected pipeline of review skills with a shared JSON handoff contract. Producer skills emit Findings-<skill>.json validated against schemas/findings.schema.json (markdown views rendered from it); apply-review consumes the JSON and emits Report-apply-review.json."
   },
   "plugins": [
     {
@@ -13,8 +13,8 @@
         "source": "github",
         "repo": "jewzaam/jewzaam-reviews"
       },
-      "description": "Review pipeline skills: produce standardized Review-*.md findings and apply them as one-commit-per-finding.",
-      "version": "0.1.0",
+      "description": "Review pipeline skills: producers emit Findings-<skill>.json; apply-review consumes them and emits Report-apply-review.json.",
+      "version": "0.2.0",
       "author": {
         "name": "Naveen Malik"
       }

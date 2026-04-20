@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/jewzaam/claude-skill-review/schemas/validation-input.schema.json",
+  "$id": "https://github.com/jewzaam/jewzaam-reviews/skills/review/schemas/validation-input.schema.json",
   "title": "Validation Input Batch",
   "description": "One batch of findings handed to a validator agent. Hard cap: 8 findings per batch.",
   "type": "object",

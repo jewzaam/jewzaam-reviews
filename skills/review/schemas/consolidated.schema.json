@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/jewzaam/claude-skill-review/schemas/consolidated.schema.json",
+  "$id": "https://github.com/jewzaam/jewzaam-reviews/skills/review/schemas/consolidated.schema.json",
   "title": "Consolidated Findings",
   "description": "Merged set of findings from all (concern, dimension) cells; no severity buckets, no IDs.",
   "type": "object",

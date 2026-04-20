@@ -1,7 +1,7 @@
 {
   "name": "jewzaam-reviews",
-  "version": "0.1.0",
-  "description": "Review pipeline skills: produce standardized Review-*.md findings (review, standards, update-pr, c4-reverse-engineer) and apply them as one-commit-per-finding (apply-review).",
+  "version": "0.2.0",
+  "description": "Review pipeline skills: producer skills (review, standards, update-pr, c4-reverse-engineer) emit Findings-<skill>.json (validated against schemas/findings.schema.json) plus a script-rendered .md view; apply-review consumes the JSON, commits one finding at a time, and emits Report-apply-review.json.",
   "author": {
     "name": "Naveen Malik"
   },

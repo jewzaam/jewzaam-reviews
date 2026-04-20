@@ -1,0 +1,48 @@
+{
+  "project": {"name": "sample"},
+  "findings": [
+    {
+      "artifact": "l2-c4-container.md",
+      "verdict": "DISCREPANCY",
+      "severity": "critical",
+      "title": "Container diagram shows PostgreSQL but code uses MongoDB",
+      "spec_says": "Application -> PostgreSQL (primary datastore)",
+      "code_says": "src/db/client.js connects to MongoDB via mongoose",
+      "evidence": "src/db/client.js:12 imports 'mongoose'; no postgres driver in package.json",
+      "locations": [
+        {"path": "docs/c4/l2-c4-container.md", "line": "34", "role": "requirement"},
+        {"path": "src/db/client.js", "line": "12", "role": "primary"}
+      ],
+      "issue": "Container diagram claims PostgreSQL but the code connects to MongoDB.",
+      "why_it_matters": "Architecture docs misrepresent the system, misleading any reader.",
+      "suggested_fix": "Update l2-c4-container.md to reflect MongoDB (or migrate to PostgreSQL)."
+    },
+    {
+      "artifact": "behavioral-spec.md",
+      "verdict": "MISSING",
+      "severity": "important",
+      "title": "Rate-limit behavior not documented",
+      "spec_says": "(no mention of rate limiting)",
+      "code_says": "src/server/middleware/rate-limit.js enforces 60 req/min",
+      "evidence": "rate-limit.js imported in src/server/app.js:8",
+      "locations": [
+        {"path": "docs/c4/behavioral-spec.md", "line": "1", "role": "requirement"},
+        {"path": "src/server/middleware/rate-limit.js", "line": "4", "role": "primary"}
+      ],
+      "issue": "Spec omits rate limiting, but middleware enforces it.",
+      "why_it_matters": "Clients hitting the limit will see surprising 429s.",
+      "suggested_fix": "Add a rate-limits section to behavioral-spec.md."
+    }
+  ],
+  "supplementary": {
+    "summary": [
+      {"artifact": "l1-c4-context.md", "confirmed": 5, "critical": 0, "important": 0, "suggestion": 0},
+      {"artifact": "l2-c4-container.md", "confirmed": 3, "critical": 1, "important": 0, "suggestion": 0},
+      {"artifact": "behavioral-spec.md", "confirmed": 12, "critical": 0, "important": 1, "suggestion": 0}
+    ],
+    "confirmed": [
+      {"artifact": "l1-c4-context.md", "claim": "Three external systems", "evidence": "src/integrations/ shows exactly 3 clients"},
+      {"artifact": "behavioral-spec.md", "claim": "Auth via JWT bearer tokens", "evidence": "middleware/auth.js:15"}
+    ]
+  }
+}

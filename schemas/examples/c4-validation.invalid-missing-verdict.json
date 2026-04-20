@@ -1,0 +1,22 @@
+{
+  "schema_version": "0.2.0",
+  "source": "c4-validation",
+  "project": {"name": "sample"},
+  "findings": [
+    {
+      "id": "C0",
+      "title": "no verdict",
+      "severity": "critical",
+      "content_hash": "cccccccccccccccc",
+      "artifact": "l2-c4-container.md",
+      "spec_says": "X",
+      "code_says": "Y",
+      "evidence": "Z",
+      "locations": [{"path": "docs/c4/l2-c4-container.md", "line": "1"}],
+      "issue": "verdict field is missing",
+      "why_it_matters": "schema rejects",
+      "suggested_fix": "add verdict: DISCREPANCY or MISSING"
+    }
+  ],
+  "issues": []
+}

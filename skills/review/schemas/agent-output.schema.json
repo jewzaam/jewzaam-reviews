@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/jewzaam/claude-skill-review/schemas/agent-output.schema.json",
+  "$id": "https://github.com/jewzaam/jewzaam-reviews/skills/review/schemas/agent-output.schema.json",
   "title": "Agent Output",
   "description": "JSON contract returned by a single review sub-agent for one (concern, dimension) cell.",
   "type": "object",

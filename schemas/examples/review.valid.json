@@ -1,0 +1,31 @@
+{
+  "schema_version": "0.2.0",
+  "source": "review",
+  "project": {"name": "sample", "scope_slug": "pr-42"},
+  "decomposition": [
+    {
+      "dimension_name": "auth subsystem",
+      "dimension_slug": "auth",
+      "dimension_scope": {"paths": ["src/auth/"]}
+    }
+  ],
+  "findings": [
+    {
+      "id": "C0",
+      "title": "Session tokens stored unencrypted in localStorage",
+      "severity": "critical",
+      "content_hash": "a1b2c3d4e5f6a7b8",
+      "concern_slug": "security",
+      "source_dimensions": ["auth"],
+      "impact": 90,
+      "likelihood": 70,
+      "effort_to_fix": 40,
+      "confidence": 85,
+      "locations": [{"path": "src/auth/session.js", "line": "42", "role": "primary"}],
+      "issue": "Tokens written to localStorage without encryption.",
+      "why_it_matters": "Any XSS vector can exfiltrate the session.",
+      "suggested_fix": "Move to httpOnly secure cookies or encrypt at rest with a per-session key."
+    }
+  ],
+  "issues": []
+}
