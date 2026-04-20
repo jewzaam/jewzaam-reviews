@@ -19,6 +19,25 @@ A Claude Code plugin bundling a connected pipeline of review skills. Producer sk
 /plugin install jewzaam-reviews@jewzaam/jewzaam-reviews
 ```
 
+## Permissions
+
+Skills invoke Python and Bash scripts from the plugin cache. To avoid repeated permission prompts, add these to your global (`~/.claude/settings.json`) or project (`.claude/settings.json`) allowlist:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash ~/.claude/plugins/cache/jewzaam-reviews/**)",
+      "Bash(python ~/.claude/plugins/cache/jewzaam-reviews/**)",
+      "Bash(python3 ~/.claude/plugins/cache/jewzaam-reviews/**)",
+      "Bash(~/.claude/plugins/cache/jewzaam-reviews/**)",
+      "Read(~/.claude/plugins/cache/jewzaam-reviews/**)",
+      "Read(~/.claude/plugins/marketplaces/jewzaam-reviews/**)"
+    ]
+  }
+}
+```
+
 ## Pipeline
 
 ```mermaid
