@@ -14,7 +14,7 @@
         "repo": "jewzaam/jewzaam-reviews"
       },
       "description": "Review pipeline skills: producers emit Findings-<skill>.json; apply-review consumes them and emits Report-apply-review.json.",
-      "version": "0.2.6",
+      "version": "0.2.7",
       "author": {
         "name": "Naveen Malik"
       }

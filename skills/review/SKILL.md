@@ -59,7 +59,7 @@ Perform a multi-agent review of a codebase by spinning up parallel review agents
 
 Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
 
-!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh ${CLAUDE_PLUGIN_ROOT}`
 
 ### Project Root (auto-detected)
 
