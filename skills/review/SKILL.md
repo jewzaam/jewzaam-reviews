@@ -45,7 +45,7 @@ Perform a multi-agent review of a codebase by spinning up parallel review agents
 
 ## Constraints
 
-- **Script paths use `~`:** When invoking any plugin script via Bash, replace the absolute home directory prefix with `~`. If a code block below shows `python /home/user/.claude/plugins/cache/.../script.py`, run it as `python ~/.claude/plugins/cache/.../script.py`. This applies to all `python`, `bash`, and direct script invocations throughout this skill. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
+- **Script paths use `~`:** Use the **Plugin Home** path from the Pre-Fetch section (starts with `~`) when constructing Bash commands for plugin scripts. Do not use absolute `/home/...` paths. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
 - **Read-only analysis of source code.** Never modify the user's source code or tests.
 - **No program execution.** Never install dependencies, run the program, or execute language runtimes directly (no `python -c`, `node`, `go run`, etc.) against the user's code.
 - **No package management.** Never run `pip`, `npm`, `cargo`, etc.
@@ -54,6 +54,12 @@ Perform a multi-agent review of a codebase by spinning up parallel review agents
 - **If a check requires a tool not present**, note it in the review as a recommendation — do not attempt to install or build it.
 
 ## Pre-Fetch
+
+### Plugin Home (auto-detected)
+
+Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
+
+!`echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|"`
 
 ### Project Root (auto-detected)
 

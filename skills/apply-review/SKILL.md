@@ -9,6 +9,12 @@ argument-hint: "[Findings-file.json] [C0 I1 S2...]"
 
 ## Pre-Fetch
 
+### Plugin Home (auto-detected)
+
+Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
+
+!`echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|"`
+
 ### Project Root (auto-detected)
 
 Absolute path of the project root. The main agent MUST substitute this value for any `./.tmp-apply-review/...` path it passes to a dispatched sub-agent, so the sub-agent has an unambiguous absolute Write target and cannot drift to `/tmp/` or any other directory.
@@ -54,7 +60,7 @@ On success, proceed to Step 0.
 
 ## Constraints
 
-- **Script paths use `~`:** When invoking any plugin script via Bash, replace the absolute home directory prefix with `~`. If a code block below shows `python /home/user/.claude/plugins/cache/.../script.py`, run it as `python ~/.claude/plugins/cache/.../script.py`. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
+- **Script paths use `~`:** Use the **Plugin Home** path from the Pre-Fetch section (starts with `~`) when constructing Bash commands for plugin scripts. Do not use absolute `/home/...` paths. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
 
 ## Process
 

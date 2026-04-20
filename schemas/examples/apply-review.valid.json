@@ -1,12 +1,32 @@
 {
-  "schema_version": "0.2.3",
+  "schema_version": "0.2.4",
   "source": "apply-review",
-  "project": {"name": "sample"},
+  "project": {
+    "name": "sample"
+  },
   "applied": [
-    {"finding_id": "C0", "outcome": "applied", "detail": "Fix committed", "commit_sha": "3a7f91c"},
-    {"finding_id": "I0", "outcome": "pending-commit", "detail": "Implemented in working tree; user handles commit"},
-    {"finding_id": "I1", "outcome": "skipped", "detail": "Out of scope per user filter"},
-    {"finding_id": "S0", "outcome": "failed", "detail": "Test suite failed after patch; reverted", "error_kind": "validation_failed"}
+    {
+      "finding_id": "C0",
+      "outcome": "applied",
+      "detail": "Fix committed",
+      "commit_sha": "3a7f91c"
+    },
+    {
+      "finding_id": "I0",
+      "outcome": "pending-commit",
+      "detail": "Implemented in working tree; user handles commit"
+    },
+    {
+      "finding_id": "I1",
+      "outcome": "skipped",
+      "detail": "Out of scope per user filter"
+    },
+    {
+      "finding_id": "S0",
+      "outcome": "failed",
+      "detail": "Test suite failed after patch; reverted",
+      "error_kind": "validation_failed"
+    }
   ],
   "findings": [],
   "issues": [

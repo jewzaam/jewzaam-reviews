@@ -1,9 +1,14 @@
 {
-  "schema_version": "0.2.3",
+  "schema_version": "0.2.4",
   "source": "review",
-  "project": {"name": "sample"},
+  "project": {
+    "name": "sample"
+  },
   "decomposition": [
-    {"dimension_name": "auth", "dimension_slug": "auth"}
+    {
+      "dimension_name": "auth",
+      "dimension_slug": "auth"
+    }
   ],
   "findings": [
     {
@@ -11,12 +16,19 @@
       "title": "no concern_slug",
       "severity": "critical",
       "content_hash": "aaaaaaaaaaaaaaaa",
-      "source_dimensions": ["auth"],
+      "source_dimensions": [
+        "auth"
+      ],
       "impact": 90,
       "likelihood": 70,
       "effort_to_fix": 40,
       "confidence": 85,
-      "locations": [{"path": "x.js", "line": "1"}],
+      "locations": [
+        {
+          "path": "x.js",
+          "line": "1"
+        }
+      ],
       "issue": "missing concern_slug",
       "why_it_matters": "schema rejects",
       "suggested_fix": "add concern_slug"

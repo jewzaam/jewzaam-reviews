@@ -1,15 +1,27 @@
 {
-  "schema_version": "0.2.3",
+  "schema_version": "0.2.4",
   "source": "apply-review",
-  "project": {"name": "sample"},
-  "applied": [{"finding_id": "C0", "outcome": "applied"}],
+  "project": {
+    "name": "sample"
+  },
+  "applied": [
+    {
+      "finding_id": "C0",
+      "outcome": "applied"
+    }
+  ],
   "findings": [
     {
       "id": "C0",
       "title": "apply-review must not emit findings",
       "severity": "critical",
       "content_hash": "dddddddddddddddd",
-      "locations": [{"path": "x", "line": "1"}],
+      "locations": [
+        {
+          "path": "x",
+          "line": "1"
+        }
+      ],
       "issue": "a",
       "why_it_matters": "b",
       "suggested_fix": "c"

@@ -1,11 +1,18 @@
 {
   "name": "jewzaam-reviews",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Review pipeline skills: producer skills (review, standards, update-pr, c4-reverse-engineer) emit Findings-<skill>.json (validated against schemas/findings.schema.json) plus a script-rendered .md view; apply-review consumes the JSON, commits one finding at a time, and emits Report-apply-review.json.",
   "author": {
     "name": "Naveen Malik"
   },
   "repository": "https://github.com/jewzaam/jewzaam-reviews",
   "license": "Apache-2.0",
-  "keywords": ["code-review", "review", "standards", "pull-request", "c4", "architecture"]
+  "keywords": [
+    "code-review",
+    "review",
+    "standards",
+    "pull-request",
+    "c4",
+    "architecture"
+  ]
 }

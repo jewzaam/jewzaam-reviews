@@ -7,9 +7,15 @@ description: Incorporate feedback into a pull request. Fetches PR review comment
 
 This skill performs NO write operations on GitHub. No comments, no pushes, no PR updates, no review submissions, no thread resolution. All GitHub interactions are read-only fetches. The user posts replies and pushes commits themselves.
 
-**Script paths use `~`:** When invoking any plugin script via Bash, replace the absolute home directory prefix with `~`. If a code block below shows `python /home/user/.claude/plugins/cache/.../script.py`, run it as `python ~/.claude/plugins/cache/.../script.py`. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
+**Script paths use `~`:** Use the **Plugin Home** path from the Pre-Fetch section (starts with `~`) when constructing Bash commands for plugin scripts. Do not use absolute `/home/...` paths. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
 
 ## Pre-Fetch
+
+### Plugin Home (auto-detected)
+
+Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
+
+!`echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|"`
 
 ### Project Root (auto-detected)
 
