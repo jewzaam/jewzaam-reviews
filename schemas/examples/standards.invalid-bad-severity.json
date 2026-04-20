@@ -1,7 +1,9 @@
 {
-  "schema_version": "0.2.3",
+  "schema_version": "0.2.4",
   "source": "standards",
-  "project": {"name": "sample"},
+  "project": {
+    "name": "sample"
+  },
   "findings": [
     {
       "id": "I0",
@@ -9,7 +11,12 @@
       "severity": "blocker",
       "content_hash": "bbbbbbbbbbbbbbbb",
       "subdomain": "common",
-      "locations": [{"path": "x.py", "line": "1"}],
+      "locations": [
+        {
+          "path": "x.py",
+          "line": "1"
+        }
+      ],
       "issue": "severity 'blocker' is not in the enum",
       "why_it_matters": "schema rejects",
       "suggested_fix": "use one of the four allowed severities"

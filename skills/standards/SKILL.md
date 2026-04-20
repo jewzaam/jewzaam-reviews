@@ -19,7 +19,7 @@ Audit a repository against the user's personal standards library at `~/source/st
 
 ## Constraints
 
-- **Script paths use `~`:** When invoking any plugin script via Bash, replace the absolute home directory prefix with `~`. If a code block below shows `python /home/user/.claude/plugins/cache/.../script.py`, run it as `python ~/.claude/plugins/cache/.../script.py`. This applies to all `python`, `bash`, and direct script invocations throughout this skill. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
+- **Script paths use `~`:** Use the **Plugin Home** path from the Pre-Fetch section (starts with `~`) when constructing Bash commands for plugin scripts. Do not use absolute `/home/...` paths. Do not use `&&` or `||` chaining — each script call must be a standalone Bash invocation.
 - **Read-only analysis.** Never modify source code, tests, or config.
 - **No program execution.** Never run the target project, install dependencies, or invoke language runtimes (`python`, `node`, `go run`, etc.).
 - **No package management.** Never run `pip`, `npm`, `cargo`, etc.
@@ -32,6 +32,12 @@ Audit a repository against the user's personal standards library at `~/source/st
 - **If review files already exist, overwrite them.**
 
 ## Pre-Fetch
+
+### Plugin Home (auto-detected)
+
+Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
+
+!`echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|"`
 
 ### Project Root (auto-detected)
 

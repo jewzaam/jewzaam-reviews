@@ -1,7 +1,9 @@
 {
-  "schema_version": "0.2.3",
+  "schema_version": "0.2.4",
   "source": "c4-reverse-engineer",
-  "project": {"name": "sample"},
+  "project": {
+    "name": "sample"
+  },
   "findings": [
     {
       "id": "C0",
@@ -12,7 +14,12 @@
       "spec_says": "X",
       "code_says": "Y",
       "evidence": "Z",
-      "locations": [{"path": "docs/c4/l2-c4-container.md", "line": "1"}],
+      "locations": [
+        {
+          "path": "docs/c4/l2-c4-container.md",
+          "line": "1"
+        }
+      ],
       "issue": "verdict field is missing",
       "why_it_matters": "schema rejects",
       "suggested_fix": "add verdict: DISCREPANCY or MISSING"
