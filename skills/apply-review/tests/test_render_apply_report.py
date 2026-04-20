@@ -119,3 +119,35 @@ def test_no_markdown_emitted(tmp_path):
     assert (tmp_path / "Report-apply-review.json").exists()
     md_files = list(tmp_path.glob("Report-apply-review.md"))
     assert md_files == []
+
+
+class TestValidateInput:
+    def test_valid_findings_file_passes(self, tmp_path):
+        findings = tmp_path / "Findings-review.json"
+        _write(
+            findings,
+            _load(PLUGIN_ROOT / "schemas" / "examples" / "review.valid.json"),
+        )
+        result = _run(["--validate-input", str(findings)])
+        assert result.returncode == 0, result.stderr
+        assert "validates against the shared schema" in result.stdout
+
+    def test_malformed_json_fails(self, tmp_path):
+        bad = tmp_path / "Findings-review.json"
+        bad.write_text("{ not valid", encoding="utf-8")
+        result = _run(["--validate-input", str(bad)])
+        assert result.returncode != 0
+        assert "not valid JSON" in result.stderr
+
+    def test_schema_violation_fails(self, tmp_path):
+        bad = tmp_path / "Findings-review.json"
+        doc = _load(PLUGIN_ROOT / "schemas" / "examples" / "review.valid.json")
+        doc["source"] = "unknown-source"  # violates the enum
+        _write(bad, doc)
+        result = _run(["--validate-input", str(bad)])
+        assert result.returncode != 0
+
+    def test_missing_file_fails(self, tmp_path):
+        result = _run(["--validate-input", str(tmp_path / "does-not-exist.json")])
+        assert result.returncode != 0
+        assert "not found" in result.stderr

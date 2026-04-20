@@ -137,14 +137,15 @@ def test_phase4_with_resolutions(tmp_path):
 
 def test_validation_failure_writes_no_files(tmp_path):
     bad = tmp_path / "bad.json"
+    # Invalid severity bucket — the renderer's assign_ids_per_bucket should
+    # KeyError or schema-validate-fail; either way no files are written.
     bad.write_text(
         json.dumps(
             {
                 "findings": [
                     {
-                        "id": "XX",  # invalid ID pattern
                         "title": "bad",
-                        "severity": "important",
+                        "severity": "bogus-bucket",
                         "locations": [{"path": "x", "line": "1"}],
                         "issue": "i",
                         "why_it_matters": "w",

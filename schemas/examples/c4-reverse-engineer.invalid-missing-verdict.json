@@ -1,6 +1,6 @@
 {
   "schema_version": "0.2.0",
-  "source": "c4-validation",
+  "source": "c4-reverse-engineer",
   "project": {"name": "sample"},
   "findings": [
     {

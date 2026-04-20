@@ -11,15 +11,26 @@
 
 set -euo pipefail
 
+# SKILL.md invokes this as `guidance.sh "$ARGUMENTS"` — a single quoted
+# string. Split internally: if the first whitespace-separated token is a
+# PR number, drop it; the remainder is guidance. Otherwise the entire
+# string is guidance.
+
 [ "$#" -ge 1 ] || exit 0
 
-if [[ "$1" =~ ^[0-9]+$ ]]; then
-  shift
+# $1 may be empty or may contain multiple tokens.
+all="$1"
+first_token="${all%% *}"
+
+if [[ "$first_token" =~ ^[0-9]+$ ]]; then
+  # Strip the leading PR number and any separator whitespace.
+  guidance="${all#"$first_token"}"
+  guidance="${guidance# }"
+else
+  guidance="$all"
 fi
 
-[ "$#" -ge 1 ] || exit 0
-
-guidance="$*"
+# Trim pure-whitespace and emit nothing if empty.
 [ -n "${guidance// /}" ] || exit 0
 
 cat <<EOF

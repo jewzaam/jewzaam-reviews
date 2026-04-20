@@ -14,7 +14,7 @@ Feeds PLATFORM verification claims in Phase 3 of the c4-reverse-engineer skill. 
 reported hit should appear in the generated spec's platform-branch coverage.
 
 Usage:
-    python -m scripts.find_platform_conditionals [root]
+    python skills/c4-reverse-engineer/scripts/find_platform_conditionals.py [root]
 """
 
 from __future__ import annotations

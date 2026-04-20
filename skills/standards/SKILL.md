@@ -2,7 +2,7 @@
 name: standards
 description: Audit a repository for conformance with the user's personal coding standards at ~/source/standards/. Spawns one agent per standards subdomain, reports applicability and gaps as a Findings-standards.json handoff consumable by /apply-review. Use when the user asks to check, audit, or validate a codebase against their standards library.
 disable-model-invocation: true
-allowed-tools: Bash(git remote -v),Bash(bash ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/applicability.sh),Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/render-standards.py *),Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *),Bash(cat ${CLAUDE_PLUGIN_ROOT}/resources/*)
+allowed-tools: Bash(git remote -v),Bash(bash ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/applicability.sh),Bash(python ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/render-standards.py *),Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh *),Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh)
 ---
 
 # Standards Skill
@@ -44,7 +44,7 @@ Wipes and recreates `.tmp-standards/` at the project root with a `.gitignore` of
 
 ### Shared Handoff Contract (auto-injected)
 
-!`cat ${CLAUDE_PLUGIN_ROOT}/resources/handoff-contract.md`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh`
 
 ## Process
 
@@ -59,6 +59,7 @@ Otherwise parse the subdomain blocks. Each `SUBDOMAIN:` line starts a new group;
 - Use Glob and Read to understand the project structure.
 - Identify the language, framework, build system, and test framework from top-level files (`pyproject.toml`, `package.json`, `go.mod`, `Makefile`, etc.).
 - Call `mcp__allowlist__get_allowed_permissions` once to discover pre-approved commands. Pass the list to every agent so they know what can run without prompting.
+- **Template files are reference material, not prescriptive content.** Some standards files live in a `templates/` subdirectory (e.g. `~/source/standards/python/templates/Makefile`, `~/source/standards/python/templates/pyproject.toml`). For these, the subdomain agent must compare the project's equivalent file against the template's *structure and approach* — never line-for-line content. Applicability is whether the project uses the relevant language/tool, regardless of how closely its file resembles the template's wording. This mirrors the explicit guidance in the Agent Prompt Template below, and must be echoed here so agents receive it before they start reading.
 
 ### 3. Launch Subdomain Agents in Parallel
 

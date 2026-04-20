@@ -33,12 +33,22 @@ PLUGIN_ROOT = SKILL_ROOT.parent.parent
 
 sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.envelope import (  # noqa: E402
+    assign_ids_per_bucket,
     build_envelope,
     content_hash,
+    format_locations_block,
     format_validation_error,
     load_issues_file,
     validate_envelope,
 )
+
+BUCKET_ORDER = ["critical", "important", "suggestion", "needs-review"]
+BUCKET_PREFIX = {
+    "critical": "C",
+    "important": "I",
+    "suggestion": "S",
+    "needs-review": "N",
+}
 
 SOURCE = "review"  # update-pr produces a review-shaped handoff
 
@@ -57,7 +67,6 @@ def _build_pr_envelope(pre_render: dict, pr_number: int, issues: list[dict]) -> 
     findings: list[dict] = []
     for raw in pre_render.get("findings", []):
         finding = {
-            "id": raw["id"],
             "title": raw["title"],
             "severity": raw.get("severity", "important"),
             "locations": raw["locations"],
@@ -75,6 +84,14 @@ def _build_pr_envelope(pre_render: dict, pr_number: int, issues: list[dict]) -> 
         if "pr_comment" in raw:
             finding["pr_comment"] = raw["pr_comment"]
         findings.append(finding)
+
+    # IDs are derived from severity via the shared helper. Pre-render JSON
+    # must NOT supply `id` — it is asigned per-bucket here.
+    findings = assign_ids_per_bucket(
+        findings,
+        bucket_order=BUCKET_ORDER,
+        prefix_map=BUCKET_PREFIX,
+    )
 
     supplementary = pre_render.get("supplementary", {})
     supplementary.setdefault("pr_number", pr_number)
@@ -97,33 +114,28 @@ def _build_pr_envelope(pre_render: dict, pr_number: int, issues: list[dict]) -> 
 
 
 def _finding_block(f: dict) -> str:
-    loc = f["locations"][0]
     pr = f.get("pr_comment")
     pr_line = ""
     if pr:
         pr_line = (
             f"- **PR comment:** {pr.get('author', '?')} #{pr.get('id', '?')}\n"
         )
+    locations = format_locations_block(f["locations"])
     return (
         f"**<{f['id']}>: {f['title']}**\n"
         f"{pr_line}"
-        f"- **File:** `{loc['path']}:{loc['line']}`\n"
+        f"- **Locations:**\n{locations}\n"
         f"- **Description:** {f['issue']}\n"
         f"- **Suggested fix:** {f['suggested_fix']}\n"
     )
 
 
-def render_markdown(envelope: dict) -> str:
-    supplementary = envelope.get("supplementary", {})
+def _render_header(supplementary: dict) -> list[str]:
     pr_number = supplementary.get("pr_number", "?")
-    findings = envelope["findings"]
-
-    parts: list[str] = []
-    parts.append(f"# Review Traceability: PR {pr_number}\n")
+    parts: list[str] = [f"# Review Traceability: PR {pr_number}\n"]
     pr_title = supplementary.get("pr_title", "")
     if pr_title:
         parts.append(f"PR: {pr_title}\n")
-
     counts = supplementary.get("counts", {})
     if counts:
         parts.append(
@@ -131,115 +143,158 @@ def render_markdown(envelope: dict) -> str:
             f"({counts.get('resolved', '?')} resolved, "
             f"{counts.get('unresolved', '?')} unresolved)\n"
         )
+    return parts
 
-    parts.append("## Comment Traceability\n")
-    parts.append(
-        "All unresolved PR comments, mapped to findings. Resolved comments excluded.\n"
-    )
 
+def _render_traceability(supplementary: dict) -> list[str]:
+    parts: list[str] = [
+        "## Comment Traceability\n",
+        "All unresolved PR comments, mapped to findings. Resolved comments excluded.\n",
+    ]
     traceability = supplementary.get("traceability") or {}
-    if traceability:
-        for reviewer, rows in sorted(traceability.items()):
-            parts.append(f"### {reviewer} ({len(rows)} threads)\n")
-            header = "| # | Comment | File | Finding |"
-            if any("resolution" in r for r in rows):
-                header = "| # | Comment | File | Finding | Resolution |"
-                parts.append(header)
-                parts.append("|---|---------|------|---------|------------|")
-                for i, row in enumerate(rows, start=1):
-                    parts.append(
-                        f"| {i} | {row.get('summary', '')} | "
-                        f"`{row.get('location', '')}` | "
-                        f"{row.get('finding', '—')} | "
-                        f"{row.get('resolution', '')} |"
-                    )
-            else:
-                parts.append(header)
-                parts.append("|---|---------|------|---------|")
-                for i, row in enumerate(rows, start=1):
-                    parts.append(
-                        f"| {i} | {row.get('summary', '')} | "
-                        f"`{row.get('location', '')}` | "
-                        f"{row.get('finding', '—')} |"
-                    )
-            parts.append("")
+    if not traceability:
+        return parts
+    for reviewer, rows in sorted(traceability.items()):
+        parts.append(f"### {reviewer} ({len(rows)} threads)\n")
+        has_resolution = any("resolution" in r for r in rows)
+        if has_resolution:
+            parts.append("| # | Comment | File | Finding | Resolution |")
+            parts.append("|---|---------|------|---------|------------|")
+            for i, row in enumerate(rows, start=1):
+                parts.append(
+                    f"| {i} | {row.get('summary', '')} | "
+                    f"`{row.get('location', '')}` | "
+                    f"{row.get('finding', '—')} | "
+                    f"{row.get('resolution', '')} |"
+                )
+        else:
+            parts.append("| # | Comment | File | Finding |")
+            parts.append("|---|---------|------|---------|")
+            for i, row in enumerate(rows, start=1):
+                parts.append(
+                    f"| {i} | {row.get('summary', '')} | "
+                    f"`{row.get('location', '')}` | "
+                    f"{row.get('finding', '—')} |"
+                )
+        parts.append("")
+    return parts
 
-    parts.append("## Findings\n")
+
+def _render_findings(findings: list[dict]) -> list[str]:
+    parts: list[str] = ["## Findings\n"]
     if findings:
         for f in findings:
             parts.append(_finding_block(f))
     else:
         parts.append("No findings.\n")
+    return parts
 
+
+def _render_resolutions(supplementary: dict) -> list[str]:
     resolutions = supplementary.get("resolutions")
-    if resolutions:
-        parts.append("## Resolutions\n")
-        draft_replies = resolutions.get("draft_replies") or []
-        if draft_replies:
-            parts.append("### Draft Replies\n")
-            for r in draft_replies:
-                parts.append(
-                    f"- [ ] **{r.get('reviewer', '?')} on `{r.get('location', '?')}`** "
-                    f"[{r.get('decision', '')}]"
-                )
-                parts.append(f"  > {r.get('summary', '')}")
-                parts.append(f"  **Draft reply:** {r.get('reply', '')}")
-            parts.append("")
+    if not resolutions:
+        return []
 
-        re_request = resolutions.get("re_request") or []
-        if re_request:
-            parts.append("### Re-Request Reviews\n")
-            for r in re_request:
-                parts.append(
-                    f"- [ ] **{r.get('reviewer', '?')}** — {r.get('note', '')}"
-                )
-            parts.append("")
+    parts: list[str] = ["## Resolutions\n"]
 
-        applied_github = resolutions.get("applied_via_github_suggestions") or []
-        if applied_github:
-            parts.append("### Applied via GitHub Suggestions\n")
-            for r in applied_github:
-                parts.append(
-                    f"- {r.get('reviewer', '?')} on `{r.get('location', '?')}` "
-                    f"— {r.get('summary', '')}"
-                )
-            parts.append("")
+    draft_replies = resolutions.get("draft_replies") or []
+    if draft_replies:
+        parts.append("### Draft Replies\n")
+        for r in draft_replies:
+            parts.append(
+                f"- [ ] **{r.get('reviewer', '?')} on `{r.get('location', '?')}`** "
+                f"[{r.get('decision', '')}]"
+            )
+            parts.append(f"  > {r.get('summary', '')}")
+            parts.append(f"  **Draft reply:** {r.get('reply', '')}")
+        parts.append("")
 
-        pending = resolutions.get("pending_local_edits") or []
-        if pending:
-            parts.append("### Pending Local Edits\n")
-            for r in pending:
-                parts.append(
-                    f"- {r.get('reviewer', '?')} on `{r.get('location', '?')}` — "
-                    f"{r.get('finding', '?')} — {r.get('summary', '')}"
-                )
-            parts.append("")
+    re_request = resolutions.get("re_request") or []
+    if re_request:
+        parts.append("### Re-Request Reviews\n")
+        for r in re_request:
+            parts.append(
+                f"- [ ] **{r.get('reviewer', '?')}** — {r.get('note', '')}"
+            )
+        parts.append("")
 
-        no_action = resolutions.get("no_action") or []
-        if no_action:
-            parts.append("### No Action Needed\n")
-            for r in no_action:
-                parts.append(f"- {r.get('reviewer', '?')} — {r.get('summary', '')}")
-            parts.append("")
+    applied_github = resolutions.get("applied_via_github_suggestions") or []
+    if applied_github:
+        parts.append("### Applied via GitHub Suggestions\n")
+        for r in applied_github:
+            parts.append(
+                f"- {r.get('reviewer', '?')} on `{r.get('location', '?')}` "
+                f"— {r.get('summary', '')}"
+            )
+        parts.append("")
 
+    pending = resolutions.get("pending_local_edits") or []
+    if pending:
+        parts.append("### Pending Local Edits\n")
+        for r in pending:
+            parts.append(
+                f"- {r.get('reviewer', '?')} on `{r.get('location', '?')}` — "
+                f"{r.get('finding', '?')} — {r.get('summary', '')}"
+            )
+        parts.append("")
+
+    no_action = resolutions.get("no_action") or []
+    if no_action:
+        parts.append("### No Action Needed\n")
+        for r in no_action:
+            parts.append(f"- {r.get('reviewer', '?')} — {r.get('summary', '')}")
+        parts.append("")
+
+    return parts
+
+
+def render_markdown(envelope: dict) -> str:
+    supplementary = envelope.get("supplementary", {})
+    parts: list[str] = []
+    parts.extend(_render_header(supplementary))
+    parts.extend(_render_traceability(supplementary))
+    parts.extend(_render_findings(envelope["findings"]))
+    parts.extend(_render_resolutions(supplementary))
     return "\n".join(parts)
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=Path, required=True)
-    parser.add_argument("--out-dir", type=Path, required=True)
-    parser.add_argument("--pr-number", type=int, required=True)
+    parser.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="pre-render JSON (findings[] + supplementary)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="directory for output files (typically the project root)",
+    )
+    parser.add_argument(
+        "--pr-number", type=int, required=True, help="PR number (positive integer)"
+    )
     parser.add_argument(
         "--issues",
         type=Path,
         default=None,
-        help="optional path to a JSON array of meta-issue objects",
+        help="optional JSON array of meta-issue objects (shared issue shape)",
     )
     args = parser.parse_args(argv)
 
-    with args.input.open("r", encoding="utf-8") as fh:
-        pre_render = json.load(fh)
+    if args.pr_number < 1:
+        parser.error(f"--pr-number must be a positive integer, got {args.pr_number}")
+
+    try:
+        with args.input.open("r", encoding="utf-8") as fh:
+            pre_render = json.load(fh)
+    except FileNotFoundError:
+        print(f"error: input file not found: {args.input}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"error: could not parse --input {args.input}: {exc}", file=sys.stderr)
+        return 1
 
     try:
         issues = load_issues_file(args.issues)

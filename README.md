@@ -53,7 +53,7 @@ Filenames carry the skill name, not the project name. Project identity lives ins
 
 ## Shared handoff schema
 
-All producer and consumer skills validate their JSON against `schemas/findings.schema.json`. The schema discriminates on a top-level `source` field (`review` / `standards` / `c4-validation` / `apply-review`) and carries a uniform `issues[]` array for meta-issues from the run. See `CLAUDE.md` for the invariants and `resources/handoff-contract.md` for the full contract.
+All producer and consumer skills validate their JSON against `schemas/findings.schema.json`. The schema discriminates on a top-level `source` field (`review` / `standards` / `c4-reverse-engineer` / `apply-review`) and carries a uniform `issues[]` array for meta-issues from the run. `update-pr` is absent from the enum by design — it emits review-shaped findings with optional `pr_comment` fields, under `source: "review"`. See `CLAUDE.md` for the invariants and `resources/handoff-contract.md` for the full contract.
 
 ## License
 

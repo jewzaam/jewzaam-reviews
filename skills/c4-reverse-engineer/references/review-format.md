@@ -2,7 +2,7 @@
 # C4 Validation Output Format
 
 Phase 6 produces structured validation findings consumed by
-`scripts/render-c4-validation.py`. The script writes the authoritative
+`scripts/render-c4-reverse-engineer.py`. The script writes the authoritative
 `Findings-c4-reverse-engineer.json` (validated against the plugin-root shared schema
 at `${CLAUDE_PLUGIN_ROOT}/schemas/findings.schema.json`) and renders the
 markdown from it. **Markdown is never hand-authored.**
@@ -26,7 +26,7 @@ edge case, it's `suggestion`.
 
 ## Pre-render JSON shape
 
-The main agent writes this file and hands it to `render-c4-validation.py`:
+The main agent writes this file and hands it to `render-c4-reverse-engineer.py`:
 
 ```json
 {
@@ -82,7 +82,7 @@ deterministically.
 Problems the Phase 6 run itself hit — sub-agent failures, missing artifacts,
 verification scripts that couldn't execute — go in a separate
 `.tmp-c4-reverse-engineer/issues.json` file (JSON array of `issue` objects per the
-shared schema). Pass it via `--issues` to `render-c4-validation.py`.
+shared schema). Pass it via `--issues` to `render-c4-reverse-engineer.py`.
 
 ## Rendered markdown layout
 

@@ -31,7 +31,7 @@ from scripts.envelope import (  # noqa: E402
 SOURCE = "apply-review"
 
 
-def _build_apply_envelope(pre_render: dict, project_name: str) -> dict:
+def _build_apply_review_envelope(pre_render: dict, project_name: str) -> dict:
     project = pre_render.get("project") or {"name": project_name}
     return build_envelope(
         source=SOURCE,
@@ -42,30 +42,86 @@ def _build_apply_envelope(pre_render: dict, project_name: str) -> dict:
     )
 
 
+def _validate_input(path: Path) -> int:
+    """Validate a Findings-*.json (or any shared-schema envelope) as input.
+
+    apply-review's main agent invokes this BEFORE any code changes so that
+    malformed input is caught and surfaced to the user — not parsed partially
+    and acted on.
+    """
+    if not path.exists():
+        print(f"error: input file not found: {path}", file=sys.stderr)
+        return 1
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except json.JSONDecodeError as exc:
+        print(f"error: {path} is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+    try:
+        validate_envelope(doc)
+    except jsonschema.ValidationError as exc:
+        print(format_validation_error(exc, "apply-review input"), file=sys.stderr)
+        return 1
+    print(f"input-validate: {path} validates against the shared schema")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--input",
         type=Path,
-        required=True,
         help=(
             "pre-render JSON with `applied[]` and optional `issues[]` and "
-            "`project` keys"
+            "`project` keys (required unless --validate-input is used)"
         ),
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
-        required=True,
         help="directory for the output JSON (typically the project root)",
     )
-    parser.add_argument("--project-name", required=True)
+    parser.add_argument("--project-name")
+    parser.add_argument(
+        "--validate-input",
+        type=Path,
+        default=None,
+        help=(
+            "validate-only mode: checks the given Findings-*.json against the "
+            "shared schema and exits. Used by the skill before acting on "
+            "input to fail fast on malformed producer output."
+        ),
+    )
     args = parser.parse_args(argv)
 
-    with args.input.open("r", encoding="utf-8") as fh:
-        pre_render = json.load(fh)
+    if args.validate_input is not None:
+        return _validate_input(args.validate_input)
 
-    envelope = _build_apply_envelope(pre_render, args.project_name)
+    # Report-emission mode requires the usual args.
+    missing = [
+        name
+        for name, value in (
+            ("--input", args.input),
+            ("--out-dir", args.out_dir),
+            ("--project-name", args.project_name),
+        )
+        if value is None
+    ]
+    if missing:
+        parser.error(f"the following arguments are required: {', '.join(missing)}")
+
+    try:
+        with args.input.open("r", encoding="utf-8") as fh:
+            pre_render = json.load(fh)
+    except FileNotFoundError:
+        print(f"error: input file not found: {args.input}", file=sys.stderr)
+        return 1
+    except json.JSONDecodeError as exc:
+        print(f"error: invalid JSON in {args.input}: {exc}", file=sys.stderr)
+        return 1
+
+    envelope = _build_apply_review_envelope(pre_render, args.project_name)
 
     try:
         validate_envelope(envelope)

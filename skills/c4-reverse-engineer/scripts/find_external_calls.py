@@ -25,7 +25,7 @@ Limitations:
       False positives are cheap to dismiss during Phase 3 verification.
 
 Usage:
-    python -m scripts.find_external_calls [root]
+    python skills/c4-reverse-engineer/scripts/find_external_calls.py [root]
 """
 
 from __future__ import annotations
@@ -134,10 +134,13 @@ def scan_file(path: Path) -> list[tuple[str, int, str]]:
                 stripped = line.strip()
                 if stripped.startswith(("#", "//", "/*", "*")):
                     continue
+                # Record every matching category per line; a single line can
+                # contain multiple kinds of external calls (e.g. requests.get
+                # inside subprocess.run). break-on-first would silently drop
+                # the secondary categories and mislead Phase 3.
                 for label, pattern in applicable:
                     if pattern.search(line):
                         hits.append((label, lineno, line.rstrip()))
-                        break
     except OSError:
         pass
     return hits

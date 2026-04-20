@@ -3,7 +3,6 @@
   "repo": "demo-repo",
   "findings": [
     {
-      "id": "I0",
       "title": "Extract duplicated error-handling into helper",
       "severity": "important",
       "locations": [{"path": "src/handlers.py", "line": "42", "role": "primary"}],
@@ -13,7 +12,6 @@
       "pr_comment": {"author": "reviewer1", "id": 987654321}
     },
     {
-      "id": "S0",
       "title": "Rename variable for clarity",
       "severity": "suggestion",
       "locations": [{"path": "src/handlers.py", "line": "58", "role": "primary"}],

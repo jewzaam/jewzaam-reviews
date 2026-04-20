@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json",
   "title": "Findings (cross-skill handoff)",
-  "description": "Shared JSON shape emitted by producer skills (review, standards, c4-validation) and consumer skill reports (apply-review). The document-level 'source' field discriminates which finding subtype is used and which top-level fields are required.",
+  "description": "Shared JSON shape emitted by producer skills (review, standards, c4-reverse-engineer) and consumer skill reports (apply-review). The document-level 'source' field discriminates which finding subtype is used and which top-level fields are required.",
   "type": "object",
   "required": ["schema_version", "source", "project", "findings", "issues"],
   "properties": {
@@ -11,7 +11,10 @@
       "description": "SemVer string, aligned with the plugin version at the time the document was written (.claude-plugin/plugin.json version). Consumers read this to identify which plugin release produced the envelope.",
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\\+([0-9a-zA-Z-]+(\\.[0-9a-zA-Z-]+)*))?$"
     },
-    "source": {"enum": ["review", "standards", "c4-validation", "apply-review"]},
+    "source": {
+      "description": "The producing skill, or the shape of the output for consumer skills. `update-pr` is absent deliberately — it emits review-shaped findings (with optional `pr_comment` fields) under `source: \"review\"`.",
+      "enum": ["review", "standards", "c4-reverse-engineer", "apply-review"]
+    },
     "project": {"$ref": "#/$defs/project"},
     "decomposition": {
       "type": "array",
@@ -52,7 +55,7 @@
       }
     },
     {
-      "if": {"properties": {"source": {"const": "c4-validation"}}, "required": ["source"]},
+      "if": {"properties": {"source": {"const": "c4-reverse-engineer"}}, "required": ["source"]},
       "then": {
         "properties": {
           "findings": {"items": {"$ref": "#/$defs/c4_finding"}}
@@ -206,10 +209,42 @@
       "type": "object",
       "required": ["finding_id", "outcome"],
       "properties": {
-        "finding_id": {"type": "string", "pattern": "^[CISN][0-9]+$"},
-        "outcome": {"enum": ["applied", "skipped", "failed"]},
-        "detail": {"type": "string"}
+        "finding_id": {
+          "type": "string",
+          "pattern": "^[CISN][0-9]+$",
+          "description": "Finding ID from the consumed Findings-*.json, e.g. C0, I3, S1."
+        },
+        "outcome": {
+          "enum": ["applied", "skipped", "failed", "pending-commit"],
+          "description": "applied = committed; skipped = no changes made; failed = attempted but errored; pending-commit = implemented in the working tree but left uncommitted (batch mode)."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Short free-text note (e.g. reason for skip/fail, or a human-readable summary)."
+        },
+        "commit_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{7,40}$",
+          "description": "Commit SHA of the change produced by this finding. Required semantics: set when outcome is 'applied'; absent for skipped/failed/pending-commit."
+        },
+        "error_kind": {
+          "enum": [
+            "permission_denied",
+            "subagent_failure",
+            "validation_failed",
+            "tool_unavailable",
+            "schema_rejected_input",
+            "other"
+          ],
+          "description": "Machine-readable error classification. Populated only when outcome is 'failed'; mirrors issue.kind so auditors can aggregate failures by cause."
+        }
       },
+      "allOf": [
+        {
+          "if": {"properties": {"outcome": {"const": "failed"}}, "required": ["outcome"]},
+          "then": {"required": ["error_kind"]}
+        }
+      ],
       "unevaluatedProperties": false
     },
     "pr_comment": {

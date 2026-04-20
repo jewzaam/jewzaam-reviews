@@ -27,6 +27,7 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.envelope import (  # noqa: E402
     assign_ids_per_bucket,
     build_envelope,
+    format_locations_block,
     format_validation_error,
     load_issues_file,
     validate_envelope,
@@ -71,11 +72,7 @@ def assign_buckets_and_ids(findings: list[dict], config: dict) -> list[dict]:
 
 
 def _format_finding_block(f: dict) -> str:
-    locations = "\n".join(
-        f"- `{loc['path']}:{loc['line']}`"
-        + (f" ({loc['role']})" if loc.get("role") and loc["role"] != "primary" else "")
-        for loc in f["locations"]
-    )
+    locations = format_locations_block(f["locations"])
     return (
         f"#### {f['id']}: {f['title']}\n\n"
         f"**Locations:**\n{locations}\n\n"
@@ -281,7 +278,11 @@ def main(argv: list[str]) -> int:
         encoding="utf-8",
     )
 
-    print(f"render: wrote {json_path}, {md_main_path}, {md_supp_path}")
+    issues_count = len(rendered.get("issues") or [])
+    print(
+        f"render: wrote {json_path}, {md_main_path}, {md_supp_path} "
+        f"({issues_count} issue(s) recorded)"
+    )
     return 0
 
 

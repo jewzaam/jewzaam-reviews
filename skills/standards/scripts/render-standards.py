@@ -18,19 +18,24 @@ Exits non-zero if validation fails; no files are written on validation failure.
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
 import jsonschema
+
+logger = logging.getLogger("render-standards")
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ROOT = SKILL_ROOT.parent.parent
 
 sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.envelope import (  # noqa: E402
+    _line_start,
     assign_ids_per_bucket,
     build_envelope,
     content_hash,
+    format_locations_block,
     format_validation_error,
     load_issues_file,
     validate_envelope,
@@ -47,10 +52,16 @@ BUCKET_ORDER = ["critical", "important", "suggestion"]
 
 
 def _standards_sort_key(f: dict) -> tuple:
+    """Sort by subdomain, then primary location (path, numeric line start), then title.
+
+    Line is parsed to an int so multi-digit line numbers order correctly
+    ('9' before '10'). Range values like '12-20' sort on the start.
+    """
+    first_loc = f["locations"][0]
     return (
         f["subdomain"],
-        f["locations"][0]["path"],
-        f["locations"][0]["line"],
+        first_loc["path"],
+        _line_start(first_loc.get("line", "")),
         f["title"],
     )
 
@@ -66,8 +77,12 @@ def _build_standards_envelope(
 
     findings: list[dict] = []
     for raw in pre_render.get("findings", []):
-        locations = raw.get("locations") or [raw["location"]]
-        title = raw["title"]
+        title = raw.get("title") or "?"
+        if "locations" not in raw or not raw["locations"]:
+            raise ValueError(
+                f'finding "{title}": missing required `locations` array'
+            )
+        locations = raw["locations"]
         subdomain = raw["subdomain"]
         findings.append(
             {
@@ -102,11 +117,11 @@ def _build_standards_envelope(
 
 
 def _format_finding_block(f: dict) -> str:
-    loc = f["locations"][0]
+    locations = format_locations_block(f["locations"])
     return (
         f"#### {f['id']}: {f['title']}\n\n"
         f"**Subdomain:** {f['subdomain']}\n\n"
-        f"**Location:** `{loc['path']}:{loc['line']}`\n\n"
+        f"**Locations:**\n{locations}\n\n"
         f"**Issue:** {f['issue']}\n\n"
         f"**Why it matters:** {f['why_it_matters']}\n\n"
         f"**Suggested fix:** {f['suggested_fix']}\n"
@@ -222,11 +237,7 @@ def main(argv: list[str]) -> int:
         "--input",
         type=Path,
         required=True,
-        help=(
-            "pre-render JSON with `findings[]` (each with subdomain + "
-            "severity + location + issue + why_it_matters + suggested_fix "
-            "+ title) and optional `supplementary` object"
-        ),
+        help="pre-render JSON (findings[] + supplementary)",
     )
     parser.add_argument(
         "--out-dir",
@@ -234,7 +245,9 @@ def main(argv: list[str]) -> int:
         required=True,
         help="directory for output files (typically the project root)",
     )
-    parser.add_argument("--project-name", required=True)
+    parser.add_argument(
+        "--project-name", required=True, help="project name used in output filenames"
+    )
     parser.add_argument(
         "--scope-slug",
         default="standards",
@@ -244,27 +257,55 @@ def main(argv: list[str]) -> int:
         "--issues",
         type=Path,
         default=None,
-        help="optional path to a JSON array of meta-issue objects",
+        help="optional JSON array of meta-issue objects (shared issue shape)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="verbose diagnostic logging to stderr",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress the success summary line on stdout",
     )
     args = parser.parse_args(argv)
 
-    with args.input.open("r", encoding="utf-8") as fh:
-        pre_render = json.load(fh)
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+    )
+    logger.debug("input=%s out-dir=%s project-name=%s", args.input, args.out_dir, args.project_name)
+
+    try:
+        with args.input.open("r", encoding="utf-8") as fh:
+            pre_render = json.load(fh)
+    except FileNotFoundError:
+        logger.error("input file not found: %s", args.input)
+        return 1
+    except json.JSONDecodeError as exc:
+        logger.error("could not parse --input %s: %s", args.input, exc)
+        return 1
 
     try:
         issues = load_issues_file(args.issues)
     except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        logger.error("%s", exc)
         return 1
 
-    envelope = _build_standards_envelope(
-        pre_render, args.project_name, args.scope_slug, issues
-    )
+    try:
+        envelope = _build_standards_envelope(
+            pre_render, args.project_name, args.scope_slug, issues
+        )
+    except ValueError as exc:
+        logger.error("%s", exc)
+        return 1
 
     try:
         validate_envelope(envelope)
     except jsonschema.ValidationError as exc:
-        print(format_validation_error(exc, "standards"), file=sys.stderr)
+        logger.error("%s", format_validation_error(exc, "standards"))
         return 1
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -283,7 +324,8 @@ def main(argv: list[str]) -> int:
         render_supplementary_markdown(envelope, args.project_name), encoding="utf-8"
     )
 
-    print(f"render-standards: wrote {json_path}, {md_main_path}, {md_supp_path}")
+    if not args.quiet:
+        print(f"render-standards: wrote {json_path}, {md_main_path}, {md_supp_path}")
     return 0
 
 
