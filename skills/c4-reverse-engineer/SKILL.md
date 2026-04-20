@@ -13,6 +13,7 @@ allowed-tools:
   - Read(${CLAUDE_SKILL_DIR}/references/*)
   - Bash(bash */scripts/bootstrap-tmp.sh *)
   - Bash(bash */scripts/print-handoff-contract.sh)
+  - Bash(bash */scripts/print-plugin-home.sh)
 
 ---
 
@@ -66,7 +67,7 @@ Apply classes to nodes: `NodeId["Label<br/><i>description</i>"]:::person`. Use `
 
 Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
 
-!`echo ${CLAUDE_PLUGIN_ROOT} | sed "s|^$HOME|~|"`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh`
 
 ### Project Root (auto-detected)
 
