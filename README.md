@@ -74,6 +74,18 @@ Two document types, two prefixes:
 
 Filenames carry the skill name, not the project name. Project identity lives inside the JSON envelope's `project.name` field (the working directory is the project, so repeating it in every filename was redundant). Scope suffixes are used when a skill supports multiple scoped runs (e.g., PR numbers for `update-pr`, scope slugs for `review`).
 
+## Development
+
+```
+make help               # Show all targets
+make check              # Run all checks (test + version-check)
+make test               # Run pytest across plugin + skills
+make version-check      # Validate semver consistency
+make version-bump-patch # Bump patch (e.g. 0.2.8 → 0.2.9)
+make version-bump-minor # Bump minor (e.g. 0.2.8 → 0.3.0)
+make version-bump-major # Bump major (e.g. 0.2.8 → 1.0.0)
+```
+
 ## Shared handoff schema
 
 All producer and consumer skills validate their JSON against `schemas/findings.schema.json`. The schema discriminates on a top-level `source` field (`review` / `standards` / `c4-reverse-engineer` / `apply-review`) and carries a uniform `issues[]` array for meta-issues from the run. `update-pr` is absent from the enum by design — it emits review-shaped findings with optional `pr_comment` fields, under `source: "review"`. See `CLAUDE.md` for the invariants and `resources/handoff-contract.md` for the full contract.
