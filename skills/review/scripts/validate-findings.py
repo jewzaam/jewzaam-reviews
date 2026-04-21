@@ -21,7 +21,7 @@ PLUGIN_ROOT = SKILL_ROOT.parent.parent
 SCHEMAS_DIR = SKILL_ROOT / "schemas"
 
 sys.path.insert(0, str(PLUGIN_ROOT))
-from scripts.envelope import safe_load_json  # noqa: E402
+from scripts.envelope import safe_load_json, schema_registry  # noqa: E402
 
 KNOWN_SCHEMAS = {
     "agent-output",
@@ -93,7 +93,7 @@ def main(argv: list[str]) -> int:
         print(f"error: invalid JSON: {exc}", file=sys.stderr)
         return 1
 
-    validator = jsonschema.Draft202012Validator(schema)
+    validator = jsonschema.Draft202012Validator(schema, registry=schema_registry())
     errors = sorted(
         validator.iter_errors(instance), key=lambda e: list(e.absolute_path)
     )

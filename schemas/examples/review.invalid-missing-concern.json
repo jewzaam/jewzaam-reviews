@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.2.12",
+  "schema_version": "0.3.0",
   "source": "review",
   "project": {
     "name": "sample"
@@ -19,10 +19,16 @@
       "source_dimensions": [
         "auth"
       ],
-      "impact": 90,
-      "likelihood": 70,
-      "effort_to_fix": 40,
-      "confidence": 85,
+      "runtime_scope": "service-external",
+      "runtime_scope_justification": "test fixture",
+      "failure_mode": "data-loss-or-security",
+      "failure_mode_justification": "test fixture",
+      "evidence_quality": "demonstrated",
+      "evidence_quality_justification": "test fixture",
+      "trace_origin": "entry-point",
+      "trace_origin_justification": "test fixture",
+      "effort_to_fix": "small",
+      "effort_to_fix_justification": "test fixture",
       "locations": [
         {
           "path": "x.js",

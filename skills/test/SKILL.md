@@ -47,4 +47,4 @@ CLAUDE_SKILL_DIR=${CLAUDE_SKILL_DIR}
 
 # Instructions
 
-Print every section heading above and its injected output. If any section shows "Shell command permission check failed" or similar error, report which section failed and the exact error message. Otherwise confirm all injections succeeded.
+Print every section heading above and its injected output.  Add a specific output for the plugin and marketplace versions derrived from the auto-injected env var paths. If any section shows "Shell command permission check failed" or similar error, report which section failed and the exact error message. Otherwise confirm all injections succeeded.

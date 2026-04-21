@@ -66,10 +66,10 @@ def _content_hash_for_finding(finding: dict) -> str:
 def _build_pr_envelope(pre_render: dict, pr_number: int, issues: list[dict]) -> dict:
     """Build the update-pr envelope with review-shaped findings and optional pr_comment links.
 
-    Normalizes findings with default severity ('important') and scores
-    (impact/likelihood/effort_to_fix=50, confidence=80) when fields are
-    absent from the pre-render input.
+    Normalizes findings with default severity ('important') and dimensions
+    when fields are absent from the pre-render input.
     """
+    _DEFAULT_JUSTIFICATION = "Assigned by update-pr default (no upstream dimension data)"
     project = pre_render.get("project") or {"name": pre_render.get("repo", "pr")}
     project.setdefault("scope_slug", f"pr-{pr_number}")
 
@@ -85,10 +85,16 @@ def _build_pr_envelope(pre_render: dict, pr_number: int, issues: list[dict]) -> 
             "content_hash": raw.get("content_hash") or _content_hash_for_finding(raw),
             "concern_slug": raw.get("concern_slug", "implementation"),
             "source_dimensions": raw.get("source_dimensions", [f"pr-{pr_number}"]),
-            "impact": raw.get("impact", 50),
-            "likelihood": raw.get("likelihood", 50),
-            "effort_to_fix": raw.get("effort_to_fix", 50),
-            "confidence": raw.get("confidence", 80),
+            "runtime_scope": raw.get("runtime_scope", "service-internal"),
+            "runtime_scope_justification": raw.get("runtime_scope_justification", _DEFAULT_JUSTIFICATION),
+            "failure_mode": raw.get("failure_mode", "degraded-behavior"),
+            "failure_mode_justification": raw.get("failure_mode_justification", _DEFAULT_JUSTIFICATION),
+            "evidence_quality": raw.get("evidence_quality", "inferred"),
+            "evidence_quality_justification": raw.get("evidence_quality_justification", _DEFAULT_JUSTIFICATION),
+            "trace_origin": raw.get("trace_origin", "component"),
+            "trace_origin_justification": raw.get("trace_origin_justification", _DEFAULT_JUSTIFICATION),
+            "effort_to_fix": raw.get("effort_to_fix", "small"),
+            "effort_to_fix_justification": raw.get("effort_to_fix_justification", _DEFAULT_JUSTIFICATION),
         }
         if "pr_comment" in raw:
             finding["pr_comment"] = raw["pr_comment"]

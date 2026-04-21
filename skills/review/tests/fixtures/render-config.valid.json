@@ -1,5 +1,0 @@
-{
-  "confidence_floor": 50,
-  "critical": {"min_priority": 50, "min_impact": 80},
-  "important": {"min_priority": 20}
-}

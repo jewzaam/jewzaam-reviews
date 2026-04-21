@@ -42,8 +42,10 @@ def _finding(
     *,
     chash: str,
     title: str,
-    impact: int,
-    likelihood: int,
+    runtime_scope: str = "service-internal",
+    failure_mode: str = "degraded-behavior",
+    evidence_quality: str = "demonstrated",
+    trace_origin: str = "component",
     concern: str = "implementation",
 ) -> dict:
     return {
@@ -51,10 +53,16 @@ def _finding(
         "concern_slug": concern,
         "source_dimensions": ["x"],
         "title": title,
-        "impact": impact,
-        "likelihood": likelihood,
-        "effort_to_fix": 30,
-        "confidence": 80,
+        "runtime_scope": runtime_scope,
+        "runtime_scope_justification": "test",
+        "failure_mode": failure_mode,
+        "failure_mode_justification": "test",
+        "evidence_quality": evidence_quality,
+        "evidence_quality_justification": "test",
+        "trace_origin": trace_origin,
+        "trace_origin_justification": "test",
+        "effort_to_fix": "small",
+        "effort_to_fix_justification": "test",
         "locations": [{"path": "src/a.py", "line": "1", "role": "primary"}],
         "issue": "i",
         "why_it_matters": "w",
@@ -68,8 +76,6 @@ class TestBatchFindings:
             _finding(
                 chash=f"{i:016x}",
                 title=f"f{i}",
-                impact=50 + i,
-                likelihood=50,
             )
             for i in range(20)
         ]
@@ -96,9 +102,9 @@ class TestBatchFindings:
 
     def test_findings_sorted_by_priority_descending(self, tmp_path: Path):
         findings = [
-            _finding(chash="0000000000000001", title="low", impact=10, likelihood=20),
-            _finding(chash="0000000000000002", title="high", impact=90, likelihood=80),
-            _finding(chash="0000000000000003", title="mid", impact=50, likelihood=50),
+            _finding(chash="0000000000000001", title="low", runtime_scope="documentation", failure_mode="unclear", evidence_quality="speculative", trace_origin="local"),
+            _finding(chash="0000000000000002", title="high", runtime_scope="service-external", failure_mode="data-loss-or-security", evidence_quality="demonstrated", trace_origin="entry-point"),
+            _finding(chash="0000000000000003", title="mid", runtime_scope="ci", failure_mode="build-break", evidence_quality="demonstrated", trace_origin="component"),
         ]
         consolidated = tmp_path / "consolidated.json"
         with consolidated.open("w", encoding="utf-8") as fh:
@@ -115,9 +121,9 @@ class TestBatchFindings:
         consolidated.findings so verdicts can be applied with
         consolidated.findings[index]. Sorting MUST NOT renumber it."""
         findings = [
-            _finding(chash="0000000000000010", title="A", impact=10, likelihood=10),
-            _finding(chash="0000000000000020", title="B", impact=90, likelihood=90),
-            _finding(chash="0000000000000030", title="C", impact=50, likelihood=50),
+            _finding(chash="0000000000000010", title="A", runtime_scope="documentation", failure_mode="unclear", evidence_quality="speculative", trace_origin="local"),
+            _finding(chash="0000000000000020", title="B", runtime_scope="service-external", failure_mode="data-loss-or-security", evidence_quality="demonstrated", trace_origin="entry-point"),
+            _finding(chash="0000000000000030", title="C", runtime_scope="ci", failure_mode="build-break", evidence_quality="demonstrated", trace_origin="component"),
         ]
         consolidated = tmp_path / "consolidated.json"
         with consolidated.open("w", encoding="utf-8") as fh:
@@ -147,8 +153,8 @@ class TestBatchFindings:
                         _finding(
                             chash="aaaaaaaaaaaaaaaa",
                             title="t",
-                            impact=50,
-                            likelihood=50,
+
+
                         )
                     ]
                 ),
@@ -168,8 +174,8 @@ class TestBatchFindings:
             _finding(
                 chash=f"{i:016x}",
                 title=f"f{i}",
-                impact=50,
-                likelihood=50,
+
+
             )
             for i in range(17)
         ]
@@ -180,17 +186,19 @@ class TestBatchFindings:
         result = _run(["--input", str(consolidated), "--output-dir", str(out)])
         assert result.returncode == 0, result.stderr
         schema = _load(SCHEMAS / "validation-input.schema.json")
+        from scripts.envelope import schema_registry
+        validator = jsonschema.Draft202012Validator(schema, registry=schema_registry())
         for batch_file in sorted(out.glob("batch-*-input.json")):
             data = _load(batch_file)
-            jsonschema.validate(instance=data, schema=schema)
+            validator.validate(data)
 
     def test_custom_batch_size_respected(self, tmp_path: Path):
         findings = [
             _finding(
                 chash=f"{i:016x}",
                 title=f"f{i}",
-                impact=50,
-                likelihood=50,
+
+
             )
             for i in range(10)
         ]
@@ -219,7 +227,7 @@ class TestBatchFindings:
     def test_batch_size_above_eight_rejected(self, tmp_path: Path):
         """Schema caps maxItems at 8; the script must enforce or reject."""
         findings = [
-            _finding(chash=f"{i:016x}", title=f"f{i}", impact=50, likelihood=50)
+            _finding(chash=f"{i:016x}", title=f"f{i}")
             for i in range(3)
         ]
         consolidated = tmp_path / "consolidated.json"
@@ -253,9 +261,9 @@ class TestBatchFindings:
         """Equal-priority findings must sort by content_hash so two runs
         produce identical batches."""
         findings = [
-            _finding(chash="bbbbbbbbbbbbbbbb", title="b", impact=50, likelihood=50),
-            _finding(chash="aaaaaaaaaaaaaaaa", title="a", impact=50, likelihood=50),
-            _finding(chash="cccccccccccccccc", title="c", impact=50, likelihood=50),
+            _finding(chash="bbbbbbbbbbbbbbbb", title="b"),
+            _finding(chash="aaaaaaaaaaaaaaaa", title="a"),
+            _finding(chash="cccccccccccccccc", title="c"),
         ]
         consolidated = tmp_path / "consolidated.json"
         with consolidated.open("w", encoding="utf-8") as fh:
