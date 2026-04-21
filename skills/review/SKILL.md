@@ -185,7 +185,7 @@ Each concern agent operates in two phases within its dimension scope:
 
 Each finding is scored on four integer scales (0–100). Names match the JSON schema fields exactly:
 
-- `impact` — how bad if the issue manifests / blast radius.
+- `impact` — blast radius on **production runtime behavior** if the issue manifests. Score against the production system, not developer experience or CI reliability. Documentation gaps, missing tests, CI tooling issues, and developer workflow problems score lower (typically 15–35) because they don't directly affect production runtime. Reserve high scores (70+) for issues that could cause production outages, data loss, security breaches, or incorrect behavior in the running application.
 - `likelihood` — probability the issue actually occurs in real use.
 - `effort_to_fix` — rough cost (lower = cheaper). Helps downstream tools prioritize quick wins.
 - `confidence` — the agent's certainty that this is a real issue with concrete evidence.
