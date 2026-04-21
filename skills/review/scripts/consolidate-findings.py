@@ -11,8 +11,9 @@ three merge passes:
      which defaults to primary). Within each group:
        - locations: union, dedup by (path, line)
        - suggested_fix: longest non-trivial (tie-break by source dimension order)
-       - impact, likelihood, confidence: max
-       - effort_to_fix: min
+       - runtime_scope, failure_mode, evidence_quality, trace_origin: max by ordinal
+       - effort_to_fix: min by ordinal
+       - justifications: from the finding that contributed the winning value
        - source_dimensions: sorted union of dimension_slug values
 
   2. Cross-cutting merge (threshold 0.7) — within the same concern_slug,
@@ -27,7 +28,7 @@ three merge passes:
      same observation; different angles (architecture vs. implementation)
      legitimately rephrase the issue differently. Merged finding's
      concern_slug is taken from the highest-priority contributor
-     (impact * likelihood, alphabetical tie-break).
+     (dimensional ordinal tuple, alphabetical tie-break).
 
 Each merged finding gets a stable content_hash: hex SHA-256 (truncated to 16
 chars) over (concern_slug, dimension_slug of first contributor, primary
@@ -52,14 +53,44 @@ SCHEMAS_DIR = REPO_ROOT / "schemas"
 PLUGIN_ROOT = REPO_ROOT.parent.parent
 
 sys.path.insert(0, str(PLUGIN_ROOT))
-from scripts.envelope import _line_start, content_hash, safe_load_json  # noqa: E402
+from scripts.envelope import _line_start, content_hash, safe_load_json, schema_registry  # noqa: E402
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+RUNTIME_SCOPE_ORDER = ["documentation", "tooling", "ci", "service-internal", "service-external"]
+FAILURE_MODE_ORDER = ["unclear", "confusion", "build-break", "degraded-behavior", "crash-or-outage", "data-loss-or-security"]
+EVIDENCE_QUALITY_ORDER = ["speculative", "inferred", "demonstrated"]
+TRACE_ORIGIN_ORDER = ["local", "component", "entry-point"]
+EFFORT_TO_FIX_ORDER = ["trivial", "small", "moderate", "large"]
+
+_DIMENSION_FIELDS = [
+    ("runtime_scope", RUNTIME_SCOPE_ORDER, max),
+    ("failure_mode", FAILURE_MODE_ORDER, max),
+    ("evidence_quality", EVIDENCE_QUALITY_ORDER, max),
+    ("trace_origin", TRACE_ORIGIN_ORDER, max),
+    ("effort_to_fix", EFFORT_TO_FIX_ORDER, min),
+]
+
+
+def _merge_dimension(group: list[dict], field: str, ordering: list[str], agg) -> tuple[str, str]:
+    """Return (winning_value, justification_from_winner) for a categorical dimension."""
+    values = [(ordering.index(f[field]), f) for f in group]
+    winner = agg(values, key=lambda t: t[0])
+    return winner[1][field], winner[1][f"{field}_justification"]
+
+
+def _dimension_priority(f: dict) -> tuple[int, int, int, int]:
+    return (
+        RUNTIME_SCOPE_ORDER.index(f["runtime_scope"]),
+        FAILURE_MODE_ORDER.index(f["failure_mode"]),
+        EVIDENCE_QUALITY_ORDER.index(f["evidence_quality"]),
+        TRACE_ORIGIN_ORDER.index(f["trace_origin"]),
+    )
 
 
 def _validate(instance: object, schema_path: Path) -> list[str]:
     schema = safe_load_json(schema_path)
-    validator = jsonschema.Draft202012Validator(schema)
+    validator = jsonschema.Draft202012Validator(schema, registry=schema_registry())
     return [
         f"{'/'.join(str(p) for p in err.absolute_path) or '<root>'}: {err.message}"
         for err in sorted(
@@ -131,19 +162,20 @@ def _merge_findings(group: list[dict]) -> dict:
     )
     suggested_fix = fixes_with_dim[0][0] if fixes_with_dim else first["suggested_fix"]
 
-    return {
+    merged = {
         "concern_slug": first["concern_slug"],
         "source_dimensions": sorted({f["_dimension_slug"] for f in group}),
         "title": first["title"],
-        "impact": max(f["impact"] for f in group),
-        "likelihood": max(f["likelihood"] for f in group),
-        "effort_to_fix": min(f["effort_to_fix"] for f in group),
-        "confidence": max(f["confidence"] for f in group),
         "locations": locations,
         "issue": first["issue"],
         "why_it_matters": first["why_it_matters"],
         "suggested_fix": suggested_fix,
     }
+    for field, ordering, agg in _DIMENSION_FIELDS:
+        val, justification = _merge_dimension(group, field, ordering, agg)
+        merged[field] = val
+        merged[f"{field}_justification"] = justification
+    return merged
 
 
 def _cross_cutting_merge(findings: list[dict], threshold: float) -> list[dict]:
@@ -169,8 +201,8 @@ def _cross_concern_merge(findings: list[dict], threshold: float) -> list[dict]:
     Threshold is typically lower than the within-concern threshold: same-line
     observations from different angles (architecture vs. implementation, etc.)
     legitimately phrase the issue differently. The merged finding's
-    concern_slug is taken from the highest-priority contributor (impact *
-    likelihood, tie-break alphabetical).
+    concern_slug is taken from the highest-priority contributor (dimensional
+    ordinal tuple, tie-break alphabetical).
     """
     if not findings:
         return []
@@ -228,8 +260,8 @@ def _merge_by_title_similarity(
         # become the merged record's prose.
         def _priority(idx: int) -> tuple:
             f = items[idx]
-            pri = f["impact"] * f["likelihood"] / 100
-            return (-pri, f["concern_slug"], f["title"])
+            dp = _dimension_priority(f)
+            return ((-dp[0], -dp[1], -dp[2], -dp[3]), f["concern_slug"], f["title"])
 
         ordered = sorted(group_indices, key=_priority)
         dominant = items[ordered[0]]
@@ -306,7 +338,7 @@ def _load_and_validate_raw(
     valid: list[dict] = []
     warnings: list[str] = []
     schema = safe_load_json(agent_schema)
-    validator = jsonschema.Draft202012Validator(schema)
+    validator = jsonschema.Draft202012Validator(schema, registry=schema_registry())
 
     for path in sorted(raw_dir.glob("*.json")):
         try:
@@ -414,10 +446,16 @@ def consolidate(
             "concern_slug": cleaned["concern_slug"],
             "source_dimensions": cleaned["source_dimensions"],
             "title": cleaned["title"],
-            "impact": cleaned["impact"],
-            "likelihood": cleaned["likelihood"],
+            "runtime_scope": cleaned["runtime_scope"],
+            "runtime_scope_justification": cleaned["runtime_scope_justification"],
+            "failure_mode": cleaned["failure_mode"],
+            "failure_mode_justification": cleaned["failure_mode_justification"],
+            "evidence_quality": cleaned["evidence_quality"],
+            "evidence_quality_justification": cleaned["evidence_quality_justification"],
+            "trace_origin": cleaned["trace_origin"],
+            "trace_origin_justification": cleaned["trace_origin_justification"],
             "effort_to_fix": cleaned["effort_to_fix"],
-            "confidence": cleaned["confidence"],
+            "effort_to_fix_justification": cleaned["effort_to_fix_justification"],
             "locations": cleaned["locations"],
             "issue": cleaned["issue"],
             "why_it_matters": cleaned["why_it_matters"],

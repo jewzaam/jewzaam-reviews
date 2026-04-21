@@ -30,15 +30,21 @@
           }
         },
         "action": {"type": "string", "enum": ["confirm", "rescore", "remove"]},
-        "new_scores": {
+        "new_dimensions": {
           "type": "object",
           "additionalProperties": false,
           "minProperties": 1,
           "properties": {
-            "impact": {"type": "integer", "minimum": 0, "maximum": 100},
-            "likelihood": {"type": "integer", "minimum": 0, "maximum": 100},
-            "effort_to_fix": {"type": "integer", "minimum": 0, "maximum": 100},
-            "confidence": {"type": "integer", "minimum": 0, "maximum": 100}
+            "runtime_scope": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/runtime_scope"},
+            "runtime_scope_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/runtime_scope_justification"},
+            "failure_mode": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/failure_mode"},
+            "failure_mode_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/failure_mode_justification"},
+            "evidence_quality": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/evidence_quality"},
+            "evidence_quality_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/evidence_quality_justification"},
+            "trace_origin": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/trace_origin"},
+            "trace_origin_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/trace_origin_justification"},
+            "effort_to_fix": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/effort_to_fix"},
+            "effort_to_fix_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/effort_to_fix_justification"}
           }
         },
         "reasoning": {"type": "string", "minLength": 1}
@@ -46,11 +52,11 @@
       "allOf": [
         {
           "if": {"properties": {"action": {"const": "rescore"}}},
-          "then": {"required": ["new_scores"]}
+          "then": {"required": ["new_dimensions"]}
         },
         {
           "if": {"properties": {"action": {"enum": ["confirm", "remove"]}}},
-          "then": {"not": {"required": ["new_scores"]}}
+          "then": {"not": {"required": ["new_dimensions"]}}
         }
       ]
     }

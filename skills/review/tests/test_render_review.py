@@ -41,8 +41,7 @@ class TestRenderReviewJson:
             [
                 "--input",
                 str(FIXTURES / "post-validation.sample.json"),
-                "--config",
-                str(SCHEMAS / "render-config.default.json"),
+
                 "--out-dir",
                 str(out_dir),
                 "--project-name",
@@ -90,8 +89,7 @@ class TestRenderReviewJson:
             [
                 "--input",
                 str(FIXTURES / "post-validation.sample.json"),
-                "--config",
-                str(SCHEMAS / "render-config.default.json"),
+
                 "--out-dir",
                 str(out_dir),
                 "--project-name",
@@ -110,8 +108,7 @@ class TestRenderReviewMarkdown:
             [
                 "--input",
                 str(FIXTURES / "post-validation.sample.json"),
-                "--config",
-                str(SCHEMAS / "render-config.default.json"),
+
                 "--out-dir",
                 str(tmp_path),
                 "--project-name",
@@ -132,8 +129,7 @@ class TestRenderReviewMarkdown:
             [
                 "--input",
                 str(FIXTURES / "post-validation.sample.json"),
-                "--config",
-                str(SCHEMAS / "render-config.default.json"),
+
                 "--out-dir",
                 str(tmp_path),
                 "--project-name",
@@ -155,8 +151,6 @@ class TestSharedSchemaCompliance:
         args = [
             "--input",
             str(FIXTURES / "post-validation.sample.json"),
-            "--config",
-            str(SCHEMAS / "render-config.default.json"),
             "--out-dir",
             str(tmp_path),
             "--project-name",
@@ -220,10 +214,16 @@ class TestSharedSchemaCompliance:
                             "concern_slug": "security",
                             "source_dimensions": ["x"],
                             "title": "missing content_hash",
-                            "impact": 80,
-                            "likelihood": 80,
-                            "effort_to_fix": 40,
-                            "confidence": 90,
+                            "runtime_scope": "service-external",
+                            "runtime_scope_justification": "test",
+                            "failure_mode": "data-loss-or-security",
+                            "failure_mode_justification": "test",
+                            "evidence_quality": "demonstrated",
+                            "evidence_quality_justification": "test",
+                            "trace_origin": "entry-point",
+                            "trace_origin_justification": "test",
+                            "effort_to_fix": "small",
+                            "effort_to_fix_justification": "test",
                             "locations": [{"path": "a.py", "line": "1"}],
                             "issue": "i",
                             "why_it_matters": "w",
@@ -238,8 +238,7 @@ class TestSharedSchemaCompliance:
             [
                 "--input",
                 str(bad_input),
-                "--config",
-                str(SCHEMAS / "render-config.default.json"),
+
                 "--out-dir",
                 str(tmp_path / "out"),
                 "--project-name",
@@ -254,20 +253,7 @@ class TestSharedSchemaCompliance:
 
 
 class TestAssignBucket:
-    """Direct unit tests for the bucket-boundary classification logic.
-
-    These pin the off-by-one behaviour at each threshold of the default
-    render-config.default.json:
-        confidence_floor = 60
-        critical = {min_priority: 40, min_impact: 70}
-        important = {min_priority: 25}
-    """
-
-    DEFAULT_CONFIG = {
-        "confidence_floor": 60,
-        "critical": {"min_priority": 40, "min_impact": 70},
-        "important": {"min_priority": 25},
-    }
+    """Direct unit tests for the categorical bucket classification logic."""
 
     def _module(self):
         import importlib.util
@@ -280,58 +266,131 @@ class TestAssignBucket:
     def _finding(
         self,
         *,
-        impact: int,
-        likelihood: int,
-        confidence: int,
-        effort_to_fix: int = 40,
+        runtime_scope: str = "service-internal",
+        failure_mode: str = "degraded-behavior",
+        evidence_quality: str = "demonstrated",
+        trace_origin: str = "entry-point",
+        effort_to_fix: str = "small",
     ) -> dict:
         return {
-            "impact": impact,
-            "likelihood": likelihood,
+            "runtime_scope": runtime_scope,
+            "failure_mode": failure_mode,
+            "evidence_quality": evidence_quality,
+            "trace_origin": trace_origin,
             "effort_to_fix": effort_to_fix,
-            "confidence": confidence,
         }
 
-    def test_confidence_at_floor_not_needs_review(self):
-        # confidence == confidence_floor (60) must NOT go to needs-review;
-        # only confidence < floor does.
+    def test_speculative_is_needs_review(self):
         mod = self._module()
-        f = self._finding(impact=80, likelihood=80, confidence=60)
-        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) != "needs-review"
+        f = self._finding(evidence_quality="speculative")
+        assert mod.assign_bucket(f) == "needs-review"
 
-    def test_confidence_below_floor_needs_review(self):
+    def test_critical_external_data_loss_entry_point(self):
         mod = self._module()
-        f = self._finding(impact=80, likelihood=80, confidence=59)
-        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "needs-review"
+        f = self._finding(
+            runtime_scope="service-external",
+            failure_mode="data-loss-or-security",
+            evidence_quality="demonstrated",
+            trace_origin="entry-point",
+        )
+        assert mod.assign_bucket(f) == "critical"
 
-    def test_critical_at_min_priority_and_impact(self):
-        # priority = 50*80/100 = 40 (at min_priority), impact >= 70 → critical
+    def test_critical_external_crash_entry_point(self):
         mod = self._module()
-        f = self._finding(impact=70, likelihood=58, confidence=90)  # 70*58/100 ≈ 40.6
-        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "critical"
+        f = self._finding(
+            runtime_scope="service-external",
+            failure_mode="crash-or-outage",
+            evidence_quality="demonstrated",
+            trace_origin="entry-point",
+        )
+        assert mod.assign_bucket(f) == "critical"
 
-    def test_critical_priority_below_threshold_drops_to_important(self):
-        # priority just under critical threshold, still above important
+    def test_critical_internal_data_loss_entry_point(self):
         mod = self._module()
-        f = self._finding(impact=70, likelihood=56, confidence=90)  # 70*56/100 = 39.2
-        bucket = mod.assign_bucket(f, self.DEFAULT_CONFIG)
-        assert bucket == "important"
+        f = self._finding(
+            runtime_scope="service-internal",
+            failure_mode="data-loss-or-security",
+            evidence_quality="demonstrated",
+            trace_origin="entry-point",
+        )
+        assert mod.assign_bucket(f) == "critical"
 
-    def test_critical_impact_below_min_drops_to_important(self):
-        # High priority but impact < 70 → falls out of critical, lands on important
+    def test_critical_requires_entry_point_trace(self):
         mod = self._module()
-        # impact=69, likelihood=80 → priority = 55.2 (>= important threshold)
-        f = self._finding(impact=69, likelihood=80, confidence=90)
-        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "important"
+        f = self._finding(
+            runtime_scope="service-external",
+            failure_mode="data-loss-or-security",
+            evidence_quality="demonstrated",
+            trace_origin="local",
+        )
+        assert mod.assign_bucket(f) == "suggestion"
 
-    def test_important_at_min_priority(self):
+    def test_important_demonstrated_entry_point_degraded(self):
         mod = self._module()
-        # priority = 50*50/100 = 25 (exactly at important threshold)
-        f = self._finding(impact=50, likelihood=50, confidence=70)
-        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "important"
+        f = self._finding(
+            runtime_scope="service-internal",
+            failure_mode="degraded-behavior",
+            evidence_quality="demonstrated",
+            trace_origin="entry-point",
+        )
+        assert mod.assign_bucket(f) == "important"
 
-    def test_important_below_min_priority_is_suggestion(self):
+    def test_important_demonstrated_component_crash(self):
         mod = self._module()
-        # priority = 48 * 50 / 100 = 24 (just under important min)
-        f = self._finding(impact=48, likelihood=50, confidence=70)
-        assert mod.assign_bucket(f, self.DEFAULT_CONFIG) == "suggestion"
+        f = self._finding(
+            runtime_scope="service-internal",
+            failure_mode="crash-or-outage",
+            evidence_quality="demonstrated",
+            trace_origin="component",
+        )
+        assert mod.assign_bucket(f) == "important"
+
+    def test_important_inferred_component_data_loss(self):
+        mod = self._module()
+        f = self._finding(
+            runtime_scope="service-external",
+            failure_mode="data-loss-or-security",
+            evidence_quality="inferred",
+            trace_origin="component",
+        )
+        assert mod.assign_bucket(f) == "important"
+
+    def test_important_ci_build_break_entry_point(self):
+        mod = self._module()
+        f = self._finding(
+            runtime_scope="ci",
+            failure_mode="build-break",
+            evidence_quality="demonstrated",
+            trace_origin="entry-point",
+        )
+        assert mod.assign_bucket(f) == "important"
+
+    def test_ci_confusion_is_suggestion(self):
+        mod = self._module()
+        f = self._finding(
+            runtime_scope="ci",
+            failure_mode="confusion",
+            evidence_quality="demonstrated",
+            trace_origin="local",
+        )
+        assert mod.assign_bucket(f) == "suggestion"
+
+    def test_documentation_is_suggestion(self):
+        mod = self._module()
+        f = self._finding(
+            runtime_scope="documentation",
+            failure_mode="confusion",
+            evidence_quality="demonstrated",
+            trace_origin="local",
+        )
+        assert mod.assign_bucket(f) == "suggestion"
+
+    def test_ci_unclear_is_suggestion(self):
+        mod = self._module()
+        f = self._finding(
+            runtime_scope="ci",
+            failure_mode="unclear",
+            evidence_quality="demonstrated",
+            trace_origin="local",
+        )
+        assert mod.assign_bucket(f) == "suggestion"

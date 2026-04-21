@@ -61,10 +61,11 @@ def _make_finding(
     title: str,
     path: str,
     line: str,
-    impact: int = 60,
-    likelihood: int = 60,
-    effort_to_fix: int = 30,
-    confidence: int = 70,
+    runtime_scope: str = "service-internal",
+    failure_mode: str = "degraded-behavior",
+    evidence_quality: str = "demonstrated",
+    trace_origin: str = "component",
+    effort_to_fix: str = "small",
     locations_extra: list[dict] | None = None,
 ) -> dict:
     locations = [{"path": path, "line": line, "role": "primary"}]
@@ -72,10 +73,16 @@ def _make_finding(
         locations.extend(locations_extra)
     return {
         "title": title,
-        "impact": impact,
-        "likelihood": likelihood,
+        "runtime_scope": runtime_scope,
+        "runtime_scope_justification": f"justification for {runtime_scope}",
+        "failure_mode": failure_mode,
+        "failure_mode_justification": f"justification for {failure_mode}",
+        "evidence_quality": evidence_quality,
+        "evidence_quality_justification": f"justification for {evidence_quality}",
+        "trace_origin": trace_origin,
+        "trace_origin_justification": f"justification for {trace_origin}",
         "effort_to_fix": effort_to_fix,
-        "confidence": confidence,
+        "effort_to_fix_justification": f"justification for {effort_to_fix}",
         "locations": locations,
         "issue": f"issue: {title}",
         "why_it_matters": "matters",
@@ -120,7 +127,7 @@ class TestConsolidateBasic:
 
     def test_dedup_by_concern_and_primary_location(self, tmp_path: Path):
         """Two agents flag the same (concern_slug, path:line) → one finding,
-        with max impact/likelihood/confidence and min effort_to_fix."""
+        with max severity per dimension and min effort_to_fix."""
         raw = tmp_path / "raw"
         raw.mkdir()
         _write_agent_output(
@@ -132,10 +139,11 @@ class TestConsolidateBasic:
                     title="SQL injection",
                     path="src/auth/lookup.py",
                     line="23",
-                    impact=70,
-                    likelihood=60,
-                    effort_to_fix=40,
-                    confidence=80,
+                    runtime_scope="service-internal",
+                    failure_mode="degraded-behavior",
+                    evidence_quality="inferred",
+                    trace_origin="local",
+                    effort_to_fix="moderate",
                 )
             ],
         )
@@ -148,10 +156,11 @@ class TestConsolidateBasic:
                     title="SQL injection",
                     path="src/auth/lookup.py",
                     line="23",
-                    impact=95,
-                    likelihood=80,
-                    effort_to_fix=20,
-                    confidence=90,
+                    runtime_scope="service-external",
+                    failure_mode="data-loss-or-security",
+                    evidence_quality="demonstrated",
+                    trace_origin="entry-point",
+                    effort_to_fix="small",
                 )
             ],
         )
@@ -163,10 +172,11 @@ class TestConsolidateBasic:
         data = _load(out)
         assert len(data["findings"]) == 1
         f = data["findings"][0]
-        assert f["impact"] == 95
-        assert f["likelihood"] == 80
-        assert f["confidence"] == 90
-        assert f["effort_to_fix"] == 20
+        assert f["runtime_scope"] == "service-external"
+        assert f["failure_mode"] == "data-loss-or-security"
+        assert f["evidence_quality"] == "demonstrated"
+        assert f["trace_origin"] == "entry-point"
+        assert f["effort_to_fix"] == "small"
         assert sorted(f["source_dimensions"]) == ["api", "auth"]
 
     def test_no_dedup_across_concerns(self, tmp_path: Path):
@@ -392,9 +402,10 @@ class TestConsolidateBasic:
                     title="_suppress_stdout() is not thread-safe",
                     path="src/transcription.py",
                     line="49-61",
-                    impact=80,
-                    likelihood=50,
-                    confidence=85,
+                    runtime_scope="service-external",
+                    failure_mode="crash-or-outage",
+                    evidence_quality="demonstrated",
+                    trace_origin="entry-point",
                 )
             ],
         )
@@ -410,9 +421,10 @@ class TestConsolidateBasic:
                     ),
                     path="src/transcription.py",
                     line="49-61",
-                    impact=75,
-                    likelihood=55,
-                    confidence=85,
+                    runtime_scope="service-internal",
+                    failure_mode="degraded-behavior",
+                    evidence_quality="demonstrated",
+                    trace_origin="component",
                 )
             ],
         )
@@ -424,10 +436,8 @@ class TestConsolidateBasic:
         data = _load(out)
         assert len(data["findings"]) == 1
         merged = data["findings"][0]
-        # Architecture wins on priority (80*50/100=40 > 75*55/100=41.25? actually
-        # implementation wins by 0.0125). Either is acceptable; check that one
-        # of the original concerns survives.
-        assert merged["concern_slug"] in {"architecture", "implementation"}
+        # Architecture has higher dimensional priority (service-external > service-internal).
+        assert merged["concern_slug"] == "architecture"
 
     def test_cross_concern_no_merge_when_titles_too_different(self, tmp_path: Path):
         """Same primary location, completely different titles → keep separate.
@@ -541,7 +551,8 @@ class TestConsolidateBasic:
         assert result.returncode == 0, result.stderr
         data = _load(out)
         schema = _load(SCHEMAS / "consolidated.schema.json")
-        jsonschema.validate(instance=data, schema=schema)
+        from scripts.envelope import schema_registry
+        jsonschema.Draft202012Validator(schema, registry=schema_registry()).validate(data)
 
 
 class TestIssuesOut:

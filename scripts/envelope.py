@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 import jsonschema
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT202012
 
 logger = logging.getLogger("envelope")
 
@@ -61,10 +63,33 @@ def load_shared_schema() -> dict:
         return json.load(fh)
 
 
+_REGISTRY_CACHE: Registry | None = None
+
+
+def schema_registry() -> Registry:
+    """Build a referencing.Registry containing the shared findings schema.
+
+    Skill-specific schemas use cross-file $ref to
+    findings.schema.json#/$defs/... for dimension definitions. This
+    registry resolves those references at validation time. The registry
+    is cached after the first call.
+    """
+    global _REGISTRY_CACHE
+    if _REGISTRY_CACHE is not None:
+        return _REGISTRY_CACHE
+    shared = load_shared_schema()
+    resource = Resource.from_contents(shared, default_specification=DRAFT202012)
+    _REGISTRY_CACHE = Registry().with_resource(shared["$id"], resource)
+    logger.debug("schema_registry: registered %s", shared["$id"])
+    return _REGISTRY_CACHE
+
+
 def validate_envelope(envelope: dict) -> None:
     """Raise `jsonschema.ValidationError` on failure; return on success."""
     logger.debug("validating envelope (source=%s)", envelope.get("source"))
-    jsonschema.Draft202012Validator(load_shared_schema()).validate(envelope)
+    jsonschema.Draft202012Validator(
+        load_shared_schema(), registry=schema_registry()
+    ).validate(envelope)
     logger.debug("envelope validates OK")
 
 

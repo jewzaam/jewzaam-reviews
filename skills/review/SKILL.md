@@ -179,20 +179,21 @@ All seven concern agents use `subagent_type: "general-purpose"`. They need both 
 
 Each concern agent operates in two phases within its dimension scope:
 1. **Establish baseline patterns:** read enough code in scope to understand the project's existing conventions for this concern. This grounds the review in the project's own patterns, not abstract ideals.
-2. **Assess against baseline:** flag deviations and gaps. Score each finding numerically.
+2. **Assess against baseline:** flag deviations and gaps. Classify each finding using the dimensional rubric below.
 
-#### Scoring (per finding)
+#### Dimensions (per finding)
 
-Each finding is scored on four integer scales (0–100). Names match the JSON schema fields exactly:
+Each finding is classified on five categorical dimensions. Names match the JSON schema fields exactly. Each dimension requires both a value and a `_justification` string explaining why the agent chose that value.
 
-- `impact` — blast radius on **production runtime behavior** if the issue manifests. Score against the production system, not developer experience or CI reliability. Documentation gaps, missing tests, CI tooling issues, and developer workflow problems score lower (typically 15–35) because they don't directly affect production runtime. Reserve high scores (70+) for issues that could cause production outages, data loss, security breaches, or incorrect behavior in the running application.
-- `likelihood` — probability the issue actually occurs in real use.
-- `effort_to_fix` — rough cost (lower = cheaper). Helps downstream tools prioritize quick wins.
-- `confidence` — the agent's certainty that this is a real issue with concrete evidence.
+- `runtime_scope` — where the affected code executes: `documentation` | `tooling` | `ci` | `service-internal` | `service-external`. Determine from file paths and project structure. Justification cites the file/module and its role.
+- `failure_mode` — concrete consequence if the issue manifests: `unclear` | `confusion` | `build-break` | `degraded-behavior` | `crash-or-outage` | `data-loss-or-security`. Justification describes the specific failure scenario.
+- `evidence_quality` — how strongly grounded in observable code evidence: `speculative` | `inferred` | `demonstrated`. Justification summarizes the evidence chain.
+- `trace_origin` — where the agent started tracing from: `local` | `component` | `entry-point`. For `entry-point`, the justification MUST name the entry point and trace the path. For `component`, identify the module boundary. For `local`, explain why no caller trace was performed.
+- `effort_to_fix` — remediation cost (not used in criticality): `trivial` | `small` | `moderate` | `large`. Justification describes the fix approach.
 
-**Sub-agents do not drop low-confidence findings.** Every finding the agent identifies enters the pipeline. Validators may rescore later (including increasing confidence); the render step segregates low-confidence items into the `needs-review` bucket.
+**Sub-agents do not drop low-evidence findings.** Every finding the agent identifies enters the pipeline. Validators may re-classify dimensions later; the render step maps dimension values to severity buckets via deterministic rules.
 
-The `agent-output` schema does not include `severity` or `id` fields — the schema rejects either. Severity buckets and IDs are computed at the render step from the numerical scores; sub-agents do not need to think about them.
+The `agent-output` schema does not include `severity` or `id` fields — the schema rejects either. Severity buckets and IDs are computed at the render step from the dimensional values; sub-agents do not need to think about them.
 
 #### Hard Exclusions — Do Not Report
 
@@ -232,9 +233,9 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/consolidate-findings.py \
 
 What the script does (you do **not** re-implement this in your reasoning):
 
-- **Pass 1: group by `(concern_slug, primary location)`.** Primary location is the first entry in `finding.locations` whose `role` is `primary` (or absent — defaulted to primary). Within each group: union `locations` (dedup by `path` + `line`), keep the longest non-trivial `suggested_fix` (tie-break by `dimension_slug`), take **max** of `impact`/`likelihood`/`confidence`, **min** of `effort_to_fix`, sorted union of `dimension_slug` → `source_dimensions`.
-- **Pass 2: cross-cutting merge within concern.** Within the same `concern_slug`, group remaining findings by title similarity (Jaccard over lowercased alphanumeric tokens, default threshold `--similarity-threshold 0.7`) and merge near-duplicates using the same numerical aggregation.
-- **Pass 3: cross-concern merge at same location.** Across different `concern_slug` values, findings whose primary location is identical are grouped and sub-clustered by title similarity at a (typically lower) threshold of `--cross-concern-threshold` (default 0.4). The merged finding's `concern_slug` is taken from the highest-priority contributor (`impact * likelihood / 100`, alphabetical tie-break). Same numerical aggregation rules as Pass 1.
+- **Pass 1: group by `(concern_slug, primary location)`.** Primary location is the first entry in `finding.locations` whose `role` is `primary` (or absent — defaulted to primary). Within each group: union `locations` (dedup by `path` + `line`), keep the longest non-trivial `suggested_fix` (tie-break by `dimension_slug`), take **max** ordinal of `runtime_scope`/`failure_mode`/`evidence_quality`/`trace_origin`, **min** ordinal of `effort_to_fix`, justifications from the winning contributor per dimension, sorted union of `dimension_slug` → `source_dimensions`.
+- **Pass 2: cross-cutting merge within concern.** Within the same `concern_slug`, group remaining findings by title similarity (Jaccard over lowercased alphanumeric tokens, default threshold `--similarity-threshold 0.7`) and merge near-duplicates using the same categorical aggregation.
+- **Pass 3: cross-concern merge at same location.** Across different `concern_slug` values, findings whose primary location is identical are grouped and sub-clustered by title similarity at a (typically lower) threshold of `--cross-concern-threshold` (default 0.4). The merged finding's `concern_slug` is taken from the highest-priority contributor (dimensional ordinal tuple, alphabetical tie-break). Same categorical aggregation rules as Pass 1.
 - **Content hash.** Each merged finding gets a 16-char hex SHA-256 prefix over `(concern_slug, dimension_slug of first contributor, primary location path:line, title)`.
 - **Decomposition.** Built from the per-agent `dimension_name`/`dimension_slug`/`dimension_scope`, deduplicated by `dimension_slug`.
 - **No IDs. No severity buckets.** Both are assigned only at render time.
@@ -264,12 +265,12 @@ What the script does (you do **not** re-implement this in your reasoning):
 Spawn `total_batches` validator agents in **parallel** in a single message:
 
 - `model: "sonnet"`, `subagent_type: "feature-dev:code-reviewer"` (read-only structurally).
-- Each validator opens the cited `finding.locations`, challenges accuracy and the four numerical scores, and returns a JSON object matching `validation-output.schema.json` directly in its response.
+- Each validator opens the cited `finding.locations`, challenges accuracy and the five categorical dimensions, and returns a JSON object matching `validation-output.schema.json` directly in its response.
 - **Challenge the premise, not just the symptom.** A finding may cite real code and describe a technically accurate gap, yet be wrong because its premise is invalid. Examples: (1) an IDOR finding against a filter parameter when endpoint-level RBAC already restricts access to privileged roles — the filter cannot be reached by unprivileged users; (2) a "missing test" finding when the behavior is already tested indirectly through a higher-level test; (3) a security concern about input validation when the framework (FastAPI/Pydantic) validates before the code runs. Validators must verify assumptions, not just locations.
 - **Remove positive observations.** If a finding's `issue` describes something working correctly and `suggested_fix` says "no action needed", "continue", or "maintain", remove it — it is praise, not a finding.
 - Each verdict is one of:
   - `"action": "confirm"` — finding stands as-is.
-  - `"action": "rescore"` — provide `new_scores` with any subset of the four fields. Validators may *increase* `confidence` if they find stronger evidence.
+  - `"action": "rescore"` — provide `new_dimensions` with any subset of the five dimension fields (value + justification pairs). Validators may upgrade `evidence_quality` or `trace_origin` if they find stronger evidence.
   - `"action": "remove"` — finding is wrong (e.g., cited line does not exist, issue is not real).
 - Each verdict carries `finding_ref: {index, content_hash}` so the main agent can detect array drift. **Copy the `index` and `content_hash` verbatim from the input batch finding** — do NOT renumber by batch-local position (0..N within the batch), do NOT recompute the hash, and do NOT pair a `content_hash` from one finding with the `index` of another. The main agent drops any verdict whose `content_hash` doesn't match `consolidated.findings[index].content_hash` — this is the guardrail against silent mutation of the wrong finding, but it also means a drift-producing verdict is silently discarded.
 
@@ -286,9 +287,9 @@ Verdict application procedure (in memory):
 
 - For each verdict, look up the finding by `index` and confirm `content_hash` matches. If the hash mismatches, log the discrepancy and skip the verdict (do not mutate the wrong finding).
 - `"confirm"`: no change.
-- `"rescore"`: shallow-merge `new_scores` into the finding's numerical fields.
+- `"rescore"`: shallow-merge `new_dimensions` into the finding's categorical fields.
 - `"remove"`: drop the finding from the list.
-- Findings with low `confidence` are kept; the renderer segregates them.
+- Findings with `speculative` evidence quality are kept; the renderer segregates them into `needs-review`.
 
 Write the post-validation findings to `./.tmp-review/post-validation.json` (same shape as `consolidated.json`) and any meta-issues to `./.tmp-review/issues.json` (see the injected Shared Handoff Contract for the issue shape).
 
@@ -305,7 +306,6 @@ Then run the renderer:
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/render-review.py \
   --input ./.tmp-review/post-validation.json \
-  --config ${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/render-config.default.json \
   --issues ./.tmp-review/issues.json \
   --out-dir <project root> \
   --project-name <project name> \
@@ -371,13 +371,14 @@ Your output is an **agent-output** document, NOT the cross-skill envelope. The f
 Do NOT emit envelope-level keys — `schema_version`, `source`, `project`, `decomposition`, `issues`, `supplementary`, `applied` — in your output. They are the main agent's job; including them here causes your output to fail validation and your entire file is dropped from consolidation.
 
 CRITICAL TYPE TRAPS — agents consistently get these wrong:
-- `impact`, `likelihood`, `effort_to_fix`, `confidence`: **integer** not string. Write `"impact": 80` NOT `"impact": "80"` or `"impact": "High"`
+- `runtime_scope`, `failure_mode`, `evidence_quality`, `trace_origin`, `effort_to_fix`: **enum string** from the allowed values only. Write `"runtime_scope": "ci"` NOT `"runtime_scope": "CI"` or `"runtime_scope": 50`
+- `*_justification` fields: **string**, minLength 1. Every dimension value requires its justification.
 - `locations[].line`: **string** not integer. Write `"line": "42"` NOT `"line": 42`. Ranges are allowed: `"line": "12-20"`
 - `locations[].path`: repo-relative POSIX path, **string**. Use `path` NOT `file`
 - `locations[].role`: optional, one of `"primary"`, `"related"`, `"callsite"`, `"requirement"` — no other values
-- Do NOT include `severity`, `id`, `snippet`, `context`, `line_start`, `line_end`, or any field not in the schema — `additionalProperties: false` rejects them
+- Do NOT include `severity`, `id`, `snippet`, `context`, `line_start`, `line_end`, `impact`, `likelihood`, `confidence`, or any field not in the schema — `additionalProperties: false` rejects them
 
-Do NOT drop low-confidence findings. Validators downstream may rescore; the render step segregates low-confidence items into a `needs-review` bucket.
+Do NOT drop speculative findings. Validators downstream may reclassify; the render step segregates speculative-evidence items into a `needs-review` bucket.
 
 LOCATIONS — every finding requires at least one entry in `locations`:
 - For "X is missing" findings, cite the spec/plan/standards file:line where the requirement is stated, with `role: "requirement"`.

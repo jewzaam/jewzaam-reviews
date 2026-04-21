@@ -4,7 +4,7 @@
 markdown files at the chosen output directory.
 
 This is the only step that:
-- Maps the four numerical scores to severity buckets via configurable thresholds
+- Maps categorical dimensions to severity buckets via deterministic rules
 - Assigns finding IDs (C0.., I0.., S0.., N0..) in stable per-bucket order
 
 Intermediate JSON in the pipeline carries no severity labels and no IDs.
@@ -48,30 +48,64 @@ BUCKET_PREFIX = {
 BUCKET_ORDER = ["critical", "important", "suggestion", "needs-review"]
 
 
-def assign_bucket(finding: dict, config: dict) -> str:
-    """Map a finding to a severity bucket based on confidence and priority scores.
+def assign_bucket(finding: dict) -> str:
+    rs = finding["runtime_scope"]
+    fm = finding["failure_mode"]
+    eq = finding["evidence_quality"]
+    to = finding["trace_origin"]
 
-    Returns 'needs-review' when confidence is below the floor, otherwise
-    'critical', 'important', or 'suggestion' based on priority thresholds.
-    """
-    confidence = finding["confidence"]
-    if confidence < config["confidence_floor"]:
+    if eq == "speculative":
         return "needs-review"
-    impact = finding["impact"]
-    likelihood = finding["likelihood"]
-    priority = impact * likelihood / 100
+
     if (
-        priority >= config["critical"]["min_priority"]
-        and impact >= config["critical"]["min_impact"]
+        eq == "demonstrated"
+        and to == "entry-point"
+        and rs == "service-external"
+        and fm in ("data-loss-or-security", "crash-or-outage")
     ):
         return "critical"
-    if priority >= config["important"]["min_priority"]:
+    if (
+        eq == "demonstrated"
+        and to == "entry-point"
+        and rs == "service-internal"
+        and fm == "data-loss-or-security"
+    ):
+        return "critical"
+
+    if (
+        eq == "demonstrated"
+        and to == "entry-point"
+        and rs in ("service-internal", "service-external")
+        and fm in ("crash-or-outage", "degraded-behavior")
+    ):
         return "important"
+    if (
+        eq == "demonstrated"
+        and to == "component"
+        and rs in ("service-internal", "service-external")
+        and fm in ("data-loss-or-security", "crash-or-outage")
+    ):
+        return "important"
+    if (
+        eq == "inferred"
+        and to in ("component", "entry-point")
+        and rs in ("service-internal", "service-external")
+        and fm in ("data-loss-or-security", "crash-or-outage")
+    ):
+        return "important"
+    if (
+        eq == "demonstrated"
+        and to == "entry-point"
+        and rs == "ci"
+        and fm == "build-break"
+    ):
+        return "important"
+
     return "suggestion"
 
 
-def assign_buckets_and_ids(findings: list[dict], config: dict) -> list[dict]:
-    annotated = [{**f, "severity": assign_bucket(f, config)} for f in findings]
+def assign_buckets_and_ids(findings: list[dict]) -> list[dict]:
+    annotated = [{**f, "severity": assign_bucket(f)} for f in findings]
     return assign_ids_per_bucket(
         annotated,
         bucket_order=BUCKET_ORDER,
@@ -84,8 +118,11 @@ def _format_finding_block(f: dict) -> str:
     return (
         f"#### {f['id']}: {f['title']}\n\n"
         f"**Locations:**\n{locations}\n\n"
-        f"**Scores:** impact {f['impact']}, likelihood {f['likelihood']}, "
-        f"effort_to_fix {f['effort_to_fix']}, confidence {f['confidence']}\n\n"
+        f"**Dimensions:** runtime_scope={f['runtime_scope']}, "
+        f"failure_mode={f['failure_mode']}, "
+        f"evidence_quality={f['evidence_quality']}, "
+        f"trace_origin={f['trace_origin']}, "
+        f"effort_to_fix={f['effort_to_fix']}\n\n"
         f"**Issue:** {f['issue']}\n\n"
         f"**Why it matters:** {f['why_it_matters']}\n\n"
         f"**Suggested fix:** {f['suggested_fix']}\n"
@@ -213,7 +250,6 @@ def main(argv: list[str]) -> int:
         required=True,
         help="post-validation findings JSON (consolidated shape)",
     )
-    parser.add_argument("--config", type=Path, required=True, help="render-config JSON")
     parser.add_argument(
         "--out-dir",
         type=Path,
@@ -270,19 +306,12 @@ def main(argv: list[str]) -> int:
         return 1
 
     try:
-        with args.config.open("r", encoding="utf-8") as fh:
-            config = json.load(fh)
-    except (FileNotFoundError, json.JSONDecodeError) as exc:
-        logger.error("could not load --config %s: %s", args.config, exc)
-        return 1
-
-    try:
         issues = load_issues_file(args.issues)
     except ValueError as exc:
         logger.error("%s", exc)
         return 1
 
-    rendered_findings = assign_buckets_and_ids(data.get("findings", []), config)
+    rendered_findings = assign_buckets_and_ids(data.get("findings", []))
     rendered = build_envelope(
         source=SOURCE,
         project=data.get("project", {"name": args.project_name}),
