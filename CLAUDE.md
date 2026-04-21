@@ -139,7 +139,7 @@ Pytest autodiscovers two test trees: `tests/` at the plugin root (cross-skill te
 4. **If the new skill produces findings or an action report**, write a render script that (a) builds the shared envelope, (b) validates against `schemas/findings.schema.json` before writing, (c) emits both JSON and any markdown view. Markdown must come from the JSON — never hand-authored.
 5. Add pytest coverage under `skills/<name>/tests/` (`make test` auto-discovers it).
 6. Update `README.md` skill table.
-7. Bump `version` in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (SemVer).
+7. Bump `version` with `make version-bump-patch` (or `-minor`/`-major`).
 
 ## Versioning
 
@@ -154,6 +154,8 @@ Enforcement: `make version-check` validates that
 The check runs on every PR via `.github/workflows/version-check.yml`. On push to main, the workflow also creates a `vX.Y.Z` git tag if one doesn't exist.
 
 Docs-only changes (CLAUDE.md, README.md, `.claude-plugin/` metadata other than `version`) do not require a bump — the script only looks at `schemas/` and `skills/` for bump-required detection.
+
+Bump targets: `make version-bump-patch`, `make version-bump-minor`, `make version-bump-major`. These update `plugin.json`, `marketplace.json`, and all fixture `schema_version` fields atomically. Run `make help` for the full target list.
 
 ## License
 

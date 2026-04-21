@@ -134,6 +134,7 @@ A **dimension** is a coherent slice of the review scope handed to a set of revie
 - **No cap on dimension count.** Large repos may produce 10+ dimensions and dozens of agents. Token cost is the explicit trade-off; the user has opted in.
 - **Overlap is allowed.** Dimensions may overlap (e.g., a per-package dim plus a cross-cutting "security" dim). Consolidation deduplicates findings.
 - **PR-scoped reviews:** derive dimensions from the changed file set. **Full-repo reviews:** derive from the project structure.
+- **PR-scoped shared infrastructure:** When a PR changes files in shared infrastructure (e.g., `core/utils/`, `core/models/`, `lib/`) alongside feature-specific files, group the shared files into their own dimension and mark it as `"shared_infrastructure": true` in the `dimension_scope`. Include this flag verbatim in each agent's prompt for that dimension, along with: *"This dimension covers shared infrastructure files that were modified in the PR. Only report findings that are **introduced or exposed by this PR's changes** — not pre-existing issues. If the code worked correctly before the PR and the PR does not change its behavior, it is not a finding for this review."*
 - For each dimension produce: a short human-readable name (e.g., `"auth subsystem"`), a filesystem-safe slug (lowercase, hyphens, ≤30 chars), and a `dimension_scope` object describing what the agent will review (e.g., `{"paths": ["src/auth/"]}` or `{"theme": "all CLI entry points", "paths": ["src/cli/"]}`).
 - Record the full dimension list — you will write it into the supplementary review file at the render step.
 
@@ -161,7 +162,7 @@ After decomposition produces N dimensions, launch **all `1 + 7×N` agents in a s
 | 2 | Implementation Quality | `implementation` | sonnet | Logic correctness, error handling, type safety, resource management, edge cases, concurrency. **Security excluded — see dedicated axis.** |
 | 3 | Test Quality & Coverage | `test` | sonnet | Test plan alignment, isolation, assertion quality, edge case coverage, mock usage, missing scenarios, fixture design. |
 | 4 | Maintainability & Standards | `maintainability` | haiku | Naming, duplication, import organization, function complexity, internal consistency, build system. **Documentation excluded — see dedicated axis.** |
-| 5 | Security | `security` | sonnet | Authn/authz, input validation, injection vectors, credential/secret handling, path traversal, deserialization, supply chain (deps), TLS/crypto, auth-related error leakage. |
+| 5 | Security | `security` | sonnet | Authn/authz, input validation, injection vectors, credential/secret handling, path traversal, deserialization, supply chain (deps), TLS/crypto, auth-related error leakage. **Auth chain rule:** before reporting filter-level or data-level access control issues (IDOR, horizontal privilege escalation), verify the full auth chain — endpoint-level guards (dependencies, decorators, middleware) may already prevent the attack. If endpoint auth restricts access to privileged roles only, filter-level IDOR is not possible and must not be reported. |
 | 6 | Documentation | `documentation` | haiku | README accuracy and completeness, docstrings, inline comments where non-obvious, examples, ADRs, changelog, public API docs, install/usage instructions. |
 | 7 | Observability | `observability` | sonnet | Log quality (levels, structured fields, sensitive data), error context (do exceptions carry enough info?), metrics, traces, debug affordances, alerting hooks. |
 
@@ -201,6 +202,7 @@ The `agent-output` schema does not include `severity` or `id` fields — the sch
 - Suggestions that repeat what a make target already checks
 - Missing docstrings on internal/private functions
 - Generic best-practice advice not grounded in a specific code location
+- **Positive observations or praise.** Every finding in `findings[]` must describe a *problem* — something that should change. If `suggested_fix` would say "no action needed", "continue doing this", or "maintain the practice", it is not a finding. Positive patterns belong in `cross_cutting_observations`, not `findings[]`.
 
 ### 4. Re-Validate Per-Agent JSON
 
@@ -263,6 +265,8 @@ Spawn `total_batches` validator agents in **parallel** in a single message:
 
 - `model: "sonnet"`, `subagent_type: "feature-dev:code-reviewer"` (read-only structurally).
 - Each validator opens the cited `finding.locations`, challenges accuracy and the four numerical scores, and returns a JSON object matching `validation-output.schema.json` directly in its response.
+- **Challenge the premise, not just the symptom.** A finding may cite real code and describe a technically accurate gap, yet be wrong because its premise is invalid. Examples: (1) an IDOR finding against a filter parameter when endpoint-level RBAC already restricts access to privileged roles — the filter cannot be reached by unprivileged users; (2) a "missing test" finding when the behavior is already tested indirectly through a higher-level test; (3) a security concern about input validation when the framework (FastAPI/Pydantic) validates before the code runs. Validators must verify assumptions, not just locations.
+- **Remove positive observations.** If a finding's `issue` describes something working correctly and `suggested_fix` says "no action needed", "continue", or "maintain", remove it — it is praise, not a finding.
 - Each verdict is one of:
   - `"action": "confirm"` — finding stands as-is.
   - `"action": "rescore"` — provide `new_scores` with any subset of the four fields. Validators may *increase* `confidence` if they find stronger evidence.
@@ -367,10 +371,11 @@ Your output is an **agent-output** document, NOT the cross-skill envelope. The f
 Do NOT emit envelope-level keys — `schema_version`, `source`, `project`, `decomposition`, `issues`, `supplementary`, `applied` — in your output. They are the main agent's job; including them here causes your output to fail validation and your entire file is dropped from consolidation.
 
 CRITICAL TYPE TRAPS — agents consistently get these wrong:
-- `impact`, `likelihood`, `effort_to_fix`, `confidence`: **integer** not string. Write `"impact": 80` NOT `"impact": "80"`
+- `impact`, `likelihood`, `effort_to_fix`, `confidence`: **integer** not string. Write `"impact": 80` NOT `"impact": "80"` or `"impact": "High"`
 - `locations[].line`: **string** not integer. Write `"line": "42"` NOT `"line": 42`. Ranges are allowed: `"line": "12-20"`
-- `locations[].path`: repo-relative POSIX path, **string**
-- Do NOT include `severity`, `id`, or any field not in the schema — `additionalProperties: false` rejects them
+- `locations[].path`: repo-relative POSIX path, **string**. Use `path` NOT `file`
+- `locations[].role`: optional, one of `"primary"`, `"related"`, `"callsite"`, `"requirement"` — no other values
+- Do NOT include `severity`, `id`, `snippet`, `context`, `line_start`, `line_end`, or any field not in the schema — `additionalProperties: false` rejects them
 
 Do NOT drop low-confidence findings. Validators downstream may rescore; the render step segregates low-confidence items into a `needs-review` bucket.
 
