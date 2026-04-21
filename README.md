@@ -16,7 +16,7 @@ A Claude Code plugin bundling a connected pipeline of review skills. Producer sk
 
 ```bash
 /plugin marketplace add jewzaam/jewzaam-reviews
-/plugin install jewzaam-reviews@jewzaam/jewzaam-reviews
+/plugin install jewzaam-reviews@jewzaam-reviews-marketplace
 ```
 
 ## Permissions
@@ -27,16 +27,16 @@ Skills invoke Python and Bash scripts from the plugin cache. To avoid repeated p
 {
   "permissions": {
     "allow": [
-      "Bash(bash ~/.claude/plugins/cache/jewzaam-reviews/**)",
-      "Bash(python ~/.claude/plugins/cache/jewzaam-reviews/**)",
-      "Bash(python3 ~/.claude/plugins/cache/jewzaam-reviews/**)",
-      "Bash(~/.claude/plugins/cache/jewzaam-reviews/**)",
-      "Read(~/.claude/plugins/cache/jewzaam-reviews/**)",
-      "Bash(bash ~/.claude/plugins/marketplaces/jewzaam-reviews/**)",
-      "Bash(python ~/.claude/plugins/marketplaces/jewzaam-reviews/**)",
-      "Bash(python3 ~/.claude/plugins/marketplaces/jewzaam-reviews/**)",
-      "Bash(~/.claude/plugins/marketplaces/jewzaam-reviews/**)",
-      "Read(~/.claude/plugins/marketplaces/jewzaam-reviews/**)"
+      "Bash(bash ~/.claude/plugins/cache/jewzaam-reviews-marketplace/**)",
+      "Bash(python ~/.claude/plugins/cache/jewzaam-reviews-marketplace/**)",
+      "Bash(python3 ~/.claude/plugins/cache/jewzaam-reviews-marketplace/**)",
+      "Bash(~/.claude/plugins/cache/jewzaam-reviews-marketplace/**)",
+      "Read(~/.claude/plugins/cache/jewzaam-reviews-marketplace/**)",
+      "Bash(bash ~/.claude/plugins/marketplaces/jewzaam-reviews-marketplace/**)",
+      "Bash(python ~/.claude/plugins/marketplaces/jewzaam-reviews-marketplace/**)",
+      "Bash(python3 ~/.claude/plugins/marketplaces/jewzaam-reviews-marketplace/**)",
+      "Bash(~/.claude/plugins/marketplaces/jewzaam-reviews-marketplace/**)",
+      "Read(~/.claude/plugins/marketplaces/jewzaam-reviews-marketplace/**)"
     ]
   }
 }
