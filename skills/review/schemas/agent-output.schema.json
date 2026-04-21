@@ -89,7 +89,7 @@
       ],
       "properties": {
         "title": {"type": "string", "minLength": 1, "maxLength": 120, "description": "Short human-readable title for the finding (<=120 chars)."},
-        "impact": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Blast radius if the issue manifests. 0-100 integer."},
+        "impact": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Blast radius on production runtime behavior if the issue manifests. Score against the production system, not developer experience or CI reliability. Documentation gaps, missing tests, CI tooling issues, and developer workflow problems score lower (typically 15-35). Reserve 70+ for production outages, data loss, security breaches, or incorrect runtime behavior. 0-100 integer."},
         "likelihood": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Probability the issue actually occurs in real use. 0-100 integer."},
         "effort_to_fix": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Rough cost to remediate; lower = cheaper. 0-100 integer."},
         "confidence": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Agent's certainty this is a real issue grounded in concrete evidence. 0-100 integer."},
