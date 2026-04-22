@@ -185,11 +185,18 @@ Each concern agent operates in two phases within its dimension scope:
 
 Each finding is classified on five categorical dimensions. Names match the JSON schema fields exactly. Each dimension requires both a value and a `_justification` string explaining why the agent chose that value.
 
-- `runtime_scope` — where the affected code executes: `documentation` | `tooling` | `ci` | `service-internal` | `service-external`. Determine from file paths and project structure. Justification cites the file/module and its role.
-- `failure_mode` — concrete consequence if the issue manifests: `unclear` | `confusion` | `build-break` | `degraded-behavior` | `crash-or-outage` | `data-loss-or-security`. Justification describes the specific failure scenario.
-- `evidence_quality` — how strongly grounded in observable code evidence: `speculative` | `inferred` | `demonstrated`. Justification summarizes the evidence chain.
-- `trace_origin` — where the agent started tracing from: `local` | `component` | `entry-point`. For `entry-point`, the justification MUST name the entry point and trace the path. For `component`, identify the module boundary. For `local`, explain why no caller trace was performed.
+- `runtime_scope` — where the affected code executes: `documentation` | `tooling` | `ci` | `service-internal` | `service-external`. Determine from file paths and project structure. Justification cites the file/module and its role. **Test coverage gaps use `ci`** — a missing test would execute in CI, not in production. Do not use `service-internal` or `service-external` for a finding about a missing test; those scopes describe production runtime code with a demonstrated or inferred defect.
+- `failure_mode` — concrete consequence if the issue manifests: `unclear` | `confusion` | `build-break` | `degraded-behavior` | `crash-or-outage` | `data-loss-or-security`. Justification describes the specific failure scenario. The failure must be **current**, not hypothetical — "if a future regression occurs" is not a failure mode, it is the absence of one. Use `unclear` when the system currently works correctly and the finding is about coverage or observability gaps.
+- `evidence_quality` — how strongly grounded in observable code evidence: `speculative` | `inferred` | `demonstrated`. Justification summarizes the evidence chain. **`demonstrated` requires demonstrating a failure**, not demonstrating the absence of a test. "I can prove no test exists" is not demonstrated evidence of a bug — use `inferred` if you can identify a plausible failure scenario the test would catch, or `speculative` if you cannot.
+- `trace_origin` — where the agent started tracing from: `local` | `component` | `entry-point`. For `entry-point`, the justification MUST name the entry point and trace the path. For `component`, identify the module boundary. For `local`, explain why no caller trace was performed. **Tracing to working code and noting "but there's no test" is not an entry-point trace** — the trace must lead to a problematic outcome. For test coverage gaps, use `local`.
 - `effort_to_fix` — remediation cost (not used in criticality): `trivial` | `small` | `moderate` | `large`. Justification describes the fix approach.
+
+**Split test gaps from production defects.** When reviewing code, you may notice both a potential defect in production code AND a missing test that would catch it. These are two separate findings:
+
+1. **The defect** — scored with the production code's dimensions (`runtime_scope=service-*`, failure mode of the actual bug, evidence quality based on whether you can demonstrate the bug from the code). This finding reaches important or critical on its own merits.
+2. **The test gap** — scored as `runtime_scope=ci`, `failure_mode=unclear` (the system currently works), `evidence_quality=demonstrated` (the absence of the test is observable). This finding lands at suggestion, which is appropriate for coverage gaps.
+
+If you cannot demonstrate or infer the defect from the code — you just think a test should exist — report only the test gap. Do not inflate it with the production code's dimensions.
 
 **Sub-agents do not drop low-evidence findings.** Every finding the agent identifies enters the pipeline. Validators may re-classify dimensions later; the render step maps dimension values to severity buckets via deterministic rules.
 
@@ -255,7 +262,7 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/batch-findings.py \
 
 What the script does (you do **not** re-implement this in your reasoning):
 
-- Sorts findings by `priority` (= `impact * likelihood / 100`) descending; deterministic tie-break on `content_hash`.
+- Sorts findings by dimensional priority (ordinal tuple of `runtime_scope`, `failure_mode`, `evidence_quality`, `trace_origin`) descending; deterministic tie-break on `content_hash`.
 - Slices into batches of at most **8** findings each (the spec's hard cap; `--batch-size` overrides but cannot exceed 8).
 - Writes `batch-<N>-input.json` per batch containing `{batch_number, total_batches, findings: [...]}`.
 - Each batch finding's `index` field is its **original position in `consolidated.findings`** — verdict application uses `consolidated.findings[verdict.finding_ref.index]`. Sorting does NOT renumber it.
@@ -313,7 +320,7 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/render-review.py \
 ```
 
 Skill-specific renderer behavior (on top of the shared contract):
-- Maps each finding to a severity bucket (`critical | important | suggestion | needs-review`) using the threshold config.
+- Maps each finding to a severity bucket (`critical | important | suggestion | needs-review`) using deterministic rules over the categorical dimensions.
 - Assigns IDs in stable per-bucket order: `C0..`, `I0..`, `S0..`, `N0..`.
 - Writes three files: `Findings-review[-<slug>].json`, `.md`, `-supplementary.md`.
 

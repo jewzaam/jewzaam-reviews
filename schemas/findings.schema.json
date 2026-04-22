@@ -104,23 +104,23 @@
     },
     "runtime_scope": {
       "enum": ["documentation", "tooling", "ci", "service-internal", "service-external"],
-      "description": "Where the affected code executes in the deployment lifecycle. Values listed from least to most severe: documentation — non-executable content (e.g., markdown, comments, READMEs). tooling — developer tooling and local scripts that never execute in CI or production. ci — CI/CD pipelines and build infrastructure; executes during integration but not at production runtime. service-internal — production runtime code not directly exposed to untrusted input. service-external — production runtime code directly exposed to external users or untrusted input."
+      "description": "Where the affected code executes in the deployment lifecycle. Values listed from least to most severe: documentation — non-executable content (e.g., markdown, comments, READMEs). tooling — developer tooling and local scripts that never execute in CI or production. ci — CI/CD pipelines and build infrastructure; executes during integration but not at production runtime. Findings about missing or incomplete tests use ci because tests execute in CI, not in production. Use service-internal or service-external only for findings about defects in production runtime code, not for test coverage gaps. service-internal — production runtime code not directly exposed to untrusted input. service-external — production runtime code directly exposed to external users or untrusted input. When a finding identifies both a production defect and a test gap, report them as separate findings: the defect uses service-internal or service-external; the test gap uses ci."
     },
     "runtime_scope_justification": {
       "type": "string", "minLength": 1,
-      "description": "Cite the file/module and explain its role in the deployment lifecycle."
+      "description": "Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test."
     },
     "failure_mode": {
       "enum": ["unclear", "confusion", "build-break", "degraded-behavior", "crash-or-outage", "data-loss-or-security"],
-      "description": "The category of consequence if the issue manifests. Values listed from least to most severe: unclear — no specific failure scenario can be identified; the issue is stylistic, structural, or speculative. confusion — misleads developers or users (e.g., incorrect docs, misleading names, unclear APIs) without causing runtime misbehavior. build-break — prevents successful build, lint, or test execution; blocks CI but does not affect running systems. degraded-behavior — the system produces incorrect results, loses functionality, or behaves unexpectedly under specific conditions, but remains available. crash-or-outage — the system becomes unavailable (e.g., process crash, unhandled exception, resource exhaustion, denial of service). data-loss-or-security — the system's data integrity, confidentiality, or security posture is compromised (e.g., data corruption, exfiltration, unauthorized access, privilege escalation, injection, information disclosure)."
+      "description": "The category of consequence if the issue manifests. The failure must be current — 'if a future regression occurs' is not a failure mode; use unclear when the system currently works correctly and the finding is about a coverage or observability gap. Values listed from least to most severe: unclear — no specific failure scenario can be identified; the issue is stylistic, structural, or speculative. confusion — misleads developers or users (e.g., incorrect docs, misleading names, unclear APIs) without causing runtime misbehavior. build-break — prevents successful build, lint, or test execution; blocks CI but does not affect running systems. degraded-behavior — the system produces incorrect results, loses functionality, or behaves unexpectedly under specific conditions, but remains available. crash-or-outage — the system becomes unavailable (e.g., process crash, unhandled exception, resource exhaustion, denial of service). data-loss-or-security — the system's data integrity, confidentiality, or security posture is compromised (e.g., data corruption, exfiltration, unauthorized access, privilege escalation, injection, information disclosure)."
     },
     "failure_mode_justification": {
       "type": "string", "minLength": 1,
-      "description": "Describe the specific failure scenario — what goes wrong, for whom, and under what conditions."
+      "description": "Describe the specific failure scenario — what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified."
     },
     "evidence_quality": {
       "enum": ["speculative", "inferred", "demonstrated"],
-      "description": "How strongly the finding is grounded in observable code evidence. Values listed from least to most severe: speculative — suspected based on patterns or general best practices; no concrete code path identified. inferred — a plausible scenario is visible in the code structure, but the conclusion requires assumptions about runtime state, configuration, or input that are not verified. demonstrated — a specific code path is traced from input to problematic outcome, citing concrete lines; the issue is visible from the code alone without runtime assumptions."
+      "description": "How strongly the finding is grounded in observable code evidence. 'demonstrated' requires demonstrating a failure in the code, not demonstrating the absence of a test. Proving that a test does not exist is not demonstrated evidence of a defect — use inferred if you can identify a plausible failure scenario the test would catch, or speculative if you cannot. Values listed from least to most severe: speculative — suspected based on patterns or general best practices; no concrete code path identified. inferred — a plausible scenario is visible in the code structure, but the conclusion requires assumptions about runtime state, configuration, or input that are not verified. demonstrated — a specific code path is traced from input to problematic outcome, citing concrete lines; the issue is visible from the code alone without runtime assumptions."
     },
     "evidence_quality_justification": {
       "type": "string", "minLength": 1,
@@ -128,11 +128,11 @@
     },
     "trace_origin": {
       "enum": ["local", "component", "entry-point"],
-      "description": "How far back the agent traced to establish reachability. Values listed from least to most severe: local — observed at a single code site without tracing callers or callees. component — traced within a module or package boundary (e.g., function A calls function B which exhibits the issue); external reachability is not established. entry-point — traced from an identified external entry point (e.g., API handler, CLI command, CI trigger, user action) through the call chain to the problematic code."
+      "description": "How far back the agent traced to establish reachability. The trace must lead to a problematic outcome — tracing to working code and noting 'but there is no test' is not an entry-point trace. For test coverage gaps, use local because the finding observes a single code site (the missing test) without tracing a failure through callers. Values listed from least to most severe: local — observed at a single code site without tracing callers or callees. component — traced within a module or package boundary (e.g., function A calls function B which exhibits the issue); external reachability is not established. entry-point — traced from an identified external entry point (e.g., API handler, CLI command, CI trigger, user action) through the call chain to the problematic code."
     },
     "trace_origin_justification": {
       "type": "string", "minLength": 1,
-      "description": "For entry-point: name the entry point and trace the path. For component: identify the module boundary. For local: explain why no caller trace was performed."
+      "description": "For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed."
     },
     "effort_to_fix": {
       "enum": ["trivial", "small", "moderate", "large"],
