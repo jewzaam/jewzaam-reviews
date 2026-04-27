@@ -170,6 +170,58 @@ def format_validation_error(
     )
 
 
+ENVELOPE_FILENAME = "_envelope.json"
+
+
+def load_stage_dir(dir_path: Path) -> tuple[dict, list[dict]]:
+    """Read a pipeline stage directory into an envelope dict and findings list.
+
+    Reads ``_envelope.json`` for metadata (project, decomposition, issues)
+    and globs ``*.json`` (excluding ``_envelope.json``) for individual
+    finding files. Returns ``(envelope, findings)`` where ``findings`` is
+    sorted by ``content_hash`` for deterministic ordering.
+    """
+    envelope_path = dir_path / ENVELOPE_FILENAME
+    envelope = safe_load_json(envelope_path)
+
+    findings: list[dict] = []
+    for p in sorted(dir_path.glob("*.json")):
+        if p.name == ENVELOPE_FILENAME:
+            continue
+        findings.append(safe_load_json(p))
+    findings.sort(key=lambda f: f.get("content_hash", ""))
+    logger.debug(
+        "load_stage_dir: %s → envelope + %d findings", dir_path, len(findings)
+    )
+    return envelope, findings
+
+
+def write_stage_dir(
+    dir_path: Path,
+    envelope: dict,
+    findings: list[dict],
+) -> None:
+    """Write an envelope dict and per-finding files to a stage directory.
+
+    Writes ``_envelope.json`` and one ``<content_hash>.json`` per finding.
+    The directory must already exist.
+    """
+    envelope_path = dir_path / ENVELOPE_FILENAME
+    with envelope_path.open("w", encoding="utf-8") as fh:
+        json.dump(envelope, fh, indent=2)
+        fh.write("\n")
+
+    for finding in findings:
+        ch = finding["content_hash"]
+        finding_path = dir_path / f"{ch}.json"
+        with finding_path.open("w", encoding="utf-8") as fh:
+            json.dump(finding, fh, indent=2)
+            fh.write("\n")
+    logger.debug(
+        "write_stage_dir: %s → envelope + %d findings", dir_path, len(findings)
+    )
+
+
 def content_hash(*parts: str) -> str:
     """Stable 16-char SHA-256 hex prefix over `|`-joined parts.
 

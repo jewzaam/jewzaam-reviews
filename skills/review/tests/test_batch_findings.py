@@ -24,8 +24,10 @@ def _load(path: Path) -> dict:
         return json.load(fh)
 
 
-def _make_consolidated(findings: list[dict]) -> dict:
-    return {
+def _write_stage_dir(stage_dir: Path, findings: list[dict]) -> None:
+    """Write a stage directory with _envelope.json + per-finding files."""
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    envelope = {
         "project": {"name": "myapp", "scope_slug": ""},
         "decomposition": [
             {
@@ -34,8 +36,14 @@ def _make_consolidated(findings: list[dict]) -> dict:
                 "dimension_scope": {},
             }
         ],
-        "findings": findings,
+        "issues": [],
     }
+    with (stage_dir / "_envelope.json").open("w", encoding="utf-8") as fh:
+        json.dump(envelope, fh)
+    for f in findings:
+        finding_path = stage_dir / f"{f['content_hash']}.json"
+        with finding_path.open("w", encoding="utf-8") as fh:
+            json.dump(f, fh)
 
 
 def _finding(
@@ -79,14 +87,13 @@ class TestBatchFindings:
             )
             for i in range(20)
         ]
-        consolidated = tmp_path / "consolidated.json"
-        with consolidated.open("w", encoding="utf-8") as fh:
-            json.dump(_make_consolidated(findings), fh)
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, findings)
         out = tmp_path / "validation"
         result = _run(
             [
-                "--input",
-                str(consolidated),
+                "--input-dir",
+                str(stage),
                 "--output-dir",
                 str(out),
             ]
@@ -106,62 +113,30 @@ class TestBatchFindings:
             _finding(chash="0000000000000002", title="high", runtime_scope="service-external", failure_mode="data-loss-or-security", evidence_quality="demonstrated", trace_origin="entry-point"),
             _finding(chash="0000000000000003", title="mid", runtime_scope="ci", failure_mode="build-break", evidence_quality="demonstrated", trace_origin="component"),
         ]
-        consolidated = tmp_path / "consolidated.json"
-        with consolidated.open("w", encoding="utf-8") as fh:
-            json.dump(_make_consolidated(findings), fh)
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, findings)
         out = tmp_path / "validation"
-        result = _run(["--input", str(consolidated), "--output-dir", str(out)])
+        result = _run(["--input-dir", str(stage), "--output-dir", str(out)])
         assert result.returncode == 0, result.stderr
         batch1 = _load(out / "batch-1-input.json")
         titles = [f["title"] for f in batch1["findings"]]
         assert titles == ["high", "mid", "low"]
 
-    def test_index_field_points_to_consolidated_findings_position(self, tmp_path: Path):
-        """The `index` field MUST refer to the original position in
-        consolidated.findings so verdicts can be applied with
-        consolidated.findings[index]. Sorting MUST NOT renumber it."""
-        findings = [
-            _finding(chash="0000000000000010", title="A", runtime_scope="documentation", failure_mode="unclear", evidence_quality="speculative", trace_origin="local"),
-            _finding(chash="0000000000000020", title="B", runtime_scope="service-external", failure_mode="data-loss-or-security", evidence_quality="demonstrated", trace_origin="entry-point"),
-            _finding(chash="0000000000000030", title="C", runtime_scope="ci", failure_mode="build-break", evidence_quality="demonstrated", trace_origin="component"),
-        ]
-        consolidated = tmp_path / "consolidated.json"
-        with consolidated.open("w", encoding="utf-8") as fh:
-            json.dump(_make_consolidated(findings), fh)
-        out = tmp_path / "validation"
-        result = _run(["--input", str(consolidated), "--output-dir", str(out)])
-        assert result.returncode == 0, result.stderr
-        batch1 = _load(out / "batch-1-input.json")
-        # B should be first in priority order, but its index must be 1
-        # (its original position in consolidated.findings).
-        first = batch1["findings"][0]
-        assert first["title"] == "B"
-        assert first["index"] == 1
-        # A has the lowest priority — index 0 (its original position).
-        last = batch1["findings"][-1]
-        assert last["title"] == "A"
-        assert last["index"] == 0
-
     def test_batch_finding_has_only_schema_fields(self, tmp_path: Path):
         """source_dimensions (and any other consolidated-only field) must be
         stripped — validation-input schema sets additionalProperties: false."""
-        consolidated = tmp_path / "consolidated.json"
-        with consolidated.open("w", encoding="utf-8") as fh:
-            json.dump(
-                _make_consolidated(
-                    [
-                        _finding(
-                            chash="aaaaaaaaaaaaaaaa",
-                            title="t",
-
-
-                        )
-                    ]
-                ),
-                fh,
-            )
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(
+            stage,
+            [
+                _finding(
+                    chash="aaaaaaaaaaaaaaaa",
+                    title="t",
+                )
+            ],
+        )
         out = tmp_path / "validation"
-        result = _run(["--input", str(consolidated), "--output-dir", str(out)])
+        result = _run(["--input-dir", str(stage), "--output-dir", str(out)])
         assert result.returncode == 0, result.stderr
         batch1 = _load(out / "batch-1-input.json")
         assert "source_dimensions" not in batch1["findings"][0]
@@ -174,16 +149,13 @@ class TestBatchFindings:
             _finding(
                 chash=f"{i:016x}",
                 title=f"f{i}",
-
-
             )
             for i in range(17)
         ]
-        consolidated = tmp_path / "consolidated.json"
-        with consolidated.open("w", encoding="utf-8") as fh:
-            json.dump(_make_consolidated(findings), fh)
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, findings)
         out = tmp_path / "validation"
-        result = _run(["--input", str(consolidated), "--output-dir", str(out)])
+        result = _run(["--input-dir", str(stage), "--output-dir", str(out)])
         assert result.returncode == 0, result.stderr
         schema = _load(SCHEMAS / "validation-input.schema.json")
         from scripts.envelope import schema_registry
@@ -197,19 +169,16 @@ class TestBatchFindings:
             _finding(
                 chash=f"{i:016x}",
                 title=f"f{i}",
-
-
             )
             for i in range(10)
         ]
-        consolidated = tmp_path / "consolidated.json"
-        with consolidated.open("w", encoding="utf-8") as fh:
-            json.dump(_make_consolidated(findings), fh)
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, findings)
         out = tmp_path / "validation"
         result = _run(
             [
-                "--input",
-                str(consolidated),
+                "--input-dir",
+                str(stage),
                 "--output-dir",
                 str(out),
                 "--batch-size",
@@ -230,14 +199,13 @@ class TestBatchFindings:
             _finding(chash=f"{i:016x}", title=f"f{i}")
             for i in range(3)
         ]
-        consolidated = tmp_path / "consolidated.json"
-        with consolidated.open("w", encoding="utf-8") as fh:
-            json.dump(_make_consolidated(findings), fh)
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, findings)
         out = tmp_path / "validation"
         result = _run(
             [
-                "--input",
-                str(consolidated),
+                "--input-dir",
+                str(stage),
                 "--output-dir",
                 str(out),
                 "--batch-size",
@@ -248,11 +216,10 @@ class TestBatchFindings:
         assert "8" in (result.stderr + result.stdout)
 
     def test_empty_findings_list(self, tmp_path: Path):
-        consolidated = tmp_path / "consolidated.json"
-        with consolidated.open("w", encoding="utf-8") as fh:
-            json.dump(_make_consolidated([]), fh)
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, [])
         out = tmp_path / "validation"
-        result = _run(["--input", str(consolidated), "--output-dir", str(out)])
+        result = _run(["--input-dir", str(stage), "--output-dir", str(out)])
         assert result.returncode == 0, result.stderr
         files = list(out.glob("batch-*-input.json"))
         assert files == []
@@ -265,11 +232,10 @@ class TestBatchFindings:
             _finding(chash="aaaaaaaaaaaaaaaa", title="a"),
             _finding(chash="cccccccccccccccc", title="c"),
         ]
-        consolidated = tmp_path / "consolidated.json"
-        with consolidated.open("w", encoding="utf-8") as fh:
-            json.dump(_make_consolidated(findings), fh)
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, findings)
         out = tmp_path / "validation"
-        result = _run(["--input", str(consolidated), "--output-dir", str(out)])
+        result = _run(["--input-dir", str(stage), "--output-dir", str(out)])
         assert result.returncode == 0, result.stderr
         batch1 = _load(out / "batch-1-input.json")
         titles = [f["title"] for f in batch1["findings"]]

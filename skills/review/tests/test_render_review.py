@@ -34,14 +34,33 @@ def _load(path: Path) -> dict:
         return json.load(fh)
 
 
+def _create_stage_dir_from_fixture(stage_dir: Path, fixture_path: Path) -> None:
+    """Convert a monolithic fixture JSON to a stage directory."""
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    with fixture_path.open("r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    envelope = {
+        "project": data.get("project", {"name": "myapp"}),
+        "decomposition": data.get("decomposition", []),
+        "issues": [],
+    }
+    with (stage_dir / "_envelope.json").open("w", encoding="utf-8") as fh:
+        json.dump(envelope, fh)
+    for finding in data.get("findings", []):
+        ch = finding["content_hash"]
+        with (stage_dir / f"{ch}.json").open("w", encoding="utf-8") as fh:
+            json.dump(finding, fh)
+
+
 class TestRenderReviewJson:
     def test_buckets_and_ids_assigned(self, tmp_path):
-        out_dir = tmp_path
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        out_dir = tmp_path / "out"
         result = _run(
             [
-                "--input",
-                str(FIXTURES / "post-validation.sample.json"),
-
+                "--input-dir",
+                str(stage),
                 "--out-dir",
                 str(out_dir),
                 "--project-name",
@@ -84,12 +103,13 @@ class TestRenderReviewJson:
                 ), f"bucket {bucket}: expected {prefix}{i}, got {fid}"
 
     def test_slug_appended_when_provided(self, tmp_path):
-        out_dir = tmp_path
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        out_dir = tmp_path / "out"
         result = _run(
             [
-                "--input",
-                str(FIXTURES / "post-validation.sample.json"),
-
+                "--input-dir",
+                str(stage),
                 "--out-dir",
                 str(out_dir),
                 "--project-name",
@@ -104,19 +124,21 @@ class TestRenderReviewJson:
 
 class TestRenderReviewMarkdown:
     def test_main_markdown_lists_critical_findings(self, tmp_path):
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        out_dir = tmp_path / "out"
         result = _run(
             [
-                "--input",
-                str(FIXTURES / "post-validation.sample.json"),
-
+                "--input-dir",
+                str(stage),
                 "--out-dir",
-                str(tmp_path),
+                str(out_dir),
                 "--project-name",
                 "myapp",
             ]
         )
         assert result.returncode == 0, result.stderr
-        body = (tmp_path / "Findings-review.md").read_text(encoding="utf-8")
+        body = (out_dir / "Findings-review.md").read_text(encoding="utf-8")
         assert "# Code Review: myapp" in body
         assert "## Findings" in body
         assert "### Critical" in body
@@ -125,19 +147,21 @@ class TestRenderReviewMarkdown:
         assert "Findings-review-supplementary.md" in body
 
     def test_supplementary_lists_decomposition_and_needs_review(self, tmp_path):
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        out_dir = tmp_path / "out"
         result = _run(
             [
-                "--input",
-                str(FIXTURES / "post-validation.sample.json"),
-
+                "--input-dir",
+                str(stage),
                 "--out-dir",
-                str(tmp_path),
+                str(out_dir),
                 "--project-name",
                 "myapp",
             ]
         )
         assert result.returncode == 0, result.stderr
-        body = (tmp_path / "Findings-review-supplementary.md").read_text(encoding="utf-8")
+        body = (out_dir / "Findings-review-supplementary.md").read_text(encoding="utf-8")
         assert "## Decomposition" in body
         assert "auth subsystem" in body
         assert "## Needs Review" in body
@@ -147,12 +171,16 @@ class TestRenderReviewMarkdown:
 
 
 class TestSharedSchemaCompliance:
-    def _render(self, tmp_path, extra_args=None):
+    def _render(self, tmp_path, extra_args=None, stage_dir=None):
+        if stage_dir is None:
+            stage_dir = tmp_path / "20-findings"
+            _create_stage_dir_from_fixture(stage_dir, FIXTURES / "post-validation.sample.json")
+        out_dir = tmp_path / "out"
         args = [
-            "--input",
-            str(FIXTURES / "post-validation.sample.json"),
+            "--input-dir",
+            str(stage_dir),
             "--out-dir",
-            str(tmp_path),
+            str(out_dir),
             "--project-name",
             "myapp",
         ]
@@ -163,7 +191,7 @@ class TestSharedSchemaCompliance:
     def test_rendered_json_validates_against_shared_schema(self, tmp_path):
         result = self._render(tmp_path)
         assert result.returncode == 0, result.stderr
-        rendered = _load(tmp_path / "Findings-review.json")
+        rendered = _load(tmp_path / "out" / "Findings-review.json")
 
         with SHARED_SCHEMA.open("r", encoding="utf-8") as fh:
             schema = json.load(fh)
@@ -172,84 +200,83 @@ class TestSharedSchemaCompliance:
     def test_rendered_json_has_handoff_envelope(self, tmp_path):
         result = self._render(tmp_path)
         assert result.returncode == 0, result.stderr
-        rendered = _load(tmp_path / "Findings-review.json")
+        rendered = _load(tmp_path / "out" / "Findings-review.json")
         assert rendered["schema_version"] == _plugin_version()
         assert rendered["source"] == "review"
         assert rendered["issues"] == []
 
     def test_issues_passthrough(self, tmp_path):
-        issues_path = tmp_path / "issues.json"
-        issues_path.write_text(
-            json.dumps(
-                [
-                    {
-                        "severity": "warning",
-                        "kind": "subagent_failure",
-                        "message": "auth/security agent returned malformed JSON after 3 tries",
-                        "source_component": "security/auth",
-                    }
-                ]
-            ),
-            encoding="utf-8",
-        )
-        result = self._render(tmp_path, ["--issues", str(issues_path)])
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        # Inject issues into the stage envelope
+        with (stage / "_envelope.json").open("r", encoding="utf-8") as fh:
+            envelope = json.load(fh)
+        envelope["issues"] = [
+            {
+                "severity": "warning",
+                "kind": "subagent_failure",
+                "message": "auth/security agent returned malformed JSON after 3 tries",
+                "source_component": "security/auth",
+            }
+        ]
+        with (stage / "_envelope.json").open("w", encoding="utf-8") as fh:
+            json.dump(envelope, fh)
+        result = self._render(tmp_path, stage_dir=stage)
         assert result.returncode == 0, result.stderr
-        rendered = _load(tmp_path / "Findings-review.json")
+        rendered = _load(tmp_path / "out" / "Findings-review.json")
         assert len(rendered["issues"]) == 1
         assert rendered["issues"][0]["kind"] == "subagent_failure"
 
     def test_render_fails_on_invalid_input_and_writes_no_files(self, tmp_path):
-        # post-validation data with a finding missing 'content_hash' — renderer
+        # Stage dir with a finding missing 'content_hash' — renderer
         # produces a shape that violates the shared schema.
-        bad_input = tmp_path / "bad.json"
-        bad_input.write_text(
-            json.dumps(
-                {
-                    "project": {"name": "myapp"},
-                    "decomposition": [
-                        {"dimension_name": "x", "dimension_slug": "x"}
-                    ],
-                    "findings": [
-                        {
-                            "concern_slug": "security",
-                            "source_dimensions": ["x"],
-                            "title": "missing content_hash",
-                            "runtime_scope": "service-external",
-                            "runtime_scope_justification": "test",
-                            "failure_mode": "data-loss-or-security",
-                            "failure_mode_justification": "test",
-                            "evidence_quality": "demonstrated",
-                            "evidence_quality_justification": "test",
-                            "trace_origin": "entry-point",
-                            "trace_origin_justification": "test",
-                            "effort_to_fix": "small",
-                            "effort_to_fix_justification": "test",
-                            "locations": [{"path": "a.py", "line": "1"}],
-                            "issue": "i",
-                            "why_it_matters": "w",
-                            "suggested_fix": "f",
-                        }
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
+        stage = tmp_path / "20-findings"
+        stage.mkdir(parents=True, exist_ok=True)
+        envelope = {
+            "project": {"name": "myapp"},
+            "decomposition": [
+                {"dimension_name": "x", "dimension_slug": "x"}
+            ],
+            "issues": [],
+        }
+        with (stage / "_envelope.json").open("w", encoding="utf-8") as fh:
+            json.dump(envelope, fh)
+        bad_finding = {
+            "concern_slug": "security",
+            "source_dimensions": ["x"],
+            "title": "missing content_hash",
+            "runtime_scope": "service-external",
+            "runtime_scope_justification": "test",
+            "failure_mode": "data-loss-or-security",
+            "failure_mode_justification": "test",
+            "evidence_quality": "demonstrated",
+            "evidence_quality_justification": "test",
+            "trace_origin": "entry-point",
+            "trace_origin_justification": "test",
+            "effort_to_fix": "small",
+            "effort_to_fix_justification": "test",
+            "locations": [{"path": "a.py", "line": "1"}],
+            "issue": "i",
+            "why_it_matters": "w",
+            "suggested_fix": "f",
+        }
+        # Write finding without content_hash — use a placeholder filename
+        with (stage / "no-hash.json").open("w", encoding="utf-8") as fh:
+            json.dump(bad_finding, fh)
+        out_dir = tmp_path / "out"
         result = _run(
             [
-                "--input",
-                str(bad_input),
-
+                "--input-dir",
+                str(stage),
                 "--out-dir",
-                str(tmp_path / "out"),
+                str(out_dir),
                 "--project-name",
                 "myapp",
             ]
         )
         assert result.returncode != 0
         assert "does not validate" in result.stderr
-        assert not (tmp_path / "out").exists() or not any(
-            (tmp_path / "out").iterdir()
-        )
+        assert not out_dir.exists() or not any(out_dir.iterdir())
 
 
 class TestAssignBucket:

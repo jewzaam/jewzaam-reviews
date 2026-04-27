@@ -20,6 +20,7 @@ resources/
 scripts/
   envelope.py            # Shared plumbing (plugin_version, validate_envelope,
                          #   build_envelope, content_hash, assign_ids_per_bucket,
+                         #   load_stage_dir, write_stage_dir,
                          #   load_issues_file, format_validation_error, _line_start)
   bootstrap-tmp.sh       # Wipe + create .tmp-<skill>/ with validated dir-name
   print-handoff-contract.sh  # `!`-injection wrapper — cats handoff-contract.md
@@ -84,7 +85,7 @@ Render scripts per skill:
 
 | Skill | Render script | Source value |
 |---|---|---|
-| review | `skills/review/scripts/render-review.py` | `review` |
+| review | `skills/review/scripts/render-review.py` (with `apply-verdicts.py` for the 10-merged → 20-findings transition) | `review` |
 | standards | `skills/standards/scripts/render-standards.py` | `standards` |
 | c4-reverse-engineer | `skills/c4-reverse-engineer/scripts/render-c4-reverse-engineer.py` | `c4-reverse-engineer` |
 | update-pr | `skills/update-pr/scripts/render-update-pr.py` | `review` (with `pr_comment` on findings) |
@@ -94,9 +95,9 @@ Render scripts per skill:
 
 ### Two-schema trap inside review
 
-`skills/review/schemas/` holds **five review-internal schemas** (agent-output, consolidated, validation-input, validation-output, render-config). These are NOT the cross-skill `schemas/findings.schema.json`. The review skill's sub-agents write **agent-output**-shaped JSON into `.tmp-review/raw/*.json`; the main agent aggregates those into the final envelope validated against the shared schema.
+`skills/review/schemas/` holds **seven review-internal schemas** (agent-output, consolidated, merged-finding, stage-envelope, validation-input, validation-output, render-config). These are NOT the cross-skill `schemas/findings.schema.json`. The review skill's sub-agents write **agent-output**-shaped JSON into `.tmp-review/00-raw/*.json`; the consolidator writes **stage-envelope** + **merged-finding** files into `10-merged/`; the main agent copies/modifies findings into `20-findings/`; the renderer aggregates those into the final envelope validated against the shared schema.
 
-Historical bug to watch for: when a sub-agent sees the shared handoff contract (injected at skill-entry via `scripts/print-handoff-contract.sh`) and mistakes it for its own output spec, it writes envelope-shape keys (`schema_version`, `source`, `project`, `decomposition`, `issues`, ...) instead of agent-output keys (`agent_id`, `concern_slug`, `dimension_slug`, ...). The file is silently dropped from consolidation. `consolidate-findings.py` detects this shape mismatch and emits a targeted `schema_rejected_input` issue into `issues[]`, and the concern-agent prompt in `skills/review/SKILL.md` explicitly disambiguates — but the failure mode is worth knowing when debugging a low-finding-count review.
+Historical bug to watch for: when a sub-agent sees the shared handoff contract (injected at skill-entry via `scripts/print-handoff-contract.sh`) and mistakes it for its own output spec, it writes envelope-shape keys (`schema_version`, `source`, `project`, `decomposition`, `issues`, ...) instead of agent-output keys (`agent_id`, `concern_slug`, `dimension_slug`, ...). The file is silently dropped from consolidation. `consolidate-findings.py` detects this shape mismatch and records a targeted `schema_rejected_input` issue in the stage envelope's `issues[]`, and the concern-agent prompt in `skills/review/SKILL.md` explicitly disambiguates — but the failure mode is worth knowing when debugging a low-finding-count review.
 
 ## Filename convention
 
@@ -119,7 +120,17 @@ The **skill name** identifies the producer in the filename; the user's **project
 
 The wrapper script exists because Claude Code's session-level `cat` permission blocks reads of paths outside the consuming project's working dirs, and the plugin root is always outside. A script invocation is permission-checked by its own path (predictable, easy to allowlist) rather than by the path argument to `cat` (unpredictable across projects).
 
-**`.tmp-<skill-name>/`** is every producer skill's workspace, wiped/recreated on every invocation by `scripts/bootstrap-tmp.sh`. The bootstrap script validates the dir-name pattern (`^\.tmp-[A-Za-z0-9_-]+$`) before any `rm -rf` to prevent destructive mis-invocations. Sub-directories (like review's `raw/` and `validation/`) are passed as additional args.
+**`.tmp-<skill-name>/`** is every producer skill's workspace, wiped/recreated on every invocation by `scripts/bootstrap-tmp.sh`. The bootstrap script validates the dir-name pattern (`^\.tmp-[A-Za-z0-9_-]+$`) before any `rm -rf` to prevent destructive mis-invocations. Sub-directories are passed as additional args. The review skill uses numbered stage directories for pipeline ordering:
+
+```
+.tmp-review/
+  00-raw/           # per-agent output (one file per concern×dimension cell)
+  10-merged/        # consolidation output: _envelope.json + per-finding <content_hash>.json
+  15-validation/    # ephemeral batch I/O for validator dispatch
+  20-findings/      # post-validation: _envelope.json + per-finding files (render input)
+```
+
+Each numbered stage directory follows a **stage contract**: `_envelope.json` carries metadata (project, decomposition, issues) and individual `<content_hash>.json` files carry findings. The `content_hash` is the stable cross-stage key — findings are identified by hash, not array position.
 
 ## Sub-agent boundaries
 
