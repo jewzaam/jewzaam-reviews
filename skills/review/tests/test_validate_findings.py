@@ -93,6 +93,66 @@ class TestSchemaAutoDetectionByDirectory:
         assert result.returncode == 0, result.stderr
         assert "agent-output" in result.stdout
 
+    def test_00_raw_dir_implies_agent_output(self, tmp_path):
+        target = tmp_path / ".tmp-review" / "00-raw" / "architecture-auth.json"
+        self._copy_fixture_as(FIXTURES / "agent-output.valid.json", target)
+        result = _run([str(target)])
+        assert result.returncode == 0, result.stderr
+        assert "agent-output" in result.stdout
+
+    def test_10_merged_envelope_implies_stage_envelope(self, tmp_path):
+        target = tmp_path / ".tmp-review" / "10-merged" / "_envelope.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        import json
+        envelope = {
+            "project": {"name": "test"},
+            "decomposition": [{"dimension_name": "x", "dimension_slug": "x"}],
+            "issues": [],
+        }
+        target.write_text(json.dumps(envelope), encoding="utf-8")
+        result = _run([str(target)])
+        assert result.returncode == 0, result.stderr
+        assert "stage-envelope" in result.stdout
+
+    def test_10_merged_finding_implies_merged_finding(self, tmp_path):
+        target = tmp_path / ".tmp-review" / "10-merged" / "a1b2c3d4e5f60718.json"
+        self._copy_fixture_as(FIXTURES / "consolidated.valid.json", target)
+        # Extract a single finding from the consolidated fixture
+        import json
+        with (FIXTURES / "consolidated.valid.json").open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        finding = data["findings"][0]
+        target.write_text(json.dumps(finding), encoding="utf-8")
+        result = _run([str(target)])
+        assert result.returncode == 0, result.stderr
+        assert "merged-finding" in result.stdout
+
+    def test_20_findings_dir_implies_merged_finding(self, tmp_path):
+        target = tmp_path / ".tmp-review" / "20-findings" / "a1b2c3d4e5f60718.json"
+        import json
+        with (FIXTURES / "consolidated.valid.json").open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        finding = data["findings"][0]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(finding), encoding="utf-8")
+        result = _run([str(target)])
+        assert result.returncode == 0, result.stderr
+        assert "merged-finding" in result.stdout
+
+    def test_15_validation_dir_input(self, tmp_path):
+        target = tmp_path / ".tmp-review" / "15-validation" / "batch-1-input.json"
+        self._copy_fixture_as(FIXTURES / "validation-input.valid.json", target)
+        result = _run([str(target)])
+        assert result.returncode == 0, result.stderr
+        assert "validation-input" in result.stdout
+
+    def test_15_validation_dir_output(self, tmp_path):
+        target = tmp_path / ".tmp-review" / "15-validation" / "batch-1-output.json"
+        self._copy_fixture_as(FIXTURES / "validation-output.valid.json", target)
+        result = _run([str(target)])
+        assert result.returncode == 0, result.stderr
+        assert "validation-output" in result.stdout
+
     def test_unknown_dir_still_requires_explicit_schema(self, tmp_path):
         target = tmp_path / "elsewhere" / "architecture-auth.json"
         self._copy_fixture_as(FIXTURES / "agent-output.valid.json", target)

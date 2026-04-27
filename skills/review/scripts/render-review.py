@@ -32,7 +32,7 @@ from scripts.envelope import (  # noqa: E402
     build_envelope,
     format_locations_block,
     format_validation_error,
-    load_issues_file,
+    load_stage_dir,
     validate_envelope,
 )
 
@@ -245,10 +245,10 @@ def file_basename(scope_slug: str) -> str:
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--input",
+        "--input-dir",
         type=Path,
         required=True,
-        help="post-validation findings JSON (consolidated shape)",
+        help="stage directory with _envelope.json + per-finding files",
     )
     parser.add_argument(
         "--out-dir",
@@ -263,15 +263,6 @@ def main(argv: list[str]) -> int:
         "--scope-slug",
         default="",
         help="optional slug appended to filenames (PR number, theme, etc.)",
-    )
-    parser.add_argument(
-        "--issues",
-        type=Path,
-        default=None,
-        help=(
-            "optional path to a JSON array of issue objects (meta-issues "
-            "from the run, e.g. sub-agent failures). Empty array if omitted."
-        ),
     )
     parser.add_argument(
         "--debug",
@@ -290,34 +281,28 @@ def main(argv: list[str]) -> int:
         format="%(levelname)s: %(message)s",
         stream=sys.stderr,
     )
-    logger.debug("input=%s out-dir=%s project-name=%s", args.input, args.out_dir, args.project_name)
+    logger.debug("input-dir=%s out-dir=%s project-name=%s", args.input_dir, args.out_dir, args.project_name)
+
+    if not args.input_dir.is_dir():
+        logger.error("input directory not found: %s", args.input_dir)
+        return 1
 
     try:
-        with args.input.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
+        envelope, findings = load_stage_dir(args.input_dir)
     except FileNotFoundError:
-        logger.error("input file not found: %s", args.input)
+        logger.error("_envelope.json not found in %s", args.input_dir)
         return 1
-    except json.JSONDecodeError as exc:
-        logger.error(
-            "could not parse --input %s: %s (line %d, col %d)",
-            args.input, exc, exc.lineno, exc.colno,
-        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.error("could not read stage directory %s: %s", args.input_dir, exc)
         return 1
 
-    try:
-        issues = load_issues_file(args.issues)
-    except ValueError as exc:
-        logger.error("%s", exc)
-        return 1
-
-    rendered_findings = assign_buckets_and_ids(data.get("findings", []))
+    rendered_findings = assign_buckets_and_ids(findings)
     rendered = build_envelope(
         source=SOURCE,
-        project=data.get("project", {"name": args.project_name}),
-        decomposition=data.get("decomposition", []),
+        project=envelope.get("project", {"name": args.project_name}),
+        decomposition=envelope.get("decomposition", []),
         findings=rendered_findings,
-        issues=issues,
+        issues=envelope.get("issues", []),
     )
 
     try:

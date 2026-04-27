@@ -23,9 +23,8 @@
         "finding_ref": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["index", "content_hash"],
+          "required": ["content_hash"],
           "properties": {
-            "index": {"type": "integer", "minimum": 0},
             "content_hash": {"type": "string", "pattern": "^[a-f0-9]{16,64}$"}
           }
         },

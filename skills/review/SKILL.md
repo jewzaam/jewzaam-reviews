@@ -27,8 +27,11 @@ allowed-tools:
   - Glob(${CLAUDE_SKILL_DIR}/**)
   - Grep(${CLAUDE_SKILL_DIR}/**)
   # D: Sub-agent output workspace
-  - Write(./.tmp-review/raw/**)
-  - Write(**/.tmp-review/raw/**)
+  - Write(./.tmp-review/00-raw/**)
+  - Write(**/.tmp-review/00-raw/**)
+  # E: Validator verdict output
+  - Write(./.tmp-review/15-validation/**)
+  - Write(**/.tmp-review/15-validation/**)
 ---
 
 # Review Skill
@@ -44,7 +47,7 @@ Perform a multi-agent review of a codebase by spinning up parallel review agents
 - **No program execution.** Never install dependencies, run the program, or execute language runtimes directly (no `python -c`, `node`, `go run`, etc.) against the user's code.
 - **No package management.** Never run `pip`, `npm`, `cargo`, etc.
 - **Output is two markdown files plus one JSON file** at the project root: `Findings-review.md` (actionable findings), `Findings-review-supplementary.md` (detailed analysis, strengths, decomposition), and `Findings-review.json` (structured findings for downstream skills). Filenames follow the plugin-wide pattern `Findings-<skill-name>[-<scope-slug>].{json,md}` for producer skills (apply-review is a consumer and emits `Report-apply-review.json`) — the skill name identifies the producer; project identity lives in the JSON envelope's `project.name`. If the user provides constrained context (a PR number, specific area, topic), append a scope slug (max 12 chars, lowercase, hyphens): `Findings-review-<slug>.{json,md,-supplementary.md}`.
-- **Intermediate workspace is `./.tmp-review/` at the project root** — created by the bootstrap pre-fetch, contains a `.gitignore` of `*` so it is never committed. Holds raw per-agent JSON, the consolidated set, and validation batches.
+- **Intermediate workspace is `./.tmp-review/` at the project root** — created by the bootstrap pre-fetch, contains a `.gitignore` of `*` so it is never committed. Contains numbered stage directories: `00-raw/` (per-agent output), `10-merged/` (consolidated per-finding files), `15-validation/` (batch I/O), `20-findings/` (post-validation per-finding files).
 - **If a check requires a tool not present**, note it in the review as a recommendation — do not attempt to install or build it.
 
 ## Pre-Fetch
@@ -73,9 +76,9 @@ Runs `scripts/standards-check.sh`. For user-owned repos (origin owner matches `g
 
 ### Findings Workspace Bootstrap (auto-executed)
 
-Wipes and recreates `./.tmp-review/` at the project root with `raw/`, `validation/`, and a `.gitignore` of `*`. Each `/review` invocation starts from a clean slate so stale findings from a prior run cannot leak into consolidation. Sub-agents and the main agent both write JSON into this tree.
+Wipes and recreates `./.tmp-review/` at the project root with `00-raw/`, `10-merged/`, `15-validation/`, `20-findings/`, and a `.gitignore` of `*`. Each `/review` invocation starts from a clean slate so stale findings from a prior run cannot leak into consolidation. Sub-agents and the main agent both write JSON into this tree.
 
-!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-review raw validation`
+!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap-tmp.sh .tmp-review 00-raw 10-merged 15-validation 20-findings`
 
 ### Shared Handoff Contract (auto-injected)
 
@@ -170,7 +173,7 @@ After decomposition produces N dimensions, launch **all `1 + 7×N` agents in a s
 
 All seven concern agents use `subagent_type: "general-purpose"`. They need both Write (to put their JSON output on disk) and Bash (to invoke `validate-findings.py`) to self-validate against the schema. The prompt restricts them as follows:
 
-- **Pre-assigned output path:** each agent is told its single allowed Write target as an **absolute path**, built by prefixing the injected `pwd` value (from the Pre-Fetch "Project Root" section) to `/.tmp-review/raw/<concern_slug>-<dimension_slug>.json`. Example: if `pwd` printed `/home/user/proj`, the agent's Write target is `/home/user/proj/.tmp-review/raw/architecture-auth.json`. Never hand the agent a bare relative path — sub-agent CWD handling is unreliable and bare relative paths have led to writes drifting into `/tmp/`. Any Write to any other path is a violation.
+- **Pre-assigned output path:** each agent is told its single allowed Write target as an **absolute path**, built by prefixing the injected `pwd` value (from the Pre-Fetch "Project Root" section) to `/.tmp-review/00-raw/<concern_slug>-<dimension_slug>.json`. Example: if `pwd` printed `/home/user/proj`, the agent's Write target is `/home/user/proj/.tmp-review/00-raw/architecture-auth.json`. Never hand the agent a bare relative path — sub-agent CWD handling is unreliable and bare relative paths have led to writes drifting into `/tmp/`. Any Write to any other path is a violation.
 - **Bash restricted to one command pattern:** invoking `validate-findings.py` against that exact absolute output path. No other Bash usage is permitted.
 - **Edit, NotebookEdit, and any other state-modifying tool are prohibited.**
 - The agent must stop and report if asked or tempted to deviate.
@@ -217,26 +220,25 @@ The `agent-output` schema does not include `severity` or `id` fields — the sch
 After every concern agent returns, re-run the validator as defense-in-depth:
 
 ```
-python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py ./.tmp-review/raw/<concern_slug>-<dimension_slug>.json
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py ./.tmp-review/00-raw/<concern_slug>-<dimension_slug>.json
 ```
 
 For any file that fails this re-validation, exclude it from consolidation and log a warning in the supplementary "Decomposition" preamble (you will write that preamble at render time). Do not re-dispatch — sub-agents already had three attempts.
 
 ### 5. Consolidate
 
-Run the consolidator script — it applies the merge rules deterministically and emits a schema-validated `consolidated.json`:
+Run the consolidator script — it applies the merge rules deterministically and writes per-finding files plus a stage envelope into `10-merged/`:
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/consolidate-findings.py \
-  --raw-dir ./.tmp-review/raw/ \
-  --output ./.tmp-review/consolidated.json \
-  --issues-out ./.tmp-review/issues.json \
+  --raw-dir ./.tmp-review/00-raw/ \
+  --output-dir ./.tmp-review/10-merged/ \
   --project-name <project name> \
   --scope-slug <slug if PR-number or guidance constrained scope, else omit> \
   --cross-concern-threshold 0.4
 ```
 
-`--issues-out` appends one `schema_rejected_input` issue per skipped raw file to `./.tmp-review/issues.json`, so the final envelope carries a machine-readable record of any per-agent output that was rejected by the agent-output schema. The render step later reads the same file via its own `--issues` flag.
+The script writes `_envelope.json` (project metadata, decomposition, and any `schema_rejected_input` issues for skipped raw files) plus one `<content_hash>.json` per merged finding into the output directory.
 
 What the script does (you do **not** re-implement this in your reasoning):
 
@@ -246,26 +248,27 @@ What the script does (you do **not** re-implement this in your reasoning):
 - **Content hash.** Each merged finding gets a 16-char hex SHA-256 prefix over `(concern_slug, dimension_slug of first contributor, primary location path:line, title)`.
 - **Decomposition.** Built from the per-agent `dimension_name`/`dimension_slug`/`dimension_scope`, deduplicated by `dimension_slug`.
 - **No IDs. No severity buckets.** Both are assigned only at render time.
-- Output is validated against `consolidated.schema.json` before writing; the script exits non-zero on any validation error.
+- Each finding file is validated against `merged-finding.schema.json` and the envelope against `stage-envelope.schema.json` before writing; the script exits non-zero on any validation error.
 
-If a `raw/*.json` file fails its agent-output schema validation, the consolidator skips it with a warning on stderr and continues. Note any skipped files in the supplementary "Decomposition" preamble at render time.
+If a `00-raw/*.json` file fails its agent-output schema validation, the consolidator skips it with a warning on stderr and records a `schema_rejected_input` issue in the envelope. Note any skipped files in the supplementary "Decomposition" preamble at render time.
 
 ### 6. Validate Findings
 
-Run the batcher script — it slices `consolidated.json` into validation-input batches and self-validates each against the schema:
+Run the batcher script — it reads per-finding files from `10-merged/` and slices them into validation-input batches:
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/batch-findings.py \
-  --input ./.tmp-review/consolidated.json \
-  --output-dir ./.tmp-review/validation/
+  --input-dir ./.tmp-review/10-merged/ \
+  --output-dir ./.tmp-review/15-validation/
 ```
 
 What the script does (you do **not** re-implement this in your reasoning):
 
+- Reads all per-finding files from `--input-dir` (excluding `_envelope.json`).
 - Sorts findings by dimensional priority (ordinal tuple of `runtime_scope`, `failure_mode`, `evidence_quality`, `trace_origin`) descending; deterministic tie-break on `content_hash`.
 - Slices into batches of at most **8** findings each (the spec's hard cap; `--batch-size` overrides but cannot exceed 8).
 - Writes `batch-<N>-input.json` per batch containing `{batch_number, total_batches, findings: [...]}`.
-- Each batch finding's `index` field is its **original position in `consolidated.findings`** — verdict application uses `consolidated.findings[verdict.finding_ref.index]`. Sorting does NOT renumber it.
+- Findings are identified by `content_hash` (the sole cross-stage key). No `index` field is used.
 - Strips fields not in the validation-input schema (e.g. `source_dimensions`).
 - Validates every batch against `validation-input.schema.json` before writing; exits non-zero on any failure.
 
@@ -279,41 +282,41 @@ Spawn `total_batches` validator agents in **parallel** in a single message:
   - `"action": "confirm"` — finding stands as-is.
   - `"action": "rescore"` — provide `new_dimensions` with any subset of the five dimension fields (value + justification pairs). Validators may upgrade `evidence_quality` or `trace_origin` if they find stronger evidence.
   - `"action": "remove"` — finding is wrong (e.g., cited line does not exist, issue is not real).
-- Each verdict carries `finding_ref: {index, content_hash}` so the main agent can detect array drift. **Copy the `index` and `content_hash` verbatim from the input batch finding** — do NOT renumber by batch-local position (0..N within the batch), do NOT recompute the hash, and do NOT pair a `content_hash` from one finding with the `index` of another. The main agent drops any verdict whose `content_hash` doesn't match `consolidated.findings[index].content_hash` — this is the guardrail against silent mutation of the wrong finding, but it also means a drift-producing verdict is silently discarded.
+- Each verdict carries `finding_ref: {content_hash}` — **copy the `content_hash` verbatim from the input batch finding**. Do NOT recompute the hash. The `content_hash` is both the filename and the integrity key across pipeline stages.
 
-After each validator returns, write its response to `./.tmp-review/validation/batch-<N>-output.json` and re-validate it against `validation-output.schema.json`.
+After each validator returns, write its response to `./.tmp-review/15-validation/batch-<N>-output.json` and re-validate it against `validation-output.schema.json`.
 
 ### 7. Apply Verdicts and Render
 
-Apply verdicts to `consolidated.json` **in your own reasoning** — do not write or execute any helper script for this step:
+Run the verdict application script — it reads verdicts from `15-validation/` and findings from `10-merged/`, applies them deterministically, and writes the surviving findings to `20-findings/`:
 
-- **No ad-hoc helper scripts.** Do NOT create `apply_verdicts.py`, `merge.py`, `apply.py`, or any other Python/Bash file to automate verdict application. The skill ships exactly three scripts in `${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/` (`consolidate-findings.py`, `validate-findings.py`, `render-review.py`) — that set is closed. Adding another script at runtime — especially by Writing into `./.tmp-review/` and then `mv`-ing it into `${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/` to get around the Bash allowlist — is a hard violation. The plugin tree is read-only from inside a skill run.
-- **No writes outside `./.tmp-review/` and the three final output files.** The only permitted Write targets for the main agent during Step 7 are `./.tmp-review/post-validation.json`, `./.tmp-review/issues.json`, `Findings-review[-<slug>].json`, `Findings-review[-<slug>].md`, and `Findings-review[-<slug>]-supplementary.md`. Any other Write — to `${CLAUDE_PLUGIN_ROOT}/...`, to `docs/`, to `scripts/`, to `/tmp/`, anywhere — is a violation.
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/apply-verdicts.py \
+  --input-dir ./.tmp-review/10-merged/ \
+  --verdicts-dir ./.tmp-review/15-validation/ \
+  --output-dir ./.tmp-review/20-findings/
+```
 
-Verdict application procedure (in memory):
+What the script does (you do **not** re-implement this in your reasoning):
 
-- For each verdict, look up the finding by `index` and confirm `content_hash` matches. If the hash mismatches, log the discrepancy and skip the verdict (do not mutate the wrong finding).
-- `"confirm"`: no change.
-- `"rescore"`: shallow-merge `new_dimensions` into the finding's categorical fields.
-- `"remove"`: drop the finding from the list.
+- Reads all `batch-*-output.json` from `--verdicts-dir`, validates each against `validation-output.schema.json`.
+- Builds a `content_hash → verdict` map.
+- For each finding in `--input-dir`:
+  - `"confirm"`: copy unchanged to `--output-dir`.
+  - `"rescore"`: shallow-merge `new_dimensions` into the finding, validate the result against `merged-finding.schema.json`, write to `--output-dir`.
+  - `"remove"`: skip (finding absent from `--output-dir`).
+  - No verdict (e.g., failed validator batch): pass through unchanged.
+- Copies `_envelope.json` to `--output-dir`, merging any verdict-parsing issues into `issues[]`.
 - Findings with `speculative` evidence quality are kept; the renderer segregates them into `needs-review`.
 
-Write the post-validation findings to `./.tmp-review/post-validation.json` (same shape as `consolidated.json`) and any meta-issues to `./.tmp-review/issues.json` (see the injected Shared Handoff Contract for the issue shape).
-
-Before invoking the renderer, validate `post-validation.json` against the shared consolidated schema — this catches any malformed rescore values before a partial artifact can be written:
-
-```
-python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py ./.tmp-review/post-validation.json
-```
-
-(Auto-detection recognises `./.tmp-review/post-validation.json` as the `consolidated` schema; passing `--schema consolidated` explicitly is equivalent.)
+- **No ad-hoc helper scripts.** Do NOT create additional Python/Bash files for verdict application. The plugin ships `apply-verdicts.py` for this step. The plugin tree is read-only from inside a skill run.
+- **No writes outside `./.tmp-review/` and the three final output files.** The only permitted Write targets for the main agent during Step 7 are `Findings-review[-<slug>].json`, `Findings-review[-<slug>].md`, and `Findings-review[-<slug>]-supplementary.md`. Any other Write — to `${CLAUDE_PLUGIN_ROOT}/...`, to `docs/`, to `scripts/`, to `/tmp/`, anywhere — is a violation.
 
 Then run the renderer:
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/render-review.py \
-  --input ./.tmp-review/post-validation.json \
-  --issues ./.tmp-review/issues.json \
+  --input-dir ./.tmp-review/20-findings/ \
   --out-dir <project root> \
   --project-name <project name> \
   --scope-slug <slug if PR-number or guidance constrained scope, else empty>
@@ -343,7 +346,7 @@ DIMENSION SCOPE (confine your review to this):
 If you notice issues clearly outside this scope, list them under `cross_cutting_observations` in your output but do not investigate deeply.
 
 OUTPUT PATH (your single allowed Write target):
-./.tmp-review/raw/<concern_slug>-<dimension_slug>.json
+./.tmp-review/00-raw/<concern_slug>-<dimension_slug>.json
 
 TOOL RESTRICTIONS — strictly enforced:
 - Write: only to the OUTPUT PATH above. Any Write elsewhere is a violation; stop and report.
@@ -425,9 +428,9 @@ The agent_output schema was injected into this prompt above — refer to it for 
   - No `make install`, `make build`, `make run`, `make deploy`, or any target that installs or executes the program.
   - The Build & Checks agent is the only agent allowed to run anything (`make` check targets only — `format`, `lint`, `typecheck`, `test`, `coverage`).
 - **Writes are restricted by tool boundary, not just intent:**
-  - **Concern agents (`general-purpose` subagent_type)** may Write *only* to their pre-assigned absolute path `<pwd>/.tmp-review/raw/<concern_slug>-<dimension_slug>.json` (the main agent substitutes the Pre-Fetch `pwd` value before dispatching). Any other Write — anywhere on disk, inside or outside the project — is a violation and the agent must stop and report.
+  - **Concern agents (`general-purpose` subagent_type)** may Write *only* to their pre-assigned absolute path `<pwd>/.tmp-review/00-raw/<concern_slug>-<dimension_slug>.json` (the main agent substitutes the Pre-Fetch `pwd` value before dispatching). Any other Write — anywhere on disk, inside or outside the project — is a violation and the agent must stop and report.
   - **Validation agents (`feature-dev:code-reviewer` subagent_type)** are structurally read-only — they cannot Write at all.
-  - **Main agent** writes only to `./.tmp-review/` and the three output files at the project root (`Findings-review[-<slug>].json|.md|-supplementary.md`). No edits anywhere else. In particular: **never Write, Edit, or `mv` anything into `${CLAUDE_PLUGIN_ROOT}/`** — the plugin tree is read-only from inside a skill run. Do not create ad-hoc helper scripts (`apply_verdicts.py`, `merge.py`, etc.) even in the workspace — Step 7 is explicit in-memory reasoning, not code generation.
+  - **Main agent** writes only to `./.tmp-review/15-validation/` (validator output) and the three output files at the project root (`Findings-review[-<slug>].json|.md|-supplementary.md`). No edits anywhere else. In particular: **never Write, Edit, or `mv` anything into `${CLAUDE_PLUGIN_ROOT}/`** — the plugin tree is read-only from inside a skill run. The `apply-verdicts.py` script handles the `10-merged/ → 20-findings/` transition; the main agent does not write to `20-findings/` directly.
 - **Bash is restricted by tool boundary too:**
   - **Concern agents:** Bash only to invoke `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py <their assigned output path>`. No other Bash command is permitted.
   - **Validation agents:** no Bash (structural).

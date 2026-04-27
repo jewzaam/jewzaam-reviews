@@ -23,6 +23,19 @@ def _load(path: Path) -> dict:
         return json.load(fh)
 
 
+def _load_stage(stage_dir: Path) -> tuple[dict, list[dict]]:
+    """Read envelope + findings from a stage directory."""
+    with (stage_dir / "_envelope.json").open("r", encoding="utf-8") as fh:
+        envelope = json.load(fh)
+    findings = []
+    for p in sorted(stage_dir.glob("*.json")):
+        if p.name == "_envelope.json":
+            continue
+        with p.open("r", encoding="utf-8") as fh:
+            findings.append(json.load(fh))
+    return envelope, findings
+
+
 def _write_agent_output(
     raw_dir: Path,
     *,
@@ -100,24 +113,25 @@ class TestConsolidateBasic:
             dimension_slug="auth",
             findings=[_make_finding(title="X", path="src/a.py", line="10")],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
             [
                 "--raw-dir",
                 str(raw),
-                "--output",
-                str(out),
+                "--output-dir",
+                str(out_dir),
                 "--project-name",
                 "myapp",
             ]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert data["project"]["name"] == "myapp"
-        assert len(data["decomposition"]) == 1
-        assert data["decomposition"][0]["dimension_slug"] == "auth"
-        assert len(data["findings"]) == 1
-        f = data["findings"][0]
+        envelope, findings = _load_stage(out_dir)
+        assert envelope["project"]["name"] == "myapp"
+        assert len(envelope["decomposition"]) == 1
+        assert envelope["decomposition"][0]["dimension_slug"] == "auth"
+        assert len(findings) == 1
+        f = findings[0]
         assert f["title"] == "X"
         assert f["concern_slug"] == "security"
         assert f["source_dimensions"] == ["auth"]
@@ -164,14 +178,15 @@ class TestConsolidateBasic:
                 )
             ],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert len(data["findings"]) == 1
-        f = data["findings"][0]
+        envelope, findings = _load_stage(out_dir)
+        assert len(findings) == 1
+        f = findings[0]
         assert f["runtime_scope"] == "service-external"
         assert f["failure_mode"] == "data-loss-or-security"
         assert f["evidence_quality"] == "demonstrated"
@@ -195,13 +210,14 @@ class TestConsolidateBasic:
             dimension_slug="auth",
             findings=[_make_finding(title="Y", path="src/a.py", line="10")],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert len(data["findings"]) == 2
+        envelope, findings = _load_stage(out_dir)
+        assert len(findings) == 2
 
     def test_locations_are_unioned_and_dedup(self, tmp_path: Path):
         """Merging two findings on the same primary location unions their
@@ -239,14 +255,15 @@ class TestConsolidateBasic:
                 )
             ],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert len(data["findings"]) == 1
-        locs = data["findings"][0]["locations"]
+        envelope, findings = _load_stage(out_dir)
+        assert len(findings) == 1
+        locs = findings[0]["locations"]
         keys = {(loc["path"], loc["line"]) for loc in locs}
         assert keys == {("src/a.py", "10"), ("src/b.py", "5"), ("src/c.py", "20")}
 
@@ -279,14 +296,15 @@ class TestConsolidateBasic:
                 )
             ],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert len(data["findings"]) == 1
-        merged = data["findings"][0]
+        envelope, findings = _load_stage(out_dir)
+        assert len(findings) == 1
+        merged = findings[0]
         assert sorted(merged["source_dimensions"]) == ["api", "auth"]
         loc_keys = {(loc["path"], loc["line"]) for loc in merged["locations"]}
         assert loc_keys == {("src/a.py", "10"), ("src/b.py", "20")}
@@ -307,13 +325,14 @@ class TestConsolidateBasic:
             dimension_slug="api",
             findings=[_make_finding(title="charlie delta", path="src/b.py", line="1")],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert len(data["findings"]) == 2
+        envelope, findings = _load_stage(out_dir)
+        assert len(findings) == 2
 
     def test_decomposition_unique_by_slug(self, tmp_path: Path):
         """Multiple agents on the same dimension contribute one decomposition
@@ -328,14 +347,15 @@ class TestConsolidateBasic:
                 dimension_name="auth subsystem",
                 findings=[],
             )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert len(data["decomposition"]) == 1
-        assert data["decomposition"][0]["dimension_name"] == "auth subsystem"
+        envelope, findings = _load_stage(out_dir)
+        assert len(envelope["decomposition"]) == 1
+        assert envelope["decomposition"][0]["dimension_name"] == "auth subsystem"
 
     def test_invalid_raw_file_is_skipped_with_warning(self, tmp_path: Path):
         """A malformed raw JSON does not abort consolidation; it is logged
@@ -350,14 +370,15 @@ class TestConsolidateBasic:
         )
         bad = raw / "broken.json"
         bad.write_text("{not json", encoding="utf-8")
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
         assert "broken.json" in result.stderr
-        data = _load(out)
-        assert len(data["findings"]) == 1
+        envelope, findings = _load_stage(out_dir)
+        assert len(findings) == 1
 
     def test_scope_slug_in_project(self, tmp_path: Path):
         raw = tmp_path / "raw"
@@ -368,13 +389,14 @@ class TestConsolidateBasic:
             dimension_slug="auth",
             findings=[_make_finding(title="X", path="src/a.py", line="10")],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
             [
                 "--raw-dir",
                 str(raw),
-                "--output",
-                str(out),
+                "--output-dir",
+                str(out_dir),
                 "--project-name",
                 "myapp",
                 "--scope-slug",
@@ -382,8 +404,8 @@ class TestConsolidateBasic:
             ]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert data["project"]["scope_slug"] == "pr-565"
+        envelope, findings = _load_stage(out_dir)
+        assert envelope["project"]["scope_slug"] == "pr-565"
 
     def test_cross_concern_merge_at_identical_primary_location(self, tmp_path: Path):
         """Two concerns flag the same code from different angles. Same primary
@@ -428,14 +450,15 @@ class TestConsolidateBasic:
                 )
             ],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert len(data["findings"]) == 1
-        merged = data["findings"][0]
+        envelope, findings = _load_stage(out_dir)
+        assert len(findings) == 1
+        merged = findings[0]
         # Architecture has higher dimensional priority (service-external > service-internal).
         assert merged["concern_slug"] == "architecture"
 
@@ -469,14 +492,15 @@ class TestConsolidateBasic:
                 )
             ],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert len(data["findings"]) == 2
-        concerns = {f["concern_slug"] for f in data["findings"]}
+        envelope, findings = _load_stage(out_dir)
+        assert len(findings) == 2
+        concerns = {f["concern_slug"] for f in findings}
         assert concerns == {"security", "documentation"}
 
     def test_cross_concern_threshold_is_tunable(self, tmp_path: Path):
@@ -511,14 +535,15 @@ class TestConsolidateBasic:
                 )
             ],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         # Threshold 0.99 effectively disables cross-concern merge.
         result = _run(
             [
                 "--raw-dir",
                 str(raw),
-                "--output",
-                str(out),
+                "--output-dir",
+                str(out_dir),
                 "--project-name",
                 "myapp",
                 "--cross-concern-threshold",
@@ -526,11 +551,12 @@ class TestConsolidateBasic:
             ]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        assert len(data["findings"]) == 2
+        envelope, findings = _load_stage(out_dir)
+        assert len(findings) == 2
 
-    def test_output_validates_against_consolidated_schema(self, tmp_path: Path):
-        """End-to-end: produced JSON validates against consolidated.schema.json."""
+    def test_output_validates_against_stage_schemas(self, tmp_path: Path):
+        """End-to-end: _envelope.json validates against stage-envelope.schema.json
+        and each per-finding file validates against merged-finding.schema.json."""
         import jsonschema
 
         raw = tmp_path / "raw"
@@ -544,18 +570,26 @@ class TestConsolidateBasic:
                 _make_finding(title="Y", path="src/a.py", line="20"),
             ],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
-            ["--raw-dir", str(raw), "--output", str(out), "--project-name", "myapp"]
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
-        schema = _load(SCHEMAS / "consolidated.schema.json")
+        envelope, findings = _load_stage(out_dir)
+
         from scripts.envelope import schema_registry
-        jsonschema.Draft202012Validator(schema, registry=schema_registry()).validate(data)
+        registry = schema_registry()
+
+        envelope_schema = _load(SCHEMAS / "stage-envelope.schema.json")
+        jsonschema.Draft202012Validator(envelope_schema, registry=registry).validate(envelope)
+
+        finding_schema = _load(SCHEMAS / "merged-finding.schema.json")
+        for f in findings:
+            jsonschema.Draft202012Validator(finding_schema, registry=registry).validate(f)
 
 
-class TestIssuesOut:
+class TestIssuesInEnvelope:
     def test_malformed_raw_file_becomes_issue(self, tmp_path: Path):
         raw = tmp_path / "raw"
         raw.mkdir()
@@ -568,32 +602,30 @@ class TestIssuesOut:
         )
         (raw / "bad.json").write_text("{ not valid json", encoding="utf-8")
 
-        out = tmp_path / "consolidated.json"
-        issues = tmp_path / "issues.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
             [
                 "--raw-dir",
                 str(raw),
-                "--output",
-                str(out),
-                "--issues-out",
-                str(issues),
+                "--output-dir",
+                str(out_dir),
                 "--project-name",
                 "myapp",
             ]
         )
         assert result.returncode == 0, result.stderr
-        assert issues.exists()
-        entries = _load(issues)
-        assert isinstance(entries, list)
+        envelope, findings = _load_stage(out_dir)
+        assert isinstance(envelope["issues"], list)
         assert any(
             e.get("kind") == "schema_rejected_input"
             and e.get("source_component") == "consolidate-findings"
             and "bad.json" in e.get("message", "")
-            for e in entries
+            for e in envelope["issues"]
         )
 
-    def test_issues_out_appends_to_existing_file(self, tmp_path: Path):
+    def test_issues_present_in_envelope(self, tmp_path: Path):
+        """Issues from malformed raw files appear in the envelope's issues array."""
         raw = tmp_path / "raw"
         raw.mkdir()
         _write_agent_output(
@@ -604,35 +636,22 @@ class TestIssuesOut:
         )
         (raw / "bad.json").write_text("{ not valid json", encoding="utf-8")
 
-        out = tmp_path / "consolidated.json"
-        issues = tmp_path / "issues.json"
-        # Pre-seed issues.json with a prior entry.
-        prior = [
-            {
-                "severity": "warning",
-                "kind": "tool_unavailable",
-                "message": "xenon not installed",
-            }
-        ]
-        issues.write_text(json.dumps(prior), encoding="utf-8")
-
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
             [
                 "--raw-dir",
                 str(raw),
-                "--output",
-                str(out),
-                "--issues-out",
-                str(issues),
+                "--output-dir",
+                str(out_dir),
                 "--project-name",
                 "myapp",
             ]
         )
         assert result.returncode == 0, result.stderr
-        entries = _load(issues)
-        assert len(entries) == 2
-        assert entries[0]["kind"] == "tool_unavailable"
-        assert entries[1]["kind"] == "schema_rejected_input"
+        envelope, findings = _load_stage(out_dir)
+        assert len(envelope["issues"]) >= 1
+        assert envelope["issues"][0]["kind"] == "schema_rejected_input"
 
     def test_envelope_shaped_raw_gets_diagnostic_warning(self, tmp_path: Path):
         """A raw/*.json with cross-skill envelope keys should produce a
@@ -649,7 +668,7 @@ class TestIssuesOut:
             findings=[_make_finding(title="x", path="src/a.py", line="1")],
         )
         # And one envelope-shaped file.
-        envelope = {
+        envelope_data = {
             "schema_version": "0.2.0",
             "source": "review",
             "project": {"name": "confused"},
@@ -658,19 +677,17 @@ class TestIssuesOut:
             "issues": [],
         }
         (raw / "documentation-core.json").write_text(
-            json.dumps(envelope), encoding="utf-8"
+            json.dumps(envelope_data), encoding="utf-8"
         )
 
-        out = tmp_path / "consolidated.json"
-        issues = tmp_path / "issues.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
             [
                 "--raw-dir",
                 str(raw),
-                "--output",
-                str(out),
-                "--issues-out",
-                str(issues),
+                "--output-dir",
+                str(out_dir),
                 "--project-name",
                 "myapp",
             ]
@@ -679,15 +696,15 @@ class TestIssuesOut:
         # Targeted wording must appear and name the offending file.
         assert "envelope shape" in result.stderr
         assert "documentation-core.json" in result.stderr
-        # It must also be captured as an issues.json entry for downstream.
-        entries = _load(issues)
+        # It must also be captured as an envelope issues entry for downstream.
+        envelope, findings = _load_stage(out_dir)
         assert any(
             "envelope shape" in e["message"]
             and "documentation-core.json" in e["message"]
-            for e in entries
+            for e in envelope["issues"]
         )
 
-    def test_no_warnings_means_no_issues_file_written(self, tmp_path: Path):
+    def test_no_warnings_means_empty_issues(self, tmp_path: Path):
         raw = tmp_path / "raw"
         raw.mkdir()
         _write_agent_output(
@@ -697,23 +714,21 @@ class TestIssuesOut:
             findings=[_make_finding(title="x", path="src/a.py", line="1")],
         )
 
-        out = tmp_path / "consolidated.json"
-        issues = tmp_path / "issues.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
             [
                 "--raw-dir",
                 str(raw),
-                "--output",
-                str(out),
-                "--issues-out",
-                str(issues),
+                "--output-dir",
+                str(out_dir),
                 "--project-name",
                 "myapp",
             ]
         )
         assert result.returncode == 0, result.stderr
-        # No skipped files -> consolidator leaves the issues file untouched.
-        assert not issues.exists()
+        envelope, findings = _load_stage(out_dir)
+        assert envelope["issues"] == []
 
 
 class TestContentHashStability:
@@ -722,7 +737,7 @@ class TestContentHashStability:
 
     def test_hash_stable_across_two_runs(self, tmp_path: Path):
         # Identical inputs in two isolated runs produce byte-identical hashes.
-        def run_once(dest: Path) -> dict:
+        def run_once(dest: Path) -> tuple[dict, list[dict]]:
             raw = dest / "raw"
             raw.mkdir(parents=True)
             _write_agent_output(
@@ -734,24 +749,25 @@ class TestContentHashStability:
                     _make_finding(title="Y", path="src/b.py", line="20"),
                 ],
             )
-            out = dest / "consolidated.json"
+            out_dir = dest / "10-merged"
+            out_dir.mkdir()
             result = _run(
                 [
                     "--raw-dir",
                     str(raw),
-                    "--output",
-                    str(out),
+                    "--output-dir",
+                    str(out_dir),
                     "--project-name",
                     "myapp",
                 ]
             )
             assert result.returncode == 0, result.stderr
-            return _load(out)
+            return _load_stage(out_dir)
 
-        run_a = run_once(tmp_path / "a")
-        run_b = run_once(tmp_path / "b")
-        hashes_a = sorted(f["content_hash"] for f in run_a["findings"])
-        hashes_b = sorted(f["content_hash"] for f in run_b["findings"])
+        envelope_a, findings_a = run_once(tmp_path / "a")
+        envelope_b, findings_b = run_once(tmp_path / "b")
+        hashes_a = sorted(f["content_hash"] for f in findings_a)
+        hashes_b = sorted(f["content_hash"] for f in findings_b)
         assert hashes_a == hashes_b
         # And the hashes are not empty / all-zero.
         assert all(h.strip("0") for h in hashes_a)
@@ -775,26 +791,27 @@ class TestContentHashStability:
             dimension_slug="auth2",
             findings=[_make_finding(title="X", path="src/a.py", line="10")],
         )
-        out = tmp_path / "consolidated.json"
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
         result = _run(
             [
                 "--raw-dir",
                 str(raw),
-                "--output",
-                str(out),
+                "--output-dir",
+                str(out_dir),
                 "--project-name",
                 "myapp",
             ]
         )
         assert result.returncode == 0, result.stderr
-        data = _load(out)
+        envelope, findings = _load_stage(out_dir)
         # Two contributors collapsed to one finding.
-        assert len(data["findings"]) == 1
+        assert len(findings) == 1
         # Hash based on (concern, FIRST contributor's dimension, path:line,
         # title). Since "auth" < "auth2" alphabetically, the first contributor
         # is "auth" — hash is stable regardless of file discovery order.
-        assert data["findings"][0]["content_hash"].strip("0")
-        assert sorted(data["findings"][0]["source_dimensions"]) == ["auth", "auth2"]
+        assert findings[0]["content_hash"].strip("0")
+        assert sorted(findings[0]["source_dimensions"]) == ["auth", "auth2"]
 
 
 class TestConsolidatePureFunction:

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jewzaam/jewzaam-reviews/skills/review/schemas/stage-envelope.schema.json",
+  "title": "Stage Envelope",
+  "description": "Metadata envelope (_envelope.json) at each pipeline stage directory. Carries project identity, decomposition, and accumulated issues — but not findings (those are individual files in the same directory).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "scope_slug": {"type": "string"}
+      }
+    },
+    "decomposition": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["dimension_name", "dimension_slug"],
+        "properties": {
+          "dimension_name": {"type": "string", "minLength": 1},
+          "dimension_slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"},
+          "dimension_scope": {"type": "object"}
+        }
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/issue"}
+    }
+  }
+}

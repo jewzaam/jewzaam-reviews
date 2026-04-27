@@ -26,6 +26,8 @@ from scripts.envelope import safe_load_json, schema_registry  # noqa: E402
 KNOWN_SCHEMAS = {
     "agent-output",
     "consolidated",
+    "merged-finding",
+    "stage-envelope",
     "validation-input",
     "validation-output",
     "render-config",
@@ -41,17 +43,18 @@ def detect_schema(input_path: Path) -> str | None:
             return known
 
     parent = input_path.parent.name
-    if parent == "raw":
-        # Sub-agent output files live at .tmp-review/raw/<concern>-<dim>.json
+    if parent in ("raw", "00-raw"):
         return "agent-output"
-    if parent == "validation":
-        # Validation batches: validation/batch-N-{input,output}.json
+    if parent in ("10-merged", "20-findings"):
+        if stem == "_envelope.json":
+            return "stage-envelope"
+        return "merged-finding"
+    if parent in ("validation", "15-validation"):
         if stem.endswith("-input.json"):
             return "validation-input"
         if stem.endswith("-output.json"):
             return "validation-output"
     if parent == ".tmp-review":
-        # Pipeline intermediates at the workspace root; consolidated shape.
         if stem in ("consolidated.json", "post-validation.json"):
             return "consolidated"
 

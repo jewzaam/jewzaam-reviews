@@ -3,7 +3,6 @@
   "total_batches": 3,
   "findings": [
     {
-      "index": 0,
       "content_hash": "a1b2c3d4e5f60718",
       "concern_slug": "architecture",
       "title": "AuthService bypasses repository abstraction",

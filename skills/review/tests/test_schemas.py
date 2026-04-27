@@ -55,6 +55,41 @@ class TestConsolidatedSchema:
             _validate(schema, instance)
 
 
+class TestStageEnvelopeSchema:
+    def test_valid_envelope_passes(self, schemas_dir):
+        schema = _load_json(schemas_dir / "stage-envelope.schema.json")
+        instance = {
+            "project": {"name": "myapp", "scope_slug": "pr-42"},
+            "decomposition": [
+                {"dimension_name": "auth", "dimension_slug": "auth"}
+            ],
+            "issues": [],
+        }
+        _validate(schema, instance)
+
+    def test_missing_project_fails(self, schemas_dir):
+        schema = _load_json(schemas_dir / "stage-envelope.schema.json")
+        instance = {"decomposition": [], "issues": []}
+        with pytest.raises(jsonschema.ValidationError):
+            _validate(schema, instance)
+
+
+class TestMergedFindingSchema:
+    def test_valid_finding_passes(self, schemas_dir, fixtures_dir):
+        schema = _load_json(schemas_dir / "merged-finding.schema.json")
+        consolidated = _load_json(fixtures_dir / "consolidated.valid.json")
+        finding = consolidated["findings"][0]
+        _validate(schema, finding)
+
+    def test_missing_content_hash_fails(self, schemas_dir, fixtures_dir):
+        schema = _load_json(schemas_dir / "merged-finding.schema.json")
+        consolidated = _load_json(fixtures_dir / "consolidated.valid.json")
+        finding = dict(consolidated["findings"][0])
+        del finding["content_hash"]
+        with pytest.raises(jsonschema.ValidationError):
+            _validate(schema, finding)
+
+
 class TestValidationInputSchema:
     def test_valid_fixture_passes(self, schemas_dir, fixtures_dir):
         schema = _load_json(schemas_dir / "validation-input.schema.json")

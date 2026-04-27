@@ -20,9 +20,8 @@
     "batch_finding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["index", "content_hash", "concern_slug", "title", "runtime_scope", "runtime_scope_justification", "failure_mode", "failure_mode_justification", "evidence_quality", "evidence_quality_justification", "trace_origin", "trace_origin_justification", "effort_to_fix", "effort_to_fix_justification", "locations", "issue", "why_it_matters", "suggested_fix"],
+      "required": ["content_hash", "concern_slug", "title", "runtime_scope", "runtime_scope_justification", "failure_mode", "failure_mode_justification", "evidence_quality", "evidence_quality_justification", "trace_origin", "trace_origin_justification", "effort_to_fix", "effort_to_fix_justification", "locations", "issue", "why_it_matters", "suggested_fix"],
       "properties": {
-        "index": {"type": "integer", "minimum": 0},
         "content_hash": {"type": "string", "pattern": "^[a-f0-9]{16,64}$"},
         "concern_slug": {"type": "string"},
         "title": {"type": "string"},
