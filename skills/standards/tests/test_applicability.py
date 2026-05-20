@@ -23,12 +23,12 @@ SCRIPT = (
 )
 
 
-def _run(*, cwd: str, home: str, env_extra: dict | None = None) -> subprocess.CompletedProcess:
+def _run(*, cwd: str, home: str, args: str = "", env_extra: dict | None = None) -> subprocess.CompletedProcess:
     env = {**os.environ, "HOME": home}
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
-        ["bash", str(SCRIPT)],
+        ["bash", str(SCRIPT), args],
         cwd=cwd,
         env=env,
         capture_output=True,
@@ -98,9 +98,10 @@ class TestApplicable:
         result = _run(cwd=str(repo), home=str(home))
         assert result.returncode == 0
         lines = result.stdout.strip().split("\n")
-        assert lines[0] == "SUBDOMAIN: Common"
-        assert "FILE:" in lines[1]
-        assert "naming.md" in lines[1]
+        assert lines[0] == "SOURCE: external"
+        assert lines[1] == "SUBDOMAIN: Common"
+        assert "FILE:" in lines[2]
+        assert "naming.md" in lines[2]
 
     def test_missing_file_emits_missing_file(self, tmp_path):
         home = _init_standards(tmp_path, dedent("""\
@@ -188,3 +189,265 @@ class TestApplicable:
         result = _run(cwd=str(repo), home=str(home))
         assert result.returncode == 0
         assert "SUBDOMAIN: Common" in result.stdout
+
+
+def _init_docs_standards(repo: Path, readme: str | None = None, files: list[str] | None = None) -> Path:
+    """Create a docs/standards/ directory inside a repo."""
+    standards = repo / "docs" / "standards"
+    standards.mkdir(parents=True)
+    if readme is not None:
+        (standards / "README.md").write_text(readme, encoding="utf-8")
+    for f in (files or []):
+        fpath = standards / f
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+        fpath.write_text(f"# {fpath.stem}\n", encoding="utf-8")
+    return standards
+
+
+def _init_explicit_standards(tmp_path: Path, *, index_name: str | None = None, index_content: str = "",
+                              files: list[str] | None = None) -> Path:
+    """Create a standalone standards directory for explicit-path tests."""
+    standards = tmp_path / "my-standards"
+    standards.mkdir()
+    if index_name:
+        (standards / index_name).write_text(index_content, encoding="utf-8")
+    for f in (files or []):
+        fpath = standards / f
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+        fpath.write_text(f"# {fpath.stem}\n", encoding="utf-8")
+    return standards
+
+
+class TestExplicitPath:
+    """Tests for Mode 1: explicit directory/file paths in arguments."""
+
+    def test_explicit_dir_with_claude_md_index(self, tmp_path):
+        standards = _init_explicit_standards(
+            tmp_path,
+            index_name="CLAUDE.md",
+            index_content=dedent("""\
+                ## Common
+
+                - [naming](common/naming.md) — naming conventions
+            """),
+            files=["common/naming.md"],
+        )
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=str(standards))
+        assert result.returncode == 0
+        assert "SOURCE: explicit" in result.stdout
+        assert "SUBDOMAIN: Common" in result.stdout
+        assert "naming.md" in result.stdout
+
+    def test_explicit_dir_with_readme_index(self, tmp_path):
+        standards = _init_explicit_standards(
+            tmp_path,
+            index_name="README.md",
+            index_content=dedent("""\
+                # My Standards
+
+                ### Testing
+
+                | Document | Scope |
+                |----------|-------|
+                | [Testing](testing.md) | Test standards |
+                | [Logging](logging.md) | Log standards |
+
+                ### Database
+
+                | Document | Scope |
+                |----------|-------|
+                | [Database](database.md) | DB standards |
+            """),
+            files=["testing.md", "logging.md", "database.md"],
+        )
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=str(standards))
+        assert result.returncode == 0
+        assert "SOURCE: explicit" in result.stdout
+        assert "SUBDOMAIN: Testing" in result.stdout
+        assert "SUBDOMAIN: Database" in result.stdout
+        assert "testing.md" in result.stdout
+        assert "logging.md" in result.stdout
+        assert "database.md" in result.stdout
+
+    def test_explicit_dir_flat(self, tmp_path):
+        standards = _init_explicit_standards(
+            tmp_path,
+            files=["naming.md", "style.md"],
+        )
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=str(standards))
+        assert result.returncode == 0
+        assert "SOURCE: explicit" in result.stdout
+        assert "SUBDOMAIN:" in result.stdout
+        assert "naming.md" in result.stdout
+        assert "style.md" in result.stdout
+
+    def test_explicit_dir_nonexistent(self, tmp_path):
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args="/nonexistent/path")
+        assert result.returncode == 0
+        assert "NOT_APPLICABLE" in result.stdout
+
+    def test_explicit_dir_empty(self, tmp_path):
+        standards = tmp_path / "empty-standards"
+        standards.mkdir()
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=str(standards))
+        assert result.returncode == 0
+        assert "NOT_APPLICABLE" in result.stdout
+
+    def test_explicit_file(self, tmp_path):
+        standards = _init_explicit_standards(tmp_path, files=["testing.md"])
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=str(standards / "testing.md"))
+        assert result.returncode == 0
+        assert "SOURCE: explicit" in result.stdout
+        assert "testing.md" in result.stdout
+
+    def test_explicit_with_prose(self, tmp_path):
+        standards = _init_explicit_standards(tmp_path, files=["naming.md"])
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=f"{standards} focus on naming conventions")
+        assert result.returncode == 0
+        assert "SOURCE: explicit" in result.stdout
+        assert "CONTEXT: focus on naming conventions" in result.stdout
+
+    def test_multiple_explicit_dirs(self, tmp_path):
+        dir1 = _init_explicit_standards(tmp_path, files=["naming.md"])
+        dir2 = tmp_path / "other-standards"
+        dir2.mkdir()
+        (dir2 / "logging.md").write_text("# Logging\n")
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=f"{dir1} {dir2}")
+        assert result.returncode == 0
+        assert "SOURCE: explicit" in result.stdout
+        assert "naming.md" in result.stdout
+        assert "logging.md" in result.stdout
+
+
+class TestRepoLocal:
+    """Tests for Mode 2: auto-discovery of docs/standards/ in the repo."""
+
+    def test_docs_standards_with_readme(self, tmp_path):
+        repo = _init_repo(tmp_path)
+        _init_docs_standards(
+            repo,
+            readme=dedent("""\
+                # Standards
+
+                ### Testing
+
+                | Document | Scope |
+                |----------|-------|
+                | [Testing](testing.md) | Test standards |
+
+                ### Logging
+
+                - [Logging](logging.md) — Log standards
+            """),
+            files=["testing.md", "logging.md"],
+        )
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home))
+        assert result.returncode == 0
+        assert "SOURCE: repo-local" in result.stdout
+        assert "SUBDOMAIN: Testing" in result.stdout
+        assert "SUBDOMAIN: Logging" in result.stdout
+        assert "testing.md" in result.stdout
+        assert "logging.md" in result.stdout
+
+    def test_docs_standards_flat(self, tmp_path):
+        repo = _init_repo(tmp_path)
+        _init_docs_standards(repo, files=["testing.md", "logging.md"])
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home))
+        assert result.returncode == 0
+        assert "SOURCE: repo-local" in result.stdout
+        assert "SUBDOMAIN:" in result.stdout
+        assert "testing.md" in result.stdout
+        assert "logging.md" in result.stdout
+
+    def test_docs_standards_missing_falls_through(self, tmp_path):
+        """No docs/standards/ and no ~/source/standards/ → NOT_APPLICABLE."""
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home))
+        assert result.returncode == 0
+        assert "NOT_APPLICABLE" in result.stdout
+
+
+class TestSourceLine:
+    """Verify the SOURCE: prefix line for each discovery mode."""
+
+    def test_source_explicit(self, tmp_path):
+        standards = _init_explicit_standards(tmp_path, files=["naming.md"])
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=str(standards))
+        lines = result.stdout.strip().split("\n")
+        assert lines[0] == "SOURCE: explicit"
+
+    def test_source_repo_local(self, tmp_path):
+        repo = _init_repo(tmp_path)
+        _init_docs_standards(repo, files=["testing.md"])
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home))
+        lines = result.stdout.strip().split("\n")
+        assert lines[0] == "SOURCE: repo-local"
+
+    def test_source_external(self, tmp_path):
+        repo = _init_repo(tmp_path)
+        home = _init_standards(tmp_path, dedent("""\
+            ## Common
+
+            - [naming](common/naming.md) — naming conventions
+        """))
+        standards_dir = home / "source" / "standards"
+        (standards_dir / "common").mkdir()
+        (standards_dir / "common" / "naming.md").write_text("# Naming\n")
+        result = _run(cwd=str(repo), home=str(home))
+        lines = result.stdout.strip().split("\n")
+        assert lines[0] == "SOURCE: external"
+
+
+class TestContextLine:
+    """Verify CONTEXT: line is emitted for trailing prose in arguments."""
+
+    def test_context_emitted(self, tmp_path):
+        standards = _init_explicit_standards(tmp_path, files=["naming.md"])
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=f"{standards} check the logging patterns")
+        assert "CONTEXT: check the logging patterns" in result.stdout
+
+    def test_no_context_when_no_prose(self, tmp_path):
+        standards = _init_explicit_standards(tmp_path, files=["naming.md"])
+        repo = _init_repo(tmp_path)
+        home = tmp_path / "empty-home"
+        home.mkdir()
+        result = _run(cwd=str(repo), home=str(home), args=str(standards))
+        assert "CONTEXT:" not in result.stdout
