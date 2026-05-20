@@ -1,7 +1,8 @@
 ---
 name: standards
-description: Audit a repository for conformance with the user's personal coding standards at ~/source/standards/. Spawns one agent per standards subdomain, reports applicability and gaps as a Findings-standards.json handoff consumable by /apply-review. Use when the user asks to check, audit, or validate a codebase against their standards library.
+description: Audit a repository for conformance with coding standards. Discovers standards from explicit paths, repo-local docs/standards/, or ~/source/standards/. Spawns one agent per standards subdomain, reports applicability and gaps as a Findings-standards.json handoff consumable by /apply-review. Use when the user asks to check, audit, or validate a codebase against a standards library.
 disable-model-invocation: true
+argument-hint: "[standards-path...] [context...]"
 allowed-tools:
   # A: !-injection coverage (load-bearing)
   - Bash(bash ${CLAUDE_PLUGIN_ROOT}/**)
@@ -10,13 +11,15 @@ allowed-tools:
   # B: Main-agent tools (also covered by global settings)
   - Bash(git remote -v)
   - Bash(pwd)
+  # C: Interactive fallback when no standards found
+  - AskUserQuestion
 ---
 
 # Standards Skill
 
 ## Purpose
 
-Audit a repository against the user's personal standards library at `~/source/standards/`. For each standards subdomain (derived deterministically from the `## ` section headers of `~/source/standards/CLAUDE.md`) spawn a parallel agent that reads every standards file in its subdomain, decides whether each standard applies to this project, and — for applicable standards — reports gaps. Consolidate into a single review document, then validate with independent subagents. Output is consumable by `/apply-review`.
+Audit a repository against coding standards. Standards are discovered automatically by the pre-fetch applicability check using a cascade: explicit paths from arguments, then repo-local `docs/standards/`, then `~/source/standards/`. For each standards subdomain spawn a parallel agent that reads every standards file in its subdomain, decides whether each standard applies to this project, and — for applicable standards — reports gaps. Consolidate into a single review document, then validate with independent subagents. Output is consumable by `/apply-review`.
 
 ## Constraints
 
@@ -24,7 +27,7 @@ Audit a repository against the user's personal standards library at `~/source/st
 - **Read-only analysis.** Never modify source code, tests, or config.
 - **No program execution.** Never run the target project, install dependencies, or invoke language runtimes (`python`, `node`, `go run`, etc.).
 - **No package management.** Never run `pip`, `npm`, `cargo`, etc.
-- **User-owned repos only.** If the pre-fetch emits `NOT_APPLICABLE`, print the reason and stop — do not write any review files.
+- **Handle NOT_APPLICABLE.** If the pre-fetch emits `NOT_APPLICABLE`, follow the process in Step 1 — either prompt the user or stop.
 - **Output is three files** at the project root, always with the `-standards` slug:
   - `Findings-standards.json` — authoritative structured findings, validated against `${CLAUDE_PLUGIN_ROOT}/schemas/findings.schema.json` with `source: "standards"`. Consumed by `/apply-review`.
   - `Findings-standards.md` — human-readable actionable findings. **Rendered from the JSON — never hand-authored.**
@@ -52,9 +55,15 @@ Absolute path of the project root. The main agent MUST substitute this value for
 
 ### Applicability & Subdomain List (auto-executed)
 
-Runs `scripts/applicability.sh`. Validates origin owner (`jewzaam` / `nmalik`) and `~/source/standards/CLAUDE.md` presence. On success emits one `SUBDOMAIN: <name>` line followed by `FILE: <absolute path>` lines for each standards file. On failure emits `NOT_APPLICABLE: <reason>`.
+Runs `scripts/applicability.sh` with any user-provided arguments. Discovery cascade:
 
-!`bash ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/applicability.sh`
+1. **Explicit paths** — directories/files passed as arguments are used directly
+2. **Repo-local** — `docs/standards/` in the current repo (no owner gate)
+3. **External** — `~/source/standards/` (owner-gated to user-owned repos)
+
+On success emits `SOURCE: explicit|repo-local|external`, optional `CONTEXT: <prose>`, then `SUBDOMAIN: <name>` / `FILE: <absolute path>` blocks. On failure emits `NOT_APPLICABLE: <reason>`.
+
+!`bash ${CLAUDE_PLUGIN_ROOT}/skills/standards/scripts/applicability.sh "$ARGUMENTS"`
 
 ### Workspace Bootstrap (auto-executed)
 
@@ -70,16 +79,21 @@ Wipes and recreates `./.tmp-standards/` at the project root with a `.gitignore` 
 
 ### 1. Handle Applicability
 
-If the pre-fetch output begins with `NOT_APPLICABLE:`, print the full reason to the user and stop. Do not write any review files. Do not proceed to the agent dispatch.
+If the pre-fetch output begins with `NOT_APPLICABLE:` and the reason mentions "no standards found" or a missing index file, use `AskUserQuestion` to ask the user: "No standards were discovered automatically. You can re-run with an explicit path: `/standards /path/to/standards/`. Would you like to provide a path, or should I stop?" If the user provides a path, re-invoke the applicability script with that path and continue. If the user says stop, print the reason and exit.
 
-Otherwise parse the subdomain blocks. Each `SUBDOMAIN:` line starts a new group; subsequent `FILE:` lines belong to it until the next `SUBDOMAIN:` line.
+If `NOT_APPLICABLE:` with an owner-gate reason (non-user-owned repo), print the full reason and stop.
+
+Otherwise parse the output:
+- `SOURCE:` line — record the discovery mode (explicit, repo-local, external) for use in agent prompts
+- `CONTEXT:` line (optional) — record the trailing prose to pass through to agent prompts as additional guidance
+- Each `SUBDOMAIN:` line starts a new group; subsequent `FILE:` lines belong to it until the next `SUBDOMAIN:` line
 
 ### 2. Determine Project Context
 
 - Use Glob and Read to understand the project structure.
 - Identify the language, framework, build system, and test framework from top-level files (`pyproject.toml`, `package.json`, `go.mod`, `Makefile`, etc.).
 - Call `mcp__allowlist__get_allowed_permissions` once to discover pre-approved commands. Pass the list to every agent so they know what can run without prompting.
-- **Template files are reference material, not prescriptive content.** Some standards files live in a `templates/` subdirectory (e.g. `~/source/standards/python/templates/Makefile`, `~/source/standards/python/templates/pyproject.toml`). For these, the subdomain agent must compare the project's equivalent file against the template's *structure and approach* — never line-for-line content. Applicability is whether the project uses the relevant language/tool, regardless of how closely its file resembles the template's wording. This mirrors the explicit guidance in the Agent Prompt Template below, and must be echoed here so agents receive it before they start reading.
+- **Template files are reference material, not prescriptive content.** Some standards sources include `templates/` subdirectories (e.g. `templates/Makefile`, `templates/pyproject.toml`). For these, the subdomain agent must compare the project's equivalent file against the template's *structure and approach* — never line-for-line content. Applicability is whether the project uses the relevant language/tool, regardless of how closely its file resembles the template's wording. This mirrors the explicit guidance in the Agent Prompt Template below, and must be echoed here so agents receive it before they start reading.
 
 ### 3. Launch Subdomain Agents in Parallel
 
@@ -176,6 +190,10 @@ Each subdomain agent receives a prompt structured as:
 
 ```
 Audit the project at <project-root> for conformance with the "<subdomain>" standards.
+Standards source: <source-type from SOURCE: line>
+
+<if CONTEXT: line was present in pre-fetch output:>
+Additional context: <context text>
 
 Standards files to evaluate (read ALL of them using these absolute paths):
 - <absolute path 1>
