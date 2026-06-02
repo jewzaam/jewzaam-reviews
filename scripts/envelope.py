@@ -203,9 +203,13 @@ def write_stage_dir(
 ) -> None:
     """Write an envelope dict and per-finding files to a stage directory.
 
-    Writes ``_envelope.json`` and one ``<content_hash>.json`` per finding.
+    Removes any existing ``*.json`` files first so stale findings from a
+    previous run cannot contaminate the new output. Writes
+    ``_envelope.json`` and one ``<content_hash>.json`` per finding.
     The directory must already exist.
     """
+    for stale in dir_path.glob("*.json"):
+        stale.unlink()
     envelope_path = dir_path / ENVELOPE_FILENAME
     with envelope_path.open("w", encoding="utf-8") as fh:
         json.dump(envelope, fh, indent=2)
