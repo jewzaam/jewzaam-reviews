@@ -136,6 +136,45 @@ class TestFormatValidationError:
         assert "findings.schema.json" in msg
 
 
+class TestWriteStageDir:
+    def test_wipes_stale_files_before_writing(self, tmp_path):
+        stale = tmp_path / "stale_hash.json"
+        stale.write_text('{"old": true}', encoding="utf-8")
+
+        env = {"project": {"name": "test"}, "issues": []}
+        findings = [{"content_hash": "abcd1234abcd1234", "title": "new"}]
+        envelope.write_stage_dir(tmp_path, env, findings)
+
+        assert not stale.exists(), "stale file should have been removed"
+        assert (tmp_path / "abcd1234abcd1234.json").exists()
+        assert (tmp_path / "_envelope.json").exists()
+
+    def test_non_json_files_preserved(self, tmp_path):
+        keep = tmp_path / ".gitignore"
+        keep.write_text("*\n", encoding="utf-8")
+
+        env = {"project": {"name": "test"}, "issues": []}
+        envelope.write_stage_dir(tmp_path, env, [])
+
+        assert keep.exists(), "non-json files should not be removed"
+
+    def test_roundtrip_with_load(self, tmp_path):
+        env = {"project": {"name": "test"}, "decomposition": [], "issues": []}
+        findings = [
+            {"content_hash": "aaaa1111bbbb2222", "title": "f1"},
+            {"content_hash": "cccc3333dddd4444", "title": "f2"},
+        ]
+        envelope.write_stage_dir(tmp_path, env, findings)
+        loaded_env, loaded_findings = envelope.load_stage_dir(tmp_path)
+
+        assert loaded_env["project"] == env["project"]
+        assert len(loaded_findings) == 2
+        assert {f["content_hash"] for f in loaded_findings} == {
+            "aaaa1111bbbb2222",
+            "cccc3333dddd4444",
+        }
+
+
 class TestContentHash:
     def test_deterministic(self):
         assert envelope.content_hash("a", "b", "c") == envelope.content_hash("a", "b", "c")

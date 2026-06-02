@@ -164,9 +164,9 @@ After decomposition produces N dimensions, launch **all `1 + 7×N` agents in a s
 | 1 | Architecture & Design | `architecture` | sonnet | Project structure, module boundaries, coupling, data model, configuration management, design pattern consistency. |
 | 2 | Implementation Quality | `implementation` | sonnet | Logic correctness, error handling, type safety, resource management, edge cases, concurrency. **Security excluded — see dedicated axis.** |
 | 3 | Test Quality & Coverage | `test` | sonnet | Test plan alignment, isolation, assertion quality, edge case coverage, mock usage, missing scenarios, fixture design. |
-| 4 | Maintainability & Standards | `maintainability` | haiku | Naming, duplication, import organization, function complexity, internal consistency, build system. **Documentation excluded — see dedicated axis.** |
+| 4 | Maintainability & Standards | `maintainability` | sonnet | Naming, duplication, import organization, function complexity, internal consistency, build system. **Documentation excluded — see dedicated axis.** |
 | 5 | Security | `security` | sonnet | Authn/authz, input validation, injection vectors, credential/secret handling, path traversal, deserialization, supply chain (deps), TLS/crypto, auth-related error leakage. **Auth chain rule:** before reporting filter-level or data-level access control issues (IDOR, horizontal privilege escalation), verify the full auth chain — endpoint-level guards (dependencies, decorators, middleware) may already prevent the attack. If endpoint auth restricts access to privileged roles only, filter-level IDOR is not possible and must not be reported. |
-| 6 | Documentation | `documentation` | haiku | README accuracy and completeness, docstrings, inline comments where non-obvious, examples, ADRs, changelog, public API docs, install/usage instructions. |
+| 6 | Documentation | `documentation` | sonnet | README accuracy and completeness, docstrings, inline comments where non-obvious, examples, ADRs, changelog, public API docs, install/usage instructions. |
 | 7 | Observability | `observability` | sonnet | Log quality (levels, structured fields, sensitive data), error context (do exceptions carry enough info?), metrics, traces, debug affordances, alerting hooks. |
 
 #### Subagent Type and Tool Restrictions
