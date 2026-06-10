@@ -52,6 +52,12 @@ Perform a multi-agent review of a codebase by spinning up parallel review agents
 
 ## Pre-Fetch
 
+### Git Context Guard (auto-executed)
+
+Verifies this is a git repo with a determinable default branch. Exits non-zero on failure, aborting skill loading.
+
+!`bash ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/check-git-context.sh`
+
 ### Plugin Home (auto-detected)
 
 Plugin root with `~` prefix. Use this path in all Bash commands that invoke plugin scripts.
