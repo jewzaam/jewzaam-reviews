@@ -11,13 +11,7 @@ if ! git rev-parse --is-inside-work-tree &>/dev/null; then
   exit 1
 fi
 
-default_branch=""
-for ref in origin/main origin/master main master; do
-  if git rev-parse --verify "$ref" &>/dev/null; then
-    default_branch="$ref"
-    break
-  fi
-done
+default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/||')
 
 if [ -z "$default_branch" ]; then
   echo "ERROR: Cannot determine default branch. Are you in the right directory?" >&2
