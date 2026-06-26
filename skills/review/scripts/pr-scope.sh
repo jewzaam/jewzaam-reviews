@@ -24,16 +24,7 @@ first_token="${1%% *}"
 
 pr_number="$first_token"
 
-# Determine the default branch, preferring remote refs (authoritative)
-# over local refs. origin/main first (GitHub/GitLab convention), then
-# origin/master (older convention), then local refs as last resort.
-default_branch=""
-for ref in origin/main origin/master main master; do
-  if git rev-parse --verify "$ref" &>/dev/null; then
-    default_branch="$ref"
-    break
-  fi
-done
+default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/||')
 
 if [ -z "$default_branch" ]; then
   echo "## PR Scope: #${pr_number}"
