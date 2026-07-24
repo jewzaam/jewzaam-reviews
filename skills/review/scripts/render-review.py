@@ -166,7 +166,7 @@ def render_main_markdown(rendered: dict, project_name: str, scope_slug: str) -> 
     if by_bucket["suggestion"]:
         parts.append(
             f"{len(by_bucket['suggestion'])} suggestions documented in the "
-            f"[supplementary review]({supp_path}#suggestions).\n"
+            f"[supplementary review]({supp_path}#detailed-analysis).\n"
         )
     else:
         parts.append("No suggestions.\n")
@@ -175,7 +175,7 @@ def render_main_markdown(rendered: dict, project_name: str, scope_slug: str) -> 
     if by_bucket["needs-review"]:
         parts.append(
             f"{len(by_bucket['needs-review'])} low-confidence findings in the "
-            f"[supplementary review]({supp_path}#needs-review).\n"
+            f"[supplementary review]({supp_path}#detailed-analysis).\n"
         )
     else:
         parts.append("No low-confidence findings.\n")
@@ -207,8 +207,6 @@ def render_supplementary_markdown(
     parts.append("## Detailed Analysis\n")
     by_concern: dict[str, list[dict]] = {}
     for f in findings:
-        if f["severity"] == "needs-review":
-            continue
         by_concern.setdefault(f["concern_slug"], []).append(f)
     if by_concern:
         for concern in sorted(by_concern):
@@ -217,20 +215,6 @@ def render_supplementary_markdown(
                 parts.append(_format_finding_block(f))
     else:
         parts.append("(no findings to detail)\n")
-
-    parts.append("## Suggestions\n")
-    if by_bucket["suggestion"]:
-        for f in by_bucket["suggestion"]:
-            parts.append(_format_finding_block(f))
-    else:
-        parts.append("None.\n")
-
-    parts.append("## Needs Review\n")
-    if by_bucket["needs-review"]:
-        for f in by_bucket["needs-review"]:
-            parts.append(_format_finding_block(f))
-    else:
-        parts.append("None.\n")
 
     return "\n".join(parts)
 

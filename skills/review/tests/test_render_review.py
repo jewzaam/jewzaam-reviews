@@ -164,10 +164,9 @@ class TestRenderReviewMarkdown:
         body = (out_dir / "Findings-review-supplementary.md").read_text(encoding="utf-8")
         assert "## Decomposition" in body
         assert "auth subsystem" in body
-        assert "## Needs Review" in body
-        assert "Maybe we should log here" in body
         assert "## Detailed Analysis" in body
         assert "### Security" in body or "### security" in body.lower()
+        assert "Maybe we should log here" in body
 
 
 class TestSharedSchemaCompliance:
