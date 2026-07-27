@@ -283,6 +283,69 @@ def _default_sort_key(finding: dict) -> tuple:
     )
 
 
+SEVERITY_BUCKETS = ("critical", "important", "suggestion", "needs-review")
+
+
+def assign_bucket(finding: dict) -> str:
+    """Map categorical dimensions to a severity bucket.
+
+    Returns one of: critical, important, suggestion, needs-review.
+    """
+    rs = finding["runtime_scope"]
+    fm = finding["failure_mode"]
+    eq = finding["evidence_quality"]
+    to = finding["trace_origin"]
+
+    if eq == "speculative":
+        return "needs-review"
+
+    if (
+        eq == "demonstrated"
+        and to == "entry-point"
+        and rs == "service-external"
+        and fm in ("data-loss-or-security", "crash-or-outage")
+    ):
+        return "critical"
+    if (
+        eq == "demonstrated"
+        and to == "entry-point"
+        and rs == "service-internal"
+        and fm == "data-loss-or-security"
+    ):
+        return "critical"
+
+    if (
+        eq == "demonstrated"
+        and to == "entry-point"
+        and rs in ("service-internal", "service-external")
+        and fm in ("crash-or-outage", "degraded-behavior")
+    ):
+        return "important"
+    if (
+        eq == "demonstrated"
+        and to == "component"
+        and rs in ("service-internal", "service-external")
+        and fm in ("data-loss-or-security", "crash-or-outage")
+    ):
+        return "important"
+    if (
+        eq == "inferred"
+        and to in ("component", "entry-point")
+        and rs in ("service-internal", "service-external")
+        and fm in ("data-loss-or-security", "crash-or-outage")
+    ):
+        return "important"
+    if (
+        eq == "demonstrated"
+        and to == "entry-point"
+        and rs == "ci"
+        and fm == "build-break"
+    ):
+        return "important"
+
+    return "suggestion"
+
+
 def assign_ids_per_bucket(
     findings: list[dict],
     *,

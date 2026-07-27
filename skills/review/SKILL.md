@@ -112,6 +112,23 @@ Extracts free-form guidance text from the arguments (everything after a leading 
 
 ## Process
 
+### 0. Dispatch Orchestrator
+
+The main thread's role is minimal: gather context and spawn a single orchestrator agent that executes the full review pipeline on Sonnet.
+
+1. Call `mcp__allowlist__get_allowed_permissions` to discover pre-approved commands.
+2. Spawn a single **foreground** `Agent(model: "sonnet")` with the following prompt content:
+   - All pre-fetch context from above (Plugin Home, Project Root, Remotes, Standards Applicability, Handoff Contract, Agent Output Schema, PR Scope, User Guidance) — paste each section verbatim.
+   - The allowlist results from step 1.
+   - The full **Orchestrator Instructions** section below — include it verbatim in the agent prompt.
+3. After the agent returns, relay its output verbatim to the user. Do not re-read files or add commentary.
+
+---
+
+## Orchestrator Instructions
+
+> **This entire section is the orchestrator agent's prompt.** The main thread includes it verbatim when dispatching the Agent in Step 0. The orchestrator executes Steps 1–8 on Sonnet.
+
 ### 1. Determine Scope & Context
 
 - If the pre-fetch injected a "PR Scope" section, include it verbatim in each agent's prompt.
@@ -125,7 +142,7 @@ Follow explicit file path references found in rules or instructions sections (e.
 
 **External standards:** For user-owned repos, the pre-fetch injects the external standards index with absolute paths directly into context. Pass this content to each agent as part of their prompt — agents can Read any referenced file directly using the absolute paths. For non-owned repos, the pre-fetch outputs nothing and agents rely solely on the project's own CLAUDE.md (already loaded by Claude Code).
 
-**Allowlist discovery:** Call `mcp__allowlist__get_allowed_permissions` once to discover which commands are pre-approved. Include the allowed commands in each agent's prompt so agents know what they can run without blocking on user approval.
+**Allowlist:** The allowed commands were provided in this prompt. Include them in each agent's prompt so agents know what they can run without blocking on user approval.
 
 ### 2. Decompose Scope into Dimensions
 
@@ -172,8 +189,8 @@ After decomposition produces N dimensions, launch **all `1 + 7×N` agents in a s
 | 3 | Test Quality & Coverage | `test` | sonnet | Test plan alignment, isolation, assertion quality, edge case coverage, mock usage, missing scenarios, fixture design. |
 | 4 | Maintainability & Standards | `maintainability` | sonnet | Naming, duplication, import organization, function complexity, internal consistency, build system. **Documentation excluded — see dedicated axis.** |
 | 5 | Security | `security` | sonnet | Authn/authz, input validation, injection vectors, credential/secret handling, path traversal, deserialization, supply chain (deps), TLS/crypto, auth-related error leakage. **Auth chain rule:** before reporting filter-level or data-level access control issues (IDOR, horizontal privilege escalation), verify the full auth chain — endpoint-level guards (dependencies, decorators, middleware) may already prevent the attack. If endpoint auth restricts access to privileged roles only, filter-level IDOR is not possible and must not be reported. |
-| 6 | Documentation | `documentation` | sonnet | README accuracy and completeness, docstrings, inline comments where non-obvious, examples, ADRs, changelog, public API docs, install/usage instructions. |
-| 7 | Observability | `observability` | sonnet | Log quality (levels, structured fields, sensitive data), error context (do exceptions carry enough info?), metrics, traces, debug affordances, alerting hooks. |
+| 6 | Documentation | `documentation` | haiku | README accuracy and completeness, docstrings, inline comments where non-obvious, examples, ADRs, changelog, public API docs, install/usage instructions. |
+| 7 | Observability | `observability` | haiku | Log quality (levels, structured fields, sensitive data), error context (do exceptions carry enough info?), metrics, traces, debug affordances, alerting hooks. |
 
 #### Subagent Type and Tool Restrictions
 
@@ -260,12 +277,13 @@ If a `00-raw/*.json` file fails its agent-output schema validation, the consolid
 
 ### 6. Validate Findings
 
-Run the batcher script — it reads per-finding files from `10-merged/` and slices them into validation-input batches:
+Run the batcher script — it reads per-finding files from `10-merged/`, predicts severity buckets, and slices **only Critical and Important findings** into validation-input batches. Suggestion and Needs-review findings skip validation (they pass through `apply-verdicts.py` unchanged):
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/batch-findings.py \
   --input-dir ./.tmp-review/10-merged/ \
-  --output-dir ./.tmp-review/15-validation/
+  --output-dir ./.tmp-review/15-validation/ \
+  --only-buckets critical,important
 ```
 
 What the script does (you do **not** re-implement this in your reasoning):
@@ -337,7 +355,24 @@ The slug derivation from `/review` arguments matches today's behavior (max 12 ch
 
 ### 8. Present Summary
 
-After rendering, present the TL;DR plus the Critical and Important findings inline to the user. Reference the main markdown file for full details and the supplementary file for analysis, suggestions, and needs-review items. Reference the JSON file for downstream tooling.
+After rendering, read the counts from the rendered JSON (`findings[]` grouped by `severity`) and output a terse summary:
+
+```
+X critical, Y important, Z suggestion, W needs-review (unvalidated).
+
+Files:
+- Findings-review[-<slug>].json
+- Findings-review[-<slug>].md
+- Findings-review[-<slug>]-supplementary.md
+```
+
+If suggestion + needs-review > 0, append:
+
+```
+To validate supplementary findings, run: /review-supplementary
+```
+
+No inline findings, no commentary. The files have everything.
 
 ## Sub-Agent Prompt Template (concern agents)
 
