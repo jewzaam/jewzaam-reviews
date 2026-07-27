@@ -224,6 +224,104 @@ class TestBatchFindings:
         files = list(out.glob("batch-*-input.json"))
         assert files == []
 
+    def test_only_buckets_filters_supplementary(self, tmp_path: Path):
+        """--only-buckets critical,important excludes suggestion and needs-review."""
+        findings = [
+            _finding(
+                chash="0000000000000001",
+                title="critical-finding",
+                runtime_scope="service-external",
+                failure_mode="data-loss-or-security",
+                evidence_quality="demonstrated",
+                trace_origin="entry-point",
+            ),
+            _finding(
+                chash="0000000000000002",
+                title="suggestion-finding",
+                runtime_scope="ci",
+                failure_mode="confusion",
+                evidence_quality="inferred",
+                trace_origin="local",
+            ),
+            _finding(
+                chash="0000000000000003",
+                title="needs-review-finding",
+                runtime_scope="service-internal",
+                failure_mode="degraded-behavior",
+                evidence_quality="speculative",
+                trace_origin="component",
+            ),
+        ]
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, findings)
+        out = tmp_path / "validation"
+        result = _run([
+            "--input-dir", str(stage),
+            "--output-dir", str(out),
+            "--only-buckets", "critical,important",
+        ])
+        assert result.returncode == 0, result.stderr
+        files = sorted(out.glob("batch-*-input.json"))
+        assert len(files) == 1
+        batch = _load(files[0])
+        assert len(batch["findings"]) == 1
+        assert batch["findings"][0]["title"] == "critical-finding"
+
+    def test_only_buckets_omitted_runs_all(self, tmp_path: Path):
+        """Without --only-buckets, all findings are batched (default behavior)."""
+        findings = [
+            _finding(
+                chash="0000000000000001",
+                title="speculative",
+                evidence_quality="speculative",
+            ),
+            _finding(
+                chash="0000000000000002",
+                title="demonstrated",
+                evidence_quality="demonstrated",
+            ),
+        ]
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, findings)
+        out = tmp_path / "validation"
+        result = _run(["--input-dir", str(stage), "--output-dir", str(out)])
+        assert result.returncode == 0, result.stderr
+        batch = _load(out / "batch-1-input.json")
+        assert len(batch["findings"]) == 2
+
+    def test_only_buckets_invalid_bucket_rejected(self, tmp_path: Path):
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, [_finding(chash="a" * 16, title="t")])
+        out = tmp_path / "validation"
+        result = _run([
+            "--input-dir", str(stage),
+            "--output-dir", str(out),
+            "--only-buckets", "critical,bogus",
+        ])
+        assert result.returncode != 0
+        assert "bogus" in result.stderr
+
+    def test_batch_offset_shifts_numbering(self, tmp_path: Path):
+        """--batch-offset 3 starts batch numbering at 4."""
+        findings = [
+            _finding(chash=f"{i:016x}", title=f"f{i}")
+            for i in range(3)
+        ]
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(stage, findings)
+        out = tmp_path / "validation"
+        result = _run([
+            "--input-dir", str(stage),
+            "--output-dir", str(out),
+            "--batch-offset", "3",
+        ])
+        assert result.returncode == 0, result.stderr
+        files = sorted(out.glob("batch-*-input.json"))
+        assert len(files) == 1
+        assert files[0].name == "batch-4-input.json"
+        batch = _load(files[0])
+        assert batch["batch_number"] == 4
+
     def test_priority_tie_break_is_deterministic(self, tmp_path: Path):
         """Equal-priority findings must sort by content_hash so two runs
         produce identical batches."""

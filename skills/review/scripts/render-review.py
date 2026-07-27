@@ -28,6 +28,8 @@ SCHEMAS_DIR = SKILL_ROOT / "schemas"
 # script runs as a subprocess.
 sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.envelope import (  # noqa: E402
+    SEVERITY_BUCKETS,
+    assign_bucket,
     assign_ids_per_bucket,
     build_envelope,
     format_locations_block,
@@ -45,63 +47,7 @@ BUCKET_PREFIX = {
     "needs-review": "N",
 }
 
-BUCKET_ORDER = ["critical", "important", "suggestion", "needs-review"]
-
-
-def assign_bucket(finding: dict) -> str:
-    rs = finding["runtime_scope"]
-    fm = finding["failure_mode"]
-    eq = finding["evidence_quality"]
-    to = finding["trace_origin"]
-
-    if eq == "speculative":
-        return "needs-review"
-
-    if (
-        eq == "demonstrated"
-        and to == "entry-point"
-        and rs == "service-external"
-        and fm in ("data-loss-or-security", "crash-or-outage")
-    ):
-        return "critical"
-    if (
-        eq == "demonstrated"
-        and to == "entry-point"
-        and rs == "service-internal"
-        and fm == "data-loss-or-security"
-    ):
-        return "critical"
-
-    if (
-        eq == "demonstrated"
-        and to == "entry-point"
-        and rs in ("service-internal", "service-external")
-        and fm in ("crash-or-outage", "degraded-behavior")
-    ):
-        return "important"
-    if (
-        eq == "demonstrated"
-        and to == "component"
-        and rs in ("service-internal", "service-external")
-        and fm in ("data-loss-or-security", "crash-or-outage")
-    ):
-        return "important"
-    if (
-        eq == "inferred"
-        and to in ("component", "entry-point")
-        and rs in ("service-internal", "service-external")
-        and fm in ("data-loss-or-security", "crash-or-outage")
-    ):
-        return "important"
-    if (
-        eq == "demonstrated"
-        and to == "entry-point"
-        and rs == "ci"
-        and fm == "build-break"
-    ):
-        return "important"
-
-    return "suggestion"
+BUCKET_ORDER = list(SEVERITY_BUCKETS)
 
 
 def assign_buckets_and_ids(findings: list[dict]) -> list[dict]:

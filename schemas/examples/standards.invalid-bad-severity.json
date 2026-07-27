@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.4.5",
+  "schema_version": "0.5.0",
   "source": "standards",
   "project": {
     "name": "sample"

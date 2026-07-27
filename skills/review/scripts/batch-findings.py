@@ -29,7 +29,7 @@ SCHEMAS_DIR = REPO_ROOT / "schemas"
 PLUGIN_ROOT = REPO_ROOT.parent.parent
 
 sys.path.insert(0, str(PLUGIN_ROOT))
-from scripts.envelope import load_stage_dir, safe_load_json, schema_registry  # noqa: E402
+from scripts.envelope import assign_bucket, load_stage_dir, safe_load_json, schema_registry, SEVERITY_BUCKETS  # noqa: E402
 
 # Keep this in sync with validation-input.schema.json $defs/batch_finding.required
 BATCH_FINDING_FIELDS = (
@@ -58,6 +58,8 @@ RUNTIME_SCOPE_ORDER = ["documentation", "tooling", "ci", "service-internal", "se
 FAILURE_MODE_ORDER = ["unclear", "confusion", "build-break", "degraded-behavior", "crash-or-outage", "data-loss-or-security"]
 EVIDENCE_QUALITY_ORDER = ["speculative", "inferred", "demonstrated"]
 TRACE_ORIGIN_ORDER = ["local", "component", "entry-point"]
+
+VALID_BUCKETS = frozenset(SEVERITY_BUCKETS)
 
 
 def _priority(f: dict) -> tuple[int, int, int, int]:
@@ -103,6 +105,24 @@ def main(argv: list[str]) -> int:
             f"{MAX_BATCH_SIZE} per validator"
         ),
     )
+    parser.add_argument(
+        "--only-buckets",
+        default="",
+        help=(
+            "comma-separated severity buckets to include in validation "
+            f"({','.join(SEVERITY_BUCKETS)}). "
+            "Omit to include all findings."
+        ),
+    )
+    parser.add_argument(
+        "--batch-offset",
+        type=int,
+        default=0,
+        help=(
+            "start batch numbering at offset+1 (default 0 → batches start at 1). "
+            "Use when appending batches to a directory that already has batch files."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.batch_size < 1 or args.batch_size > MAX_BATCH_SIZE:
@@ -122,11 +142,38 @@ def main(argv: list[str]) -> int:
         print(f"error: schema not found: {schema_path}", file=sys.stderr)
         return 2
 
+    bucket_filter: frozenset[str] | None = None
+    if args.only_buckets:
+        requested = frozenset(b.strip() for b in args.only_buckets.split(","))
+        invalid = requested - VALID_BUCKETS
+        if invalid:
+            print(
+                f"error: --only-buckets contains unknown bucket(s): "
+                f"{', '.join(sorted(invalid))}; valid: {', '.join(sorted(VALID_BUCKETS))}",
+                file=sys.stderr,
+            )
+            return 2
+        bucket_filter = requested
+
     _envelope, findings = load_stage_dir(args.input_dir)
 
     if not findings:
         print("OK: no findings to batch")
         return 0
+
+    if bucket_filter is not None:
+        before = len(findings)
+        findings = [f for f in findings if assign_bucket(f) in bucket_filter]
+        excluded = before - len(findings)
+        if excluded:
+            print(
+                f"  --only-buckets: {excluded} finding(s) excluded "
+                f"(not in {', '.join(sorted(bucket_filter))})",
+                file=sys.stderr,
+            )
+        if not findings:
+            print(f"OK: all {before} finding(s) excluded by --only-buckets filter")
+            return 0
 
     # Sort by priority desc (content_hash tie-break for determinism).
     sorted_findings = sorted(
@@ -143,8 +190,9 @@ def main(argv: list[str]) -> int:
     validator = jsonschema.Draft202012Validator(schema, registry=schema_registry())
 
     written = 0
-    for batch_num in range(1, total_batches + 1):
-        start = (batch_num - 1) * args.batch_size
+    for i in range(total_batches):
+        batch_num = args.batch_offset + i + 1
+        start = i * args.batch_size
         end = start + args.batch_size
         slice_ = sorted_findings[start:end]
         batch = {
