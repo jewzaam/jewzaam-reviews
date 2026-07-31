@@ -149,7 +149,6 @@ After decomposition produces N dimensions:
 2. Invoke the Workflow tool with:
    - `script`: the contents of `review-workflow.js`
    - `args`:
-     - `agentOutputSchema`: the agent-output resolved schema object (read from `${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/agent-output.resolved.schema.json`)
      - `dimensions`: the decomposed dimensions array from Step 2, each with `{name, slug, scope}`
      - `projectRoot`: the Project Root from Pre-Fetch
      - `pluginHome`: the Plugin Home from Pre-Fetch
@@ -165,20 +164,21 @@ The Workflow dispatches 1 build agent + 7×N concern agents with `agent(schema:)
 #### Build & Checks Agent
 
 - `model: "haiku"`, default subagent_type
+- Before running checks, probe for installed dependencies (`test -d node_modules`, `test -d .venv`, or equivalent for the detected language). If dependencies are not installed and a dependency-install target exists (`make install`, `make deps`), run it first. This is the **only** install target the build agent may run — it is a prerequisite for checks, not a deployment action.
 - Runs available `make` check targets sequentially via Bash and reports pass/fail. Prefer commands from the provided allowlist.
 - Safe targets to attempt (skip if missing): `make format-check` (or `make format` in check mode), `make lint`, `make typecheck`, `make test` or `make test-unit`, `make coverage`, `make complexity`.
 - **The Build & Checks agent is the only agent that runs anything against the user's project.** Concern agents must not invoke complexity tools (radon, xenon), test runners, or any other analysis tools directly — if a check is worth running, it belongs in a `make` target the Build & Checks agent invokes.
-- Do **not** run `install`, `build`, `run`, `deploy`, or any target that installs or executes the program.
+- Do **not** run `build`, `run`, `deploy`, or any target that builds artifacts or executes the program.
 - **Output guidelines:** summarize failures concisely — error type and affected files, not full stack traces. For missing-dependency failures, state which dependency is missing and move on.
 
 #### Concern Axes (per dimension)
 
 | # | Concern (`concern`) | `concern_slug` | Model | Scope |
 |---|---|---|---|---|
-| 1 | Architecture & Design | `architecture` | sonnet | Project structure, module boundaries, coupling, data model, configuration management, design pattern consistency. |
+| 1 | Architecture and Design | `architecture` | sonnet | Project structure, module boundaries, coupling, data model, configuration management, design pattern consistency. |
 | 2 | Implementation Quality | `implementation` | sonnet | Logic correctness, error handling, type safety, resource management, edge cases, concurrency. **Security excluded — see dedicated axis.** |
-| 3 | Test Quality & Coverage | `test` | sonnet | Test plan alignment, isolation, assertion quality, edge case coverage, mock usage, missing scenarios, fixture design. |
-| 4 | Maintainability & Standards | `maintainability` | sonnet | Naming, duplication, import organization, function complexity, internal consistency, build system. **Documentation excluded — see dedicated axis.** |
+| 3 | Test Quality and Coverage | `test` | sonnet | Test plan alignment, isolation, assertion quality, edge case coverage, mock usage, missing scenarios, fixture design. |
+| 4 | Maintainability and Standards | `maintainability` | sonnet | Naming, duplication, import organization, function complexity, internal consistency, build system. **Documentation excluded — see dedicated axis.** |
 | 5 | Security | `security` | sonnet | Authn/authz, input validation, injection vectors, credential/secret handling, path traversal, deserialization, supply chain (deps), TLS/crypto, auth-related error leakage. **Auth chain rule:** before reporting filter-level or data-level access control issues (IDOR, horizontal privilege escalation), verify the full auth chain — endpoint-level guards (dependencies, decorators, middleware) may already prevent the attack. If endpoint auth restricts access to privileged roles only, filter-level IDOR is not possible and must not be reported. |
 | 6 | Documentation | `documentation` | haiku | README accuracy and completeness, docstrings, inline comments where non-obvious, examples, ADRs, changelog, public API docs, install/usage instructions. |
 | 7 | Observability | `observability` | haiku | Log quality (levels, structured fields, sensitive data), error context (do exceptions carry enough info?), metrics, traces, debug affordances, alerting hooks. |

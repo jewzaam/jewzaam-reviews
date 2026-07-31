@@ -143,9 +143,33 @@ def resolve_schema(source_path: Path) -> dict:
     return resolved
 
 
+WORKFLOW_EMBED_MARKER_START = "const AGENT_OUTPUT_SCHEMA = "
+WORKFLOW_EMBED_MARKER_END = "\n\nfunction buildConcernPrompt"
+WORKFLOW_JS = PLUGIN_ROOT / "skills" / "review" / "scripts" / "review-workflow.js"
+
+
+def _embed_schema_in_workflow(resolved_schema: dict) -> None:
+    """Replace the embedded AGENT_OUTPUT_SCHEMA const in review-workflow.js."""
+    if not WORKFLOW_JS.exists():
+        return
+    text = WORKFLOW_JS.read_text()
+    start = text.find(WORKFLOW_EMBED_MARKER_START)
+    end = text.find(WORKFLOW_EMBED_MARKER_END)
+    if start == -1 or end == -1:
+        print(f"  WARNING: could not find embed markers in {WORKFLOW_JS.name}, skipping")
+        return
+    schema = copy.deepcopy(resolved_schema)
+    schema.pop("_generated", None)
+    embedded = json.dumps(schema, separators=(",", ":"))
+    new_text = text[:start] + WORKFLOW_EMBED_MARKER_START + embedded + text[end:]
+    WORKFLOW_JS.write_text(new_text)
+    print(f"  Embedded schema in {WORKFLOW_JS.relative_to(PLUGIN_ROOT)}")
+
+
 def main():
     check_mode = "--check" in sys.argv
 
+    agent_output_resolved = None
     for source_path, output_path in SCHEMA_PAIRS:
         resolved = resolve_schema(source_path)
         content = json.dumps(resolved, indent=2, sort_keys=True) + "\n"
@@ -155,6 +179,12 @@ def main():
         else:
             output_path.write_text(content)
             print(f"Wrote {output_path.relative_to(PLUGIN_ROOT)}")
+
+        if source_path.name == "agent-output.schema.json":
+            agent_output_resolved = resolved
+
+    if not check_mode and agent_output_resolved:
+        _embed_schema_in_workflow(agent_output_resolved)
 
 
 if __name__ == "__main__":
