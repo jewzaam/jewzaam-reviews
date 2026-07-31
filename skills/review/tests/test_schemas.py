@@ -10,6 +10,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.envelope import schema_registry  # noqa: E402
+from scripts.resolve_schema import SCHEMA_PAIRS, resolve_schema  # noqa: E402
 
 
 def _load_json(path: Path) -> dict:
@@ -101,6 +102,50 @@ class TestValidationInputSchema:
         instance = _load_json(fixtures_dir / "validation-input.invalid-too-many.json")
         with pytest.raises(jsonschema.ValidationError):
             _validate(schema, instance)
+
+
+class TestResolvedSchemas:
+    @pytest.mark.parametrize(
+        "source_path,output_path", SCHEMA_PAIRS,
+        ids=[p[0].stem for p in SCHEMA_PAIRS],
+    )
+    def test_no_refs_in_resolved(self, source_path, output_path):
+        resolved = _load_json(output_path)
+        refs = _find_refs(resolved)
+        assert refs == [], f"{output_path.name} still contains $ref: {refs}"
+
+    @pytest.mark.parametrize(
+        "source_path,output_path", SCHEMA_PAIRS,
+        ids=[p[0].stem for p in SCHEMA_PAIRS],
+    )
+    def test_resolved_is_fresh(self, source_path, output_path):
+        expected = json.dumps(resolve_schema(source_path), indent=2, sort_keys=True) + "\n"
+        actual = output_path.read_text()
+        assert actual == expected, (
+            f"{output_path.name} is stale. Run: make resolve-schemas"
+        )
+
+    @pytest.mark.parametrize(
+        "source_path,output_path", SCHEMA_PAIRS,
+        ids=[p[0].stem for p in SCHEMA_PAIRS],
+    )
+    def test_resolved_is_valid_json_schema(self, source_path, output_path):
+        resolved = _load_json(output_path)
+        jsonschema.Draft202012Validator.check_schema(resolved)
+
+
+def _find_refs(node, path="") -> list[str]:
+    """Recursively find all $ref keys in a JSON structure."""
+    refs = []
+    if isinstance(node, dict):
+        if "$ref" in node:
+            refs.append(f"{path}: {node['$ref']}")
+        for k, v in node.items():
+            refs.extend(_find_refs(v, f"{path}.{k}"))
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            refs.extend(_find_refs(item, f"{path}[{i}]"))
+    return refs
 
 
 class TestValidationOutputSchema:
