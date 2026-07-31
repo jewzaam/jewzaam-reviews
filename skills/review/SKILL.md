@@ -26,7 +26,7 @@ allowed-tools:
   - Read(${CLAUDE_SKILL_DIR}/**)
   - Glob(${CLAUDE_SKILL_DIR}/**)
   - Grep(${CLAUDE_SKILL_DIR}/**)
-  # D: Sub-agent output workspace
+  # D: Sub-agent output workspace (for writing Workflow results to disk)
   - Write(./.tmp-review/00-raw/**)
   - Write(**/.tmp-review/00-raw/**)
   # E: Validator verdict output
@@ -66,7 +66,7 @@ Plugin root with `~` prefix. Use this path in all Bash commands that invoke plug
 
 ### Project Root (auto-detected)
 
-Absolute path of the project root. The main agent MUST substitute this value for any `./.tmp-review/...` path it passes to a dispatched sub-agent, so the sub-agent has an unambiguous absolute Write target and cannot drift to `/tmp/` or any other directory.
+Absolute path of the project root. Used for absolute path construction when writing Workflow results to disk.
 
 !`pwd`
 
@@ -90,14 +90,6 @@ Wipes and recreates `./.tmp-review/` at the project root with `00-raw/`, `10-mer
 
 !`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh`
 
-### Agent Output Schema (auto-injected)
-
-The JSON schema that every concern agent's output MUST validate against. This is injected here so sub-agents have it in context without needing to Read the file. The main agent MUST include this schema verbatim in every concern agent's prompt.
-
-```json
-!`bash ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/print-agent-output-schema.sh`
-```
-
 ### PR Scope (auto-executed)
 
 If the first argument is numeric, computes the changed files against the default branch merge base. Output is injected as PR scope context for diff-scoped reviews. Any non-numeric trailing arguments are handled by the User Guidance step below. Outputs nothing if no numeric leading argument is given.
@@ -112,27 +104,12 @@ Extracts free-form guidance text from the arguments (everything after a leading 
 
 ## Process
 
-### 0. Dispatch Orchestrator
-
-The main thread's role is minimal: gather context and spawn a single orchestrator agent that executes the full review pipeline on Sonnet.
-
-1. Call `mcp__allowlist__get_allowed_permissions` to discover pre-approved commands.
-2. Spawn a single **foreground** `Agent(model: "sonnet")` with the following prompt content:
-   - All pre-fetch context from above (Plugin Home, Project Root, Remotes, Standards Applicability, Handoff Contract, Agent Output Schema, PR Scope, User Guidance) — paste each section verbatim.
-   - The allowlist results from step 1.
-   - The full **Orchestrator Instructions** section below — include it verbatim in the agent prompt.
-3. After the agent returns, relay its output verbatim to the user. Do not re-read files or add commentary.
-
----
-
-## Orchestrator Instructions
-
-> **This entire section is the orchestrator agent's prompt.** The main thread includes it verbatim when dispatching the Agent in Step 0. The orchestrator executes Steps 1–8 on Sonnet.
+Execute all steps sequentially. Schema enforcement on concern agents and validators uses the Workflow tool's `agent(schema:)` option, which validates output at the harness level.
 
 ### 1. Determine Scope & Context
 
-- If the pre-fetch injected a "PR Scope" section, include it verbatim in each agent's prompt.
-- If the pre-fetch injected a "User Guidance" section, include it verbatim in each agent's prompt. Interpret the guidance yourself — it may be a focus hint, a narrowing filter, a specific question, or arbitrary context. Apply it as the user would reasonably expect.
+- If the pre-fetch injected a "PR Scope" section, note it for passing to concern agents.
+- If the pre-fetch injected a "User Guidance" section, note it for passing to concern agents. Interpret the guidance — it may be a focus hint, a narrowing filter, a specific question, or arbitrary context.
 - Use Glob and Read to understand the project structure.
 - Identify the language, framework, build system, and test framework.
 
@@ -166,10 +143,24 @@ A **dimension** is a coherent slice of the review scope handed to a set of revie
 
 ### 3. Dispatch the Review Agent Matrix
 
-After decomposition produces N dimensions, launch **all `1 + 7×N` agents in a single parallel message** using the Agent tool.
+After decomposition produces N dimensions:
 
-- **1 × Build & Checks agent** (global, runs once)
-- **For each dimension:** 7 concern agents — one per concern axis below
+1. Read the Workflow script from `${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/review-workflow.js`.
+2. Invoke the Workflow tool with:
+   - `script`: the contents of `review-workflow.js`
+   - `args`:
+     - `agentOutputSchema`: the agent-output resolved schema object (read from `${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/agent-output.resolved.schema.json`)
+     - `dimensions`: the decomposed dimensions array from Step 2, each with `{name, slug, scope}`
+     - `projectRoot`: the Project Root from Pre-Fetch
+     - `pluginHome`: the Plugin Home from Pre-Fetch
+     - `projectContext`: `{language, buildSystem, testFramework}` detected in Step 1
+     - `standards`: discovered local standards text
+     - `prScope`: PR Scope output from pre-fetch (empty string if none)
+     - `userGuidance`: User Guidance output from pre-fetch (empty string if none)
+     - `allowlist`: allowed commands text (empty string if unavailable)
+     - `buildPrompt`: prompt for the build-checks agent (see below)
+
+The Workflow dispatches 1 build agent + 7×N concern agents with `agent(schema:)` enforcement and returns the results. The `agent(schema:)` option validates output at the harness level via Ajv — the model must produce conformant output via the StructuredOutput tool call before the agent can complete.
 
 #### Build & Checks Agent
 
@@ -192,14 +183,17 @@ After decomposition produces N dimensions, launch **all `1 + 7×N` agents in a s
 | 6 | Documentation | `documentation` | haiku | README accuracy and completeness, docstrings, inline comments where non-obvious, examples, ADRs, changelog, public API docs, install/usage instructions. |
 | 7 | Observability | `observability` | haiku | Log quality (levels, structured fields, sensitive data), error context (do exceptions carry enough info?), metrics, traces, debug affordances, alerting hooks. |
 
-#### Subagent Type and Tool Restrictions
+### 4. Write Raw Agent Output
 
-All seven concern agents use `subagent_type: "general-purpose"`. They need both Write (to put their JSON output on disk) and Bash (to invoke `validate-findings.py`) to self-validate against the schema. The prompt restricts them as follows:
+After the Workflow returns, write each agent output to disk as `./.tmp-review/00-raw/<concern_slug>-<dimension_slug>.json`:
 
-- **Pre-assigned output path:** each agent is told its single allowed Write target as an **absolute path**, built by prefixing the injected `pwd` value (from the Pre-Fetch "Project Root" section) to `/.tmp-review/00-raw/<concern_slug>-<dimension_slug>.json`. Example: if `pwd` printed `/home/user/proj`, the agent's Write target is `/home/user/proj/.tmp-review/00-raw/architecture-auth.json`. Never hand the agent a bare relative path — sub-agent CWD handling is unreliable and bare relative paths have led to writes drifting into `/tmp/`. Any Write to any other path is a violation.
-- **Bash restricted to one command pattern:** invoking `validate-findings.py` against that exact absolute output path. No other Bash usage is permitted.
-- **Edit, NotebookEdit, and any other state-modifying tool are prohibited.**
-- The agent must stop and report if asked or tempted to deviate.
+For each entry in `result.agentOutputs`:
+- Write `entry.output` as JSON to `./.tmp-review/00-raw/<entry.filename>` (the Workflow returns filenames in `<concern_slug>-<dimension_slug>.json` format)
+
+If `result.failedCount > 0`, collect issues for later inclusion:
+- For each failed agent (null result), record a `subagent_failure` issue
+
+Write `result.buildResult` to `./.tmp-review/00-raw/build-checks.json` (for reference; the consolidator will skip it due to schema mismatch — this is expected).
 
 #### Methodology (per concern agent)
 
@@ -238,7 +232,7 @@ The `agent-output` schema does not include `severity` or `id` fields — the sch
 - Generic best-practice advice not grounded in a specific code location
 - **Positive observations or praise.** Every finding in `findings[]` must describe a *problem* — something that should change. If `suggested_fix` would say "no action needed", "continue doing this", or "maintain the practice", it is not a finding. Positive patterns belong in `cross_cutting_observations`, not `findings[]`.
 
-### 4. Re-Validate Per-Agent JSON
+### 5. Re-Validate Per-Agent JSON
 
 After every concern agent returns, re-run the validator as defense-in-depth:
 
@@ -248,7 +242,7 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py ./.tmp-r
 
 For any file that fails this re-validation, exclude it from consolidation and log a warning in the supplementary "Decomposition" preamble (you will write that preamble at render time). Do not re-dispatch — sub-agents already had three attempts.
 
-### 5. Consolidate
+### 6. Consolidate
 
 Run the consolidator script — it applies the merge rules deterministically and writes per-finding files plus a stage envelope into `10-merged/`:
 
@@ -275,7 +269,7 @@ What the script does (you do **not** re-implement this in your reasoning):
 
 If a `00-raw/*.json` file fails its agent-output schema validation, the consolidator skips it with a warning on stderr and records a `schema_rejected_input` issue in the envelope. Note any skipped files in the supplementary "Decomposition" preamble at render time.
 
-### 6. Validate Findings
+### 7. Validate Findings
 
 Run the batcher script — it reads per-finding files from `10-merged/`, predicts severity buckets, and slices **only Critical and Important findings** into validation-input batches. Suggestion and Needs-review findings skip validation (they pass through `apply-verdicts.py` unchanged):
 
@@ -296,21 +290,36 @@ What the script does (you do **not** re-implement this in your reasoning):
 - Strips fields not in the validation-input schema (e.g. `source_dimensions`).
 - Validates every batch against `validation-input.schema.json` before writing; exits non-zero on any failure.
 
-Spawn `total_batches` validator agents in **parallel** in a single message:
+If zero batches are produced (all findings predicted as suggestion/needs-review), skip the validator dispatch and proceed to Apply Verdicts.
 
-- `model: "sonnet"`, `subagent_type: "feature-dev:code-reviewer"` (read-only structurally).
-- Each validator opens the cited `finding.locations`, challenges accuracy and the five categorical dimensions, and returns a JSON object matching `validation-output.schema.json` directly in its response.
-- **Challenge the premise, not just the symptom.** A finding may cite real code and describe a technically accurate gap, yet be wrong because its premise is invalid. Examples: (1) an IDOR finding against a filter parameter when endpoint-level RBAC already restricts access to privileged roles — the filter cannot be reached by unprivileged users; (2) a "missing test" finding when the behavior is already tested indirectly through a higher-level test; (3) a security concern about input validation when the framework (FastAPI/Pydantic) validates before the code runs. Validators must verify assumptions, not just locations.
-- **Remove positive observations.** If a finding's `issue` describes something working correctly and `suggested_fix` says "no action needed", "continue", or "maintain", remove it — it is praise, not a finding.
+Read the batch input files from `./.tmp-review/15-validation/batch-*-input.json`.
+
+Read the Workflow script from `${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-workflow.js`.
+
+Invoke the Workflow tool with:
+- `script`: the contents of `validate-workflow.js`
+- `args`:
+  - `validationOutputSchema`: the validation-output resolved schema object (read from `${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/validation-output.resolved.schema.json`)
+  - `batches`: array of batch objects read from the batch input files
+  - `projectRoot`: the Project Root from Pre-Fetch
+
+The Workflow dispatches `total_batches` validator agents with `agent(schema:)` enforcement. Each validator:
+
+- Opens the cited `finding.locations`, challenges accuracy and the five categorical dimensions.
+- **Challenges the premise, not just the symptom.** A finding may cite real code and describe a technically accurate gap, yet be wrong because its premise is invalid. Examples: (1) an IDOR finding against a filter parameter when endpoint-level RBAC already restricts access to privileged roles — the filter cannot be reached by unprivileged users; (2) a "missing test" finding when the behavior is already tested indirectly through a higher-level test; (3) a security concern about input validation when the framework (FastAPI/Pydantic) validates before the code runs. Validators must verify assumptions, not just locations.
+- **Removes positive observations.** If a finding's `issue` describes something working correctly and `suggested_fix` says "no action needed", "continue", or "maintain", remove it — it is praise, not a finding.
 - Each verdict is one of:
   - `"action": "confirm"` — finding stands as-is.
   - `"action": "rescore"` — provide `new_dimensions` with any subset of the five dimension fields (value + justification pairs). Validators may upgrade `evidence_quality` or `trace_origin` if they find stronger evidence.
   - `"action": "remove"` — finding is wrong (e.g., cited line does not exist, issue is not real).
 - Each verdict carries `finding_ref: {content_hash}` — **copy the `content_hash` verbatim from the input batch finding**. Do NOT recompute the hash. The `content_hash` is both the filename and the integrity key across pipeline stages.
 
-After each validator returns, write its response to `./.tmp-review/15-validation/batch-<N>-output.json` and re-validate it against `validation-output.schema.json`.
+After the Workflow returns, write each validator output to disk:
 
-### 7. Apply Verdicts
+For each entry in `result.validatorOutputs`:
+- Write `entry.output` as JSON to `./.tmp-review/15-validation/<entry.filename>`
+
+### 8. Apply Verdicts
 
 Run the verdict application script — it reads verdicts from `15-validation/` and findings from `10-merged/`, applies them deterministically, and writes the surviving findings to `20-findings/`:
 
@@ -333,7 +342,7 @@ What the script does (you do **not** re-implement this in your reasoning):
 - Copies `_envelope.json` to `--output-dir`, merging any verdict-parsing issues into `issues[]`.
 - Findings with `speculative` evidence quality are kept; the renderer segregates them into `needs-review`.
 
-### 8. Red/Green Test Validation
+### 9. Red/Green Test Validation
 
 Run the red/green validator. The script computes the merge base internally and skips automatically for non-PR reviews. Synthetic findings land in `20-findings/` alongside review findings.
 
@@ -348,7 +357,7 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/redgreen-validate.py \
   --strip-prefix '<subdirectory prefix if tests run from a subdir, e.g. "backend/">'
 ```
 
-### 9. Render
+### 10. Render
 
 Run the renderer:
 
@@ -369,7 +378,7 @@ The slug derivation from `/review` arguments matches today's behavior (max 12 ch
 
 - **No writes outside `./.tmp-review/` and the three final output files.** The only permitted Write targets for the main agent are `Findings-review[-<slug>].json`, `Findings-review[-<slug>].md`, and `Findings-review[-<slug>]-supplementary.md`. Any other Write — to `${CLAUDE_PLUGIN_ROOT}/...`, to `docs/`, to `scripts/`, to `/tmp/`, anywhere — is a violation.
 
-### 10. Present Summary
+### 11. Present Summary
 
 After rendering, read the counts from the rendered JSON (`findings[]` grouped by `severity`) and output a terse summary:
 
@@ -390,91 +399,6 @@ To validate supplementary findings, run: /review-supplementary
 
 No inline findings, no commentary. The files have everything.
 
-## Sub-Agent Prompt Template (concern agents)
-
-Each of the seven concern agents per dimension receives a prompt structured as follows:
-
-```
-You are reviewing the project at <root-path> for the **<concern>** axis within the dimension **<dimension_name>** (slug: <dimension_slug>).
-
-DIMENSION SCOPE (confine your review to this):
-<JSON object: file list, directory paths, or theme description>
-
-If you notice issues clearly outside this scope, list them under `cross_cutting_observations` in your output but do not investigate deeply.
-
-OUTPUT PATH (your single allowed Write target):
-./.tmp-review/00-raw/<concern_slug>-<dimension_slug>.json
-
-TOOL RESTRICTIONS — strictly enforced:
-- Write: only to the OUTPUT PATH above. Any Write elsewhere is a violation; stop and report.
-- Bash: only to invoke `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py <OUTPUT PATH>`. No other Bash usage is permitted.
-- Edit, NotebookEdit, or any other state-modifying tool: prohibited.
-- TaskCreate, TaskUpdate, TodoWrite, and other task-tracking tools: do NOT use them. Your scope is narrow (one concern × one dimension); track progress inline in your own reasoning — there is no multi-step plan worth persisting, and these tools' schemas are deferred so calls will fail on first attempt and waste context.
-- For reading and searching, use Read, Glob, Grep, LS as needed. Other tools (WebFetch, WebSearch, etc.) are available but rarely useful for in-scope review work.
-
-PROJECT CONTEXT:
-- Language: <detected>
-- Build system: <detected>
-- Test framework: <detected>
-- Allowed commands: <allowlist from mcp__allowlist__get_allowed_permissions>
-- Local standards: <relevant standards from CLAUDE.md, AGENTS.md, and referenced files>
-<if external standards were injected>
-- External standards: <injected content with absolute paths> — read the relevant files for your axis and check compliance.
-</if>
-<include PR Scope output verbatim, if any>
-<include User Guidance output verbatim, if any>
-
-METHODOLOGY:
-Phase 1 — Establish baseline patterns:
-Read enough code in scope to understand the project's existing conventions for the <concern> axis. This grounds the review in the project's own patterns.
-
-Phase 2 — Assess against baseline:
-Evaluate whether the codebase follows its own patterns consistently. Flag deviations, gaps, and concrete issues. For each finding, fill all required fields per the agent-output schema.
-
-OUTPUT SHAPE — two schemas exist in this plugin; use the right one:
-
-Your output is an **agent-output** document, NOT the cross-skill envelope. The full agent-output JSON schema is included in this prompt under "Agent Output Schema (auto-injected)" above. Your output MUST validate against it. Copy the structure exactly.
-
-Do NOT emit envelope-level keys — `schema_version`, `source`, `project`, `decomposition`, `issues`, `supplementary`, `applied` — in your output. They are the main agent's job; including them here causes your output to fail validation and your entire file is dropped from consolidation.
-
-CRITICAL TYPE TRAPS — agents consistently get these wrong:
-- `runtime_scope`, `failure_mode`, `evidence_quality`, `trace_origin`, `effort_to_fix`: **enum string** from the allowed values only. Write `"runtime_scope": "ci"` NOT `"runtime_scope": "CI"` or `"runtime_scope": 50`
-- `*_justification` fields: **string**, minLength 1. Every dimension value requires its justification.
-- `locations[].line`: **string** not integer. Write `"line": "42"` NOT `"line": 42`. Ranges are allowed: `"line": "12-20"`
-- `locations[].path`: repo-relative POSIX path, **string**. Use `path` NOT `file`
-- `locations[].role`: optional, one of `"primary"`, `"related"`, `"callsite"`, `"requirement"` — no other values
-- Do NOT include `severity`, `id`, `snippet`, `context`, `line_start`, `line_end`, `impact`, `likelihood`, `confidence`, or any field not in the schema — `additionalProperties: false` rejects them
-
-Do NOT drop speculative findings. Validators downstream may reclassify; the render step segregates speculative-evidence items into a `needs-review` bucket.
-
-LOCATIONS — every finding requires at least one entry in `locations`:
-- For "X is missing" findings, cite the spec/plan/standards file:line where the requirement is stated, with `role: "requirement"`.
-- Multiple locations are allowed; mark non-primary entries with `role: "related" | "callsite" | "requirement"`.
-
-HARD EXCLUSIONS — never report:
-- Style issues already enforced by linters/formatters
-- Missing tests for trivial code (getters/setters/data classes)
-- Architecture concerns in `scripts/` or one-off utilities
-- Issues already caught by make targets
-- Missing docstrings on private functions
-- Generic best-practice advice not grounded in a specific code location
-
-PROHIBITED ACTIONS:
-- Do NOT modify any source code or tests.
-- Do NOT execute the user's program (no `python -c`, no `node`, no `go run`).
-- Do NOT install or upgrade packages.
-- Do NOT pipe code to a runtime.
-
-OUTPUT PROCEDURE — strict:
-1. Construct the full agent_output JSON in your response.
-2. Write it to the OUTPUT PATH (single Write call).
-3. Invoke the validator: `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py <OUTPUT PATH>`. `${CLAUDE_PLUGIN_ROOT}` is substituted by Claude Code to the plugin's install path before the command runs. If the call is denied, abort and report the failure rather than retrying with permutations.
-4. If the validator exits non-zero, read its error output, repair the JSON, Write again, validate again.
-5. **Hard cap: 3 attempts total** (1 initial + 2 retries). If the JSON does not validate after 3 attempts, return a structured failure message in your final response: `{"status": "failure", "reason": "<validator output>"}`. Do not return success without a passing validation.
-
-The agent_output schema was injected into this prompt above — refer to it for field names and type constraints. Do not guess types.
-```
-
 ## Critical Rules
 
 - **NEVER execute anything against the user's code or environment.** Static analysis only. This single rule subsumes:
@@ -485,13 +409,9 @@ The agent_output schema was injected into this prompt above — refer to it for 
   - No `make install`, `make build`, `make run`, `make deploy`, or any target that installs or executes the program.
   - The Build & Checks agent is the only agent allowed to run anything (`make` check targets only — `format`, `lint`, `typecheck`, `test`, `coverage`).
 - **Writes are restricted by tool boundary, not just intent:**
-  - **Concern agents (`general-purpose` subagent_type)** may Write *only* to their pre-assigned absolute path `<pwd>/.tmp-review/00-raw/<concern_slug>-<dimension_slug>.json` (the main agent substitutes the Pre-Fetch `pwd` value before dispatching). Any other Write — anywhere on disk, inside or outside the project — is a violation and the agent must stop and report.
-  - **Validation agents (`feature-dev:code-reviewer` subagent_type)** are structurally read-only — they cannot Write at all.
-  - **Main agent** writes only to `./.tmp-review/15-validation/` (validator output) and the three output files at the project root (`Findings-review[-<slug>].json|.md|-supplementary.md`). No edits anywhere else. In particular: **never Write, Edit, or `mv` anything into `${CLAUDE_PLUGIN_ROOT}/`** — the plugin tree is read-only from inside a skill run. The `apply-verdicts.py` script handles the `10-merged/ → 20-findings/` transition; the main agent does not write to `20-findings/` directly.
-- **Bash is restricted by tool boundary too:**
-  - **Concern agents:** Bash only to invoke `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py <their assigned output path>`. No other Bash command is permitted.
-  - **Validation agents:** no Bash (structural).
-  - **Main agent:** Bash limited to the skill's allowlisted scripts (bootstrap, validators, renderer, pre-fetch helpers).
+  - **Concern agents and validation agents** do not Write or Bash — their output is returned via `agent(schema:)` and written to disk by the main agent in Steps 5 and 6.
+  - **Main agent** writes only to `./.tmp-review/00-raw/` (Workflow results), `./.tmp-review/15-validation/` (validator results), and the three output files at the project root (`Findings-review[-<slug>].json|.md|-supplementary.md`). No edits anywhere else. In particular: **never Write, Edit, or `mv` anything into `${CLAUDE_PLUGIN_ROOT}/`** — the plugin tree is read-only from inside a skill run. The `apply-verdicts.py` script handles the `10-merged/ → 20-findings/` transition; the main agent does not write to `20-findings/` directly.
+- **Bash is restricted:** main agent Bash limited to the skill's allowlisted scripts (bootstrap, schema cleaner, validators, consolidator, batcher, verdict applicator, red/green validator, renderer, pre-fetch helpers).
 - **Prefer allowlisted commands** — agents receive the allowlist as context. Stick to pre-approved commands to avoid blocking the review on user approval prompts.
 - **All findings need `finding.locations[]` entries** — the schema enforces this; the validator rejects missing locations.
 - **Acknowledge strengths** — a good review recognizes what works well; the supplementary file has a Strengths section. Sub-agents may note positive patterns in their `cross_cutting_observations` field if they wish to call them out.

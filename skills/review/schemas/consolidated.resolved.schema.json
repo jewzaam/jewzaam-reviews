@@ -8,14 +8,14 @@
         "additionalProperties": false,
         "properties": {
           "dimension_name": {
-            "minLength": 1,
+            "description": "Constraints: minLength: 1.",
             "type": "string"
           },
           "dimension_scope": {
             "type": "object"
           },
           "dimension_slug": {
-            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$",
+            "description": "Constraints: pattern: \"^[a-z0-9][a-z0-9-]{0,30}$\".",
             "type": "string"
           }
         },
@@ -46,8 +46,7 @@
             "type": "string"
           },
           "content_hash": {
-            "description": "Stable 16-64 char hex SHA-256 prefix computed from (concern_slug, first contributor's dimension_slug, primary location path:line, title). Used as the integrity key for validator verdicts and apply-review bookkeeping.",
-            "pattern": "^[a-f0-9]{16,64}$",
+            "description": "Stable 16-64 char hex SHA-256 prefix computed from (concern_slug, first contributor's dimension_slug, primary location path:line, title). Used as the integrity key for validator verdicts and apply-review bookkeeping. Constraints: pattern: \"^[a-f0-9]{16,64}$\".",
             "type": "string"
           },
           "effort_to_fix": {
@@ -60,8 +59,7 @@
             ]
           },
           "effort_to_fix_justification": {
-            "description": "Describe the fix approach and why it requires the stated level of effort.",
-            "minLength": 1,
+            "description": "Describe the fix approach and why it requires the stated level of effort. Constraints: minLength: 1.",
             "type": "string"
           },
           "evidence_quality": {
@@ -73,8 +71,7 @@
             ]
           },
           "evidence_quality_justification": {
-            "description": "Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed.",
-            "minLength": 1,
+            "description": "Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed. Constraints: minLength: 1.",
             "type": "string"
           },
           "failure_mode": {
@@ -89,12 +86,11 @@
             ]
           },
           "failure_mode_justification": {
-            "description": "Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified.",
-            "minLength": 1,
+            "description": "Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified. Constraints: minLength: 1.",
             "type": "string"
           },
           "issue": {
-            "minLength": 1,
+            "description": "Constraints: minLength: 1.",
             "type": "string"
           },
           "locations": {
@@ -102,11 +98,11 @@
               "additionalProperties": false,
               "properties": {
                 "line": {
-                  "pattern": "^[0-9]+(-[0-9]+)?$",
+                  "description": "Constraints: pattern: \"^[0-9]+(-[0-9]+)?$\".",
                   "type": "string"
                 },
                 "path": {
-                  "minLength": 1,
+                  "description": "Constraints: minLength: 1.",
                   "type": "string"
                 },
                 "role": {
@@ -139,8 +135,7 @@
             ]
           },
           "runtime_scope_justification": {
-            "description": "Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test.",
-            "minLength": 1,
+            "description": "Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test. Constraints: minLength: 1.",
             "type": "string"
           },
           "source_dimensions": {
@@ -152,12 +147,11 @@
             "type": "array"
           },
           "suggested_fix": {
-            "minLength": 1,
+            "description": "Constraints: minLength: 1.",
             "type": "string"
           },
           "title": {
-            "maxLength": 120,
-            "minLength": 1,
+            "description": "Constraints: minLength: 1, maxLength: 120.",
             "type": "string"
           },
           "trace_origin": {
@@ -169,12 +163,11 @@
             ]
           },
           "trace_origin_justification": {
-            "description": "For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed.",
-            "minLength": 1,
+            "description": "For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed. Constraints: minLength: 1.",
             "type": "string"
           },
           "why_it_matters": {
-            "minLength": 1,
+            "description": "Constraints: minLength: 1.",
             "type": "string"
           }
         },
@@ -206,7 +199,7 @@
       "additionalProperties": false,
       "properties": {
         "name": {
-          "minLength": 1,
+          "description": "Constraints: minLength: 1.",
           "type": "string"
         },
         "scope_slug": {
