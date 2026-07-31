@@ -138,6 +138,22 @@ Sub-agents cannot request tool permissions the way the main agent can. If a tool
 
 Sub-agents that self-detect a recoverable error (e.g., their own output fails schema validation) retry up to **3 attempts** (1 initial + 2 retries), then bail with a structured failure: `{"status": "failure", "reason": "..."}`. The main agent converts that to `kind: "subagent_failure"` in `issues[]`. The cap is final — no re-dispatch. Failed sub-agents do not block the run; survivors still flow into consolidation.
 
+### Workflow tool and schema-enforced dispatch
+
+The review skill dispatches concern agents and validators via the Workflow tool with `agent(schema:)` (not the Agent tool). Workflow scripts live at `skills/review/scripts/review-workflow.js` and `skills/review/scripts/validate-workflow.js`. The `agent(schema:)` option validates output at the harness level via Ajv StructuredOutput — the model must produce conformant output before the agent can complete. The Agent tool does NOT support schema enforcement.
+
+**Workflow script templating** — The Workflow tool's `args` global is broken (undefined in production). All dynamic data (dimensions, project context, standards, PR scope) is injected by the main thread as `const` declarations inserted at the `// --- INJECT CONSTS HERE ---` marker in each workflow JS file before passing the script to the Workflow tool. Static data (schemas, concerns) is embedded as const literals in the committed file.
+
+**Auto-embedded schemas** — `resolve_schema.py` auto-embeds resolved schemas into workflow JS files via marker-based const replacement (`const AGENT_OUTPUT_SCHEMA = ...` in review-workflow.js, `const VALIDATION_OUTPUT_SCHEMA = ...` in validate-workflow.js). No manual sync needed after `make resolve-schemas`.
+
+**Resolved schemas strip StructuredOutput-unsupported constraints** — `resolve_schema.py` strips `pattern`, `if/then/else/not`, `minimum/maximum`, `minLength/maxLength` from resolved schemas at generation time and moves constraint values to property descriptions. Ajv in the StructuredOutput tool still enforces the original constraints client-side. This means the model sees a simplified schema but validation is not weakened.
+
+**Concern enum values use "and" not "&"** — `Architecture and Design`, `Test Quality and Coverage`, `Maintainability and Standards`. Changed from `&` because HTML entity encoding (`&amp;`) caused serialization corruption across XML/HTML/JSON boundaries in the Workflow tool pipeline.
+
+### Build agent dependency install
+
+The build-checks agent is allowed to run `make install` or `make deps` as a prerequisite for checks (e.g., when `node_modules` or `.venv` is missing). This is the only install target permitted — it is a prerequisite for checks, not a deployment action.
+
 ## Test layout
 
 Pytest autodiscovers two test trees: `tests/` at the plugin root (cross-skill tests) and `skills/<name>/tests/` per skill (skill-internal tests). **No `__init__.py` in any test dir.** `pyproject.toml` sets `addopts = ["--import-mode=importlib"]` to avoid `conftest.py` module name collisions between the two trees — adding an `__init__.py` silently breaks collection by reintroducing the collision. Run with `make test` (routed through a wrapper that the user's hooks permit).
