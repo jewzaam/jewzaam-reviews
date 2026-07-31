@@ -146,18 +146,18 @@ A **dimension** is a coherent slice of the review scope handed to a set of revie
 After decomposition produces N dimensions:
 
 1. Read the Workflow script from `${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/review-workflow.js`.
-2. Invoke the Workflow tool with:
-   - `script`: the contents of `review-workflow.js`
-   - `args`:
-     - `dimensions`: the decomposed dimensions array from Step 2, each with `{name, slug, scope}`
-     - `projectRoot`: the Project Root from Pre-Fetch
-     - `pluginHome`: the Plugin Home from Pre-Fetch
-     - `projectContext`: `{language, buildSystem, testFramework}` detected in Step 1
-     - `standards`: discovered local standards text
-     - `prScope`: PR Scope output from pre-fetch (empty string if none)
-     - `userGuidance`: User Guidance output from pre-fetch (empty string if none)
-     - `allowlist`: allowed commands text (empty string if unavailable)
-     - `buildPrompt`: prompt for the build-checks agent (see below)
+2. Find the line `// --- INJECT CONSTS HERE ---` in the script and insert the following const declarations immediately after it (the Workflow tool's `args` global is broken — all dynamic data must be embedded as const literals in the script):
+   ```javascript
+   const DIMENSIONS = <JSON array from Step 2, each with {name, slug, scope}>
+   const PROJECT_ROOT = "<Project Root from Pre-Fetch>"
+   const PROJECT_CONTEXT = {language: "<detected>", buildSystem: "<detected>", testFramework: "<detected>"}
+   const STANDARDS = `<discovered local standards text, or empty string>`
+   const PR_SCOPE = `<PR Scope output from pre-fetch, or empty string>`
+   const USER_GUIDANCE = `<User Guidance output from pre-fetch, or empty string>`
+   const ALLOWLIST = `<allowed commands text, or empty string>`
+   const BUILD_PROMPT = `<prompt for the build-checks agent — see below>`
+   ```
+3. Invoke the Workflow tool with `script` set to the modified script contents. Do NOT pass `args` — all data is in the script.
 
 The Workflow dispatches 1 build agent + 7×N concern agents with `agent(schema:)` enforcement and returns the results. The `agent(schema:)` option validates output at the harness level via Ajv — the model must produce conformant output via the StructuredOutput tool call before the agent can complete.
 
@@ -294,14 +294,14 @@ If zero batches are produced (all findings predicted as suggestion/needs-review)
 
 Read the batch input files from `./.tmp-review/15-validation/batch-*-input.json`.
 
-Read the Workflow script from `${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-workflow.js`.
+Read the Workflow script from `${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-workflow.js`. Find the line `// --- INJECT CONSTS HERE ---` and insert const declarations immediately after it:
 
-Invoke the Workflow tool with:
-- `script`: the contents of `validate-workflow.js`
-- `args`:
-  - `validationOutputSchema`: the validation-output resolved schema object (read from `${CLAUDE_PLUGIN_ROOT}/skills/review/schemas/validation-output.resolved.schema.json`)
-  - `batches`: array of batch objects read from the batch input files
-  - `projectRoot`: the Project Root from Pre-Fetch
+```javascript
+const BATCHES = <JSON array of batch objects read from the batch input files>
+const PROJECT_ROOT = "<Project Root from Pre-Fetch>"
+```
+
+Invoke the Workflow tool with `script` set to the modified script contents. Do NOT pass `args`.
 
 The Workflow dispatches `total_batches` validator agents with `agent(schema:)` enforcement. Each validator:
 
