@@ -378,7 +378,12 @@ class TestConsolidateBasic:
         assert result.returncode == 0, result.stderr
         assert "broken.json" in result.stderr
         envelope, findings = _load_stage(out_dir)
-        assert len(findings) == 1
+        real_findings = [f for f in findings if "Agent output dropped" not in f["title"]]
+        synthetic = [f for f in findings if "Agent output dropped" in f["title"]]
+        assert len(real_findings) == 1
+        assert len(synthetic) == 1
+        assert synthetic[0]["concern_slug"] == "observability"
+        assert "broken.json" in synthetic[0]["title"]
 
     def test_scope_slug_in_project(self, tmp_path: Path):
         raw = tmp_path / "raw"

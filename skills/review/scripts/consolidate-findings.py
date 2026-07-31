@@ -506,6 +506,75 @@ def _build_issues(warnings: list[str]) -> list[dict]:
     ]
 
 
+def _build_synthetic_findings(warnings: list[str]) -> list[dict]:
+    """Generate a synthetic critical finding for each dropped agent file.
+
+    When a raw agent output fails validation and is skipped, the findings it
+    contained are lost. Without a signal, the run appears clean. This function
+    creates a critical-severity finding per dropped file so the user sees
+    the coverage gap in the final report.
+    """
+    synthetics = []
+    for w in warnings:
+        filename = w.split(":")[0].replace("skipping ", "").strip()
+        parts = filename.replace(".json", "").split("-", 1)
+        dimension_slug = parts[1] if len(parts) > 1 else parts[0]
+        title = f"Agent output dropped: {filename}"
+        chash = content_hash(
+            "observability", dimension_slug,
+            filename, "1", title,
+        )
+        synthetics.append({
+            "content_hash": chash,
+            "concern_slug": "observability",
+            "source_dimensions": [dimension_slug],
+            "title": title,
+            "runtime_scope": "ci",
+            "runtime_scope_justification": (
+                f"The file {filename} failed schema validation and was excluded "
+                "from consolidation. All findings from this agent are lost."
+            ),
+            "failure_mode": "degraded-behavior",
+            "failure_mode_justification": (
+                "Review coverage is incomplete — one concern×dimension cell "
+                "produced no usable output. Findings that the agent identified "
+                "are missing from the final report."
+            ),
+            "evidence_quality": "demonstrated",
+            "evidence_quality_justification": (
+                f"The file {filename} exists in 00-raw/ but failed schema "
+                "validation. The consolidator skipped it with a warning."
+            ),
+            "trace_origin": "entry-point",
+            "trace_origin_justification": (
+                "The review pipeline dispatched this agent, received its output, "
+                "and rejected it during consolidation validation."
+            ),
+            "effort_to_fix": "moderate",
+            "effort_to_fix_justification": (
+                "Re-run the review or inspect the raw file to recover findings. "
+                "The agent's output may be partially usable with manual repair."
+            ),
+            "locations": [{"path": f".tmp-review/00-raw/{filename}", "line": "1"}],
+            "issue": (
+                f"Agent output {filename} failed schema validation and was "
+                "dropped from consolidation. All findings from this "
+                "concern×dimension cell are missing from the review."
+            ),
+            "why_it_matters": (
+                "A dropped agent file means the review has a blind spot. "
+                "The concern axis was assigned to this dimension but produced "
+                "no usable findings — the final report underrepresents coverage."
+            ),
+            "suggested_fix": (
+                f"Inspect .tmp-review/00-raw/{filename} for the validation "
+                "errors. If the output is partially valid, manually extract "
+                "findings. Otherwise re-run the review for this dimension."
+            ),
+        })
+    return synthetics
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -579,6 +648,7 @@ def main(argv: list[str]) -> int:
         print(f"warning: {w}", file=sys.stderr)
 
     issues = _build_issues(warnings)
+    synthetic_findings = _build_synthetic_findings(warnings)
 
     if not valid_agents:
         print(
@@ -600,7 +670,7 @@ def main(argv: list[str]) -> int:
         "decomposition": consolidated["decomposition"],
         "issues": issues,
     }
-    findings = consolidated["findings"]
+    findings = consolidated["findings"] + synthetic_findings
 
     envelope_errors = _validate(envelope, stage_envelope_schema)
     if envelope_errors:
