@@ -24,10 +24,10 @@
       "type": "string",
       "description": "Human-readable concern axis. One of the seven fixed axes the review skill dispatches per dimension.",
       "enum": [
-        "Architecture & Design",
+        "Architecture and Design",
         "Implementation Quality",
-        "Test Quality & Coverage",
-        "Maintainability & Standards",
+        "Test Quality and Coverage",
+        "Maintainability and Standards",
         "Security",
         "Documentation",
         "Observability"

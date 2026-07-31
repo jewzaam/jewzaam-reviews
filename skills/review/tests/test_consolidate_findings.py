@@ -46,10 +46,10 @@ def _write_agent_output(
 ) -> Path:
     """Write a minimal valid agent-output JSON to raw_dir."""
     concerns_full = {
-        "architecture": "Architecture & Design",
+        "architecture": "Architecture and Design",
         "implementation": "Implementation Quality",
-        "test": "Test Quality & Coverage",
-        "maintainability": "Maintainability & Standards",
+        "test": "Test Quality and Coverage",
+        "maintainability": "Maintainability and Standards",
         "security": "Security",
         "documentation": "Documentation",
         "observability": "Observability",
@@ -838,10 +838,10 @@ class TestConsolidatePureFunction:
 
     def _agent_output(self, concern_slug: str, dimension_slug: str, findings: list[dict]) -> dict:
         concerns_full = {
-            "architecture": "Architecture & Design",
+            "architecture": "Architecture and Design",
             "implementation": "Implementation Quality",
-            "test": "Test Quality & Coverage",
-            "maintainability": "Maintainability & Standards",
+            "test": "Test Quality and Coverage",
+            "maintainability": "Maintainability and Standards",
             "security": "Security",
             "documentation": "Documentation",
             "observability": "Observability",
@@ -925,7 +925,7 @@ class TestCrossCuttingObservations:
 
     def _agent_output(self, concern_slug, dimension_slug, findings):
         concerns_full = {
-            "architecture": "Architecture & Design",
+            "architecture": "Architecture and Design",
             "security": "Security",
         }
         return {

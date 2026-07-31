@@ -1,6 +1,6 @@
 {
   "agent_id": "architecture-auth-001",
-  "concern": "Architecture & Design",
+  "concern": "Architecture and Design",
   "concern_slug": "architecture",
   "dimension_name": "auth subsystem",
   "dimension_slug": "auth",
