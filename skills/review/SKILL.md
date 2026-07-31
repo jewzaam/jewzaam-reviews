@@ -310,7 +310,7 @@ Spawn `total_batches` validator agents in **parallel** in a single message:
 
 After each validator returns, write its response to `./.tmp-review/15-validation/batch-<N>-output.json` and re-validate it against `validation-output.schema.json`.
 
-### 7. Apply Verdicts and Render
+### 7. Apply Verdicts
 
 Run the verdict application script — it reads verdicts from `15-validation/` and findings from `10-merged/`, applies them deterministically, and writes the surviving findings to `20-findings/`:
 
@@ -333,10 +333,24 @@ What the script does (you do **not** re-implement this in your reasoning):
 - Copies `_envelope.json` to `--output-dir`, merging any verdict-parsing issues into `issues[]`.
 - Findings with `speculative` evidence quality are kept; the renderer segregates them into `needs-review`.
 
-- **No ad-hoc helper scripts.** Do NOT create additional Python/Bash files for verdict application. The plugin ships `apply-verdicts.py` for this step. The plugin tree is read-only from inside a skill run.
-- **No writes outside `./.tmp-review/` and the three final output files.** The only permitted Write targets for the main agent during Step 7 are `Findings-review[-<slug>].json`, `Findings-review[-<slug>].md`, and `Findings-review[-<slug>]-supplementary.md`. Any other Write — to `${CLAUDE_PLUGIN_ROOT}/...`, to `docs/`, to `scripts/`, to `/tmp/`, anywhere — is a violation.
+### 8. Red/Green Test Validation
 
-Then run the renderer:
+Run the red/green validator. The script computes the merge base internally and skips automatically for non-PR reviews. Synthetic findings land in `20-findings/` alongside review findings.
+
+Before invoking, read the project's `Makefile` to understand how the venv is built and how tests run. If a venv build target exists (e.g., `make install`, `make deps`), run it, then activate the venv. Pass the activation and test command to the script:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/redgreen-validate.py \
+  --findings-dir ./.tmp-review/20-findings/ \
+  --project-root <project root> \
+  --setup-command '<cd + activate venv, e.g. "cd backend && source .venv/bin/activate">' \
+  --test-command '<how the project runs a single test file, with {file} placeholder>' \
+  --strip-prefix '<subdirectory prefix if tests run from a subdir, e.g. "backend/">'
+```
+
+### 9. Render
+
+Run the renderer:
 
 ```
 python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/render-review.py \
@@ -353,7 +367,9 @@ Skill-specific renderer behavior (on top of the shared contract):
 
 The slug derivation from `/review` arguments matches today's behavior (max 12 chars, lowercase, hyphens; appended when scope is constrained by PR number or guidance text). Pre-existing PR-scope and user-guidance pre-fetch outputs supply the source material.
 
-### 8. Present Summary
+- **No writes outside `./.tmp-review/` and the three final output files.** The only permitted Write targets for the main agent are `Findings-review[-<slug>].json`, `Findings-review[-<slug>].md`, and `Findings-review[-<slug>]-supplementary.md`. Any other Write — to `${CLAUDE_PLUGIN_ROOT}/...`, to `docs/`, to `scripts/`, to `/tmp/`, anywhere — is a violation.
+
+### 10. Present Summary
 
 After rendering, read the counts from the rendered JSON (`findings[]` grouped by `severity`) and output a terse summary:
 
