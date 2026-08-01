@@ -3,19 +3,20 @@
 // Workflow script for review skill concern agent dispatch.
 // Schema enforcement via agent(schema:) — structural, not persuasive.
 //
-// The Workflow tool's args global is broken — undefined in production runs.
-// All dynamic data is injected by the main thread as const declarations
-// inserted at the INJECT marker below before passing the script to Workflow.
+// Workflow tool serializes args as a JSON string. Use JSON.parse(args) to recover.
 //
-// Required consts (main thread must provide):
-//   DIMENSIONS       - [{name, slug, scope}]
-//   PROJECT_ROOT     - string
-//   PROJECT_CONTEXT  - {language, buildSystem, testFramework}
-//   STANDARDS        - string (local standards text, or "")
-//   PR_SCOPE         - string (PR scope output, or "")
-//   USER_GUIDANCE    - string (user guidance output, or "")
-//   ALLOWLIST        - string (allowed commands text, or "")
-//   BUILD_PROMPT     - string (prompt for build-checks agent)
+// args (JSON string): {
+//   agentOutputSchema: object,    // resolved agent-output schema
+//   dimensions: [{name, slug, scope}],
+//   projectRoot: string,
+//   pluginHome: string,
+//   projectContext: {language, buildSystem, testFramework},
+//   standards: string,            // local standards text (from CLAUDE.md etc)
+//   prScope: string,              // PR scope output or empty
+//   userGuidance: string,         // user guidance output or empty
+//   allowlist: string,            // allowed commands text or empty
+//   buildPrompt: string,          // prompt for build-checks agent
+// }
 
 export const meta = {
   name: 'review-concern-agents',
@@ -26,12 +27,7 @@ export const meta = {
   ],
 }
 
-// --- INJECT CONSTS HERE ---
-// The main thread reads this script, finds this marker, and inserts const
-// declarations for DIMENSIONS, PROJECT_ROOT, PROJECT_CONTEXT, STANDARDS,
-// PR_SCOPE, USER_GUIDANCE, ALLOWLIST, BUILD_PROMPT immediately after it.
-// If consts are missing at runtime, the script will fail with a clear
-// ReferenceError on the first use.
+const config = JSON.parse(args)
 
 const CONCERNS = [
   { concern: 'Architecture and Design', slug: 'architecture', model: 'sonnet',
@@ -50,20 +46,16 @@ const CONCERNS = [
     scope: 'Log quality (levels, structured fields, sensitive data), error context, metrics, traces, debug affordances, alerting hooks.' },
 ]
 
-// Embedded from skills/review/schemas/agent-output.resolved.schema.json
-// Auto-synced by scripts/resolve_schema.py — do not edit manually.
-const AGENT_OUTPUT_SCHEMA = {"title":"Agent Output","description":"JSON contract returned by a single review sub-agent for one (concern, dimension) cell.","type":"object","additionalProperties":false,"required":["agent_id","concern","concern_slug","dimension_name","dimension_slug","dimension_scope","findings"],"properties":{"agent_id":{"type":"string","description":"Stable identifier for the sub-agent instance (e.g. 'architecture/auth'). Used for logging and issues[].source_component attribution. Constraints: minLength: 1."},"concern":{"type":"string","description":"Human-readable concern axis. One of the seven fixed axes the review skill dispatches per dimension.","enum":["Architecture and Design","Implementation Quality","Test Quality and Coverage","Maintainability and Standards","Security","Documentation","Observability"]},"concern_slug":{"type":"string","description":"Machine-readable concern axis (kebab-case). Must match the human `concern` value.","enum":["architecture","implementation","test","maintainability","security","documentation","observability"]},"dimension_name":{"type":"string","description":"Human-readable name of the dimension being reviewed (e.g. 'auth subsystem'). Constraints: minLength: 1."},"dimension_slug":{"type":"string","description":"Filesystem-safe dimension slug (lowercase kebab-case, <=30 chars). Used in raw/<concern_slug>-<dimension_slug>.json. Constraints: pattern: \"^[a-z0-9][a-z0-9-]{0,30}$\"."},"dimension_scope":{"type":"object","additionalProperties":true,"description":"Free-form scope descriptor passed from the main agent. Typical shape: {paths: [...]} and/or {theme: '...'}."},"findings":{"type":"array","description":"Findings detected by this agent within its (concern, dimension) cell. May be empty.","items":{"type":"object","additionalProperties":false,"required":["title","runtime_scope","runtime_scope_justification","failure_mode","failure_mode_justification","evidence_quality","evidence_quality_justification","trace_origin","trace_origin_justification","effort_to_fix","effort_to_fix_justification","locations","issue","why_it_matters","suggested_fix"],"properties":{"title":{"type":"string","description":"Short human-readable title for the finding (<=120 chars). Constraints: minLength: 1, maxLength: 120."},"runtime_scope":{"enum":["documentation","tooling","ci","service-internal","service-external"],"description":"Where the affected code executes in the deployment lifecycle. Values listed from least to most severe: documentation \u2014 non-executable content (e.g., markdown, comments, READMEs). tooling \u2014 developer tooling and local scripts that never execute in CI or production. ci \u2014 CI/CD pipelines and build infrastructure; executes during integration but not at production runtime. Findings about missing or incomplete tests use ci because tests execute in CI, not in production. Use service-internal or service-external only for findings about defects in production runtime code, not for test coverage gaps. service-internal \u2014 production runtime code not directly exposed to untrusted input. service-external \u2014 production runtime code directly exposed to external users or untrusted input. When a finding identifies both a production defect and a test gap, report them as separate findings: the defect uses service-internal or service-external; the test gap uses ci."},"runtime_scope_justification":{"type":"string","description":"Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test. Constraints: minLength: 1."},"failure_mode":{"enum":["unclear","confusion","build-break","degraded-behavior","crash-or-outage","data-loss-or-security"],"description":"The category of consequence if the issue manifests. The failure must be current \u2014 'if a future regression occurs' is not a failure mode; use unclear when the system currently works correctly and the finding is about a coverage or observability gap. Values listed from least to most severe: unclear \u2014 no specific failure scenario can be identified; the issue is stylistic, structural, or speculative. confusion \u2014 misleads developers or users (e.g., incorrect docs, misleading names, unclear APIs) without causing runtime misbehavior. build-break \u2014 prevents successful build, lint, or test execution; blocks CI but does not affect running systems. degraded-behavior \u2014 the system produces incorrect results, loses functionality, or behaves unexpectedly under specific conditions, but remains available. crash-or-outage \u2014 the system becomes unavailable (e.g., process crash, unhandled exception, resource exhaustion, denial of service). data-loss-or-security \u2014 the system's data integrity, confidentiality, or security posture is compromised (e.g., data corruption, exfiltration, unauthorized access, privilege escalation, injection, information disclosure)."},"failure_mode_justification":{"type":"string","description":"Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified. Constraints: minLength: 1."},"evidence_quality":{"enum":["speculative","inferred","demonstrated"],"description":"How strongly the finding is grounded in observable code evidence. 'demonstrated' requires demonstrating a failure in the code, not demonstrating the absence of a test. Proving that a test does not exist is not demonstrated evidence of a defect \u2014 use inferred if you can identify a plausible failure scenario the test would catch, or speculative if you cannot. Values listed from least to most severe: speculative \u2014 suspected based on patterns or general best practices; no concrete code path identified. inferred \u2014 a plausible scenario is visible in the code structure, but the conclusion requires assumptions about runtime state, configuration, or input that are not verified. demonstrated \u2014 a specific code path is traced from input to problematic outcome, citing concrete lines; the issue is visible from the code alone without runtime assumptions."},"evidence_quality_justification":{"type":"string","description":"Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed. Constraints: minLength: 1."},"trace_origin":{"enum":["local","component","entry-point"],"description":"How far back the agent traced to establish reachability. The trace must lead to a problematic outcome \u2014 tracing to working code and noting 'but there is no test' is not an entry-point trace. For test coverage gaps, use local because the finding observes a single code site (the missing test) without tracing a failure through callers. Values listed from least to most severe: local \u2014 observed at a single code site without tracing callers or callees. component \u2014 traced within a module or package boundary (e.g., function A calls function B which exhibits the issue); external reachability is not established. entry-point \u2014 traced from an identified external entry point (e.g., API handler, CLI command, CI trigger, user action) through the call chain to the problematic code."},"trace_origin_justification":{"type":"string","description":"For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed. Constraints: minLength: 1."},"effort_to_fix":{"enum":["trivial","small","moderate","large"],"description":"Estimated remediation cost. Not used in criticality assessment; used for prioritization. Values: trivial \u2014 a one-line change, rename, or config tweak with no design decisions. small \u2014 a localized fix within one file or function. moderate \u2014 changes spanning multiple files or functions, potentially requiring test updates. large \u2014 requires architectural changes, new abstractions, or significant refactoring."},"effort_to_fix_justification":{"type":"string","description":"Describe the fix approach and why it requires the stated level of effort. Constraints: minLength: 1."},"locations":{"type":"array","minItems":1,"description":"File+line pointers that anchor the finding. At least one entry required; the first (or role='primary') entry is the canonical location used for grouping and rendering.","items":{"type":"object","additionalProperties":false,"required":["path","line"],"properties":{"path":{"type":"string","description":"Repo-relative file path (POSIX separators). Constraints: minLength: 1."},"line":{"type":"string","description":"Line number or inclusive range (e.g. '12' or '12-20'). Stored as a string so ranges are allowed. Constraints: pattern: \"^[0-9]+(-[0-9]+)?$\"."},"role":{"type":"string","description":"primary = canonical location for this finding; related = supporting evidence elsewhere; callsite = where the issue is invoked; requirement = spec/standards file:line that states the requirement being violated. Defaults to primary when absent.","enum":["primary","related","callsite","requirement"]}}}},"issue":{"type":"string","description":"1-3 sentence prose description of the problem. Constraints: minLength: 1."},"why_it_matters":{"type":"string","description":"Prose grounding the finding in the project's own patterns, standards, or stated requirements. Constraints: minLength: 1."},"suggested_fix":{"type":"string","description":"Prose describing the recommended change. Constraints: minLength: 1."}}}},"cross_cutting_observations":{"type":"array","description":"Informational notes about patterns or issues outside the agent's dimension scope. Not scored, not rendered as findings.","items":{"type":"string"}}}}
-
 function buildConcernPrompt(concern, dimension) {
-  const prScopeBlock = PR_SCOPE ? '\nPR SCOPE:\n' + PR_SCOPE + '\n' : ''
-  const guidanceBlock = USER_GUIDANCE ? '\nUSER GUIDANCE:\n' + USER_GUIDANCE + '\n' : ''
-  const standardsBlock = STANDARDS ? '\nLOCAL STANDARDS:\n' + STANDARDS + '\n' : ''
-  const allowlistBlock = ALLOWLIST ? '\nALLOWED COMMANDS:\n' + ALLOWLIST + '\n' : ''
+  const prScopeBlock = config.prScope ? '\nPR SCOPE:\n' + config.prScope + '\n' : ''
+  const guidanceBlock = config.userGuidance ? '\nUSER GUIDANCE:\n' + config.userGuidance + '\n' : ''
+  const standardsBlock = config.standards ? '\nLOCAL STANDARDS:\n' + config.standards + '\n' : ''
+  const allowlistBlock = config.allowlist ? '\nALLOWED COMMANDS:\n' + config.allowlist + '\n' : ''
   const sharedInfra = dimension.scope.shared_infrastructure
     ? '\nThis dimension covers shared infrastructure files modified in the PR. Only report findings INTRODUCED or EXPOSED by this PR — not pre-existing issues.\n'
     : ''
 
-  return `You are reviewing the project at ${PROJECT_ROOT} for the **${concern.concern}** axis within the dimension **${dimension.name}** (slug: ${dimension.slug}).
+  return `You are reviewing the project at ${config.projectRoot} for the **${concern.concern}** axis within the dimension **${dimension.name}** (slug: ${dimension.slug}).
 
 DIMENSION SCOPE (confine your review to this):
 ${JSON.stringify(dimension.scope)}
@@ -71,9 +63,9 @@ ${sharedInfra}
 If you notice issues clearly outside this scope, list them under cross_cutting_observations but do not investigate deeply.
 
 PROJECT CONTEXT:
-- Language: ${PROJECT_CONTEXT.language}
-- Build system: ${PROJECT_CONTEXT.buildSystem}
-- Test framework: ${PROJECT_CONTEXT.testFramework}
+- Language: ${config.projectContext.language}
+- Build system: ${config.projectContext.buildSystem}
+- Test framework: ${config.projectContext.testFramework}
 ${allowlistBlock}${standardsBlock}${prScopeBlock}${guidanceBlock}
 METHODOLOGY:
 Phase 1 — Establish baseline patterns:
@@ -130,7 +122,7 @@ Your output must include: agent_id (use "${concern.slug}/${dimension.slug}"), co
 
 // Phase 1: Build checks
 phase('Build')
-const buildResult = await agent(BUILD_PROMPT, {
+const buildResult = await agent(config.buildPrompt, {
   label: 'build-checks',
   model: 'haiku',
   phase: 'Build',
@@ -138,16 +130,16 @@ const buildResult = await agent(BUILD_PROMPT, {
 
 // Phase 2: Concern agents with schema enforcement
 phase('Review')
-log('Dispatching ' + (DIMENSIONS.length * CONCERNS.length) + ' concern agents with schema enforcement')
+log('Dispatching ' + (config.dimensions.length * CONCERNS.length) + ' concern agents with schema enforcement')
 
 const results = await parallel(
-  DIMENSIONS.flatMap(dim =>
+  config.dimensions.flatMap(dim =>
     CONCERNS.map(c => () =>
       agent(buildConcernPrompt(c, dim), {
         label: c.slug + '/' + dim.slug,
         model: c.model,
         phase: 'Review',
-        schema: AGENT_OUTPUT_SCHEMA,
+        schema: config.agentOutputSchema,
       }).then(output => output ? {
         concern_slug: c.slug,
         dimension_slug: dim.slug,
