@@ -74,32 +74,14 @@ Read enough code in scope to understand the project's existing conventions for t
 Phase 2 — Assess against baseline:
 Evaluate whether the codebase follows its own patterns consistently. Flag deviations, gaps, and concrete issues.
 
-FINDING CLASSIFICATION — five categorical dimensions, each requires a value AND a _justification string:
+OUTPUT:
+Your output is defined by the StructuredOutput tool's input schema. Read that schema — it is the spec. Every required field, enum value, and description is there. Key points:
 
-- runtime_scope: documentation | tooling | ci | service-internal | service-external
-  Test coverage gaps use ci. Use service-* only for production runtime defects.
-
-- failure_mode: unclear | confusion | build-break | degraded-behavior | crash-or-outage | data-loss-or-security
-  Must be CURRENT, not hypothetical. Use unclear for coverage/observability gaps.
-
-- evidence_quality: speculative | inferred | demonstrated
-  demonstrated requires demonstrating a FAILURE, not the absence of a test.
-
-- trace_origin: local | component | entry-point
-  entry-point must name the entry point and trace to a problematic outcome.
-  Test coverage gaps use local.
-
-- effort_to_fix: trivial | small | moderate | large
-
-SPLIT test gaps from production defects — they are separate findings with different dimensions.
-Do NOT drop speculative findings.
-
-CRITICAL FIELD RULES:
-- locations[].line: STRING not integer. Write "42" not 42. Ranges OK: "12-20"
-- locations[].path: repo-relative POSIX path
-- locations[].role: optional, one of "primary", "related", "callsite", "requirement"
-- Every finding needs at least one location
-- For "X is missing" findings, cite the spec/standards where the requirement is stated with role: "requirement"
+- Set agent_id to "${concern.slug}/${dimension.slug}"
+- Each finding has five categorical dimensions (runtime_scope, failure_mode, evidence_quality, trace_origin, effort_to_fix) — each requires a value AND a _justification string. Read the enum descriptions in the schema for classification guidance.
+- Split test coverage gaps from production defects as separate findings with different dimensions.
+- Do NOT drop speculative findings.
+- When calling StructuredOutput, pass fields directly as root-level properties — do NOT wrap in a container key like "json_data", "output", or "parameter".
 
 HARD EXCLUSIONS — never report:
 - Style issues enforced by linters/formatters
@@ -108,16 +90,12 @@ HARD EXCLUSIONS — never report:
 - Issues already caught by make targets
 - Missing docstrings on private functions
 - Generic best-practice advice not grounded in a specific code location
-- Positive observations or praise. Every finding must describe a problem.
-  If suggested_fix would say "no action needed" or "continue doing this", it is NOT a finding.
-  Positive patterns belong in cross_cutting_observations.
+- Positive observations or praise — if suggested_fix says "no action needed", it is NOT a finding
 
 PROHIBITED ACTIONS:
 - Do NOT modify any source code or tests
 - Do NOT execute the user's program
-- Do NOT install or upgrade packages
-
-Your output must include: agent_id (use "${concern.slug}/${dimension.slug}"), concern, concern_slug, dimension_name, dimension_slug, dimension_scope, and findings array. Optionally include cross_cutting_observations.`
+- Do NOT install or upgrade packages`
 }
 
 // Phase 1: Build checks

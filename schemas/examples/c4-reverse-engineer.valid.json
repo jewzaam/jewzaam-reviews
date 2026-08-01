@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.7.3",
+  "schema_version": "0.7.4",
   "source": "c4-reverse-engineer",
   "project": {
     "name": "sample"
