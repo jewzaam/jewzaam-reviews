@@ -4,12 +4,47 @@
   "description": "Verdicts from one validator agent for one batch of findings.",
   "properties": {
     "batch_number": {
-      "description": "Constraints: minimum: 1.",
+      "minimum": 1,
       "type": "integer"
     },
     "verdicts": {
       "items": {
         "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "rescore"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "new_dimensions"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "confirm",
+                    "remove"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "new_dimensions"
+                ]
+              }
+            }
+          }
+        ],
         "properties": {
           "action": {
             "enum": [
@@ -23,7 +58,7 @@
             "additionalProperties": false,
             "properties": {
               "content_hash": {
-                "description": "Constraints: pattern: \"^[a-f0-9]{16,64}$\".",
+                "pattern": "^[a-f0-9]{16,64}$",
                 "type": "string"
               }
             },
@@ -34,7 +69,7 @@
           },
           "new_dimensions": {
             "additionalProperties": false,
-            "description": "Constraints: minProperties: 1.",
+            "minProperties": 1,
             "properties": {
               "effort_to_fix": {
                 "description": "Estimated remediation cost. Not used in criticality assessment; used for prioritization. Values: trivial \u2014 a one-line change, rename, or config tweak with no design decisions. small \u2014 a localized fix within one file or function. moderate \u2014 changes spanning multiple files or functions, potentially requiring test updates. large \u2014 requires architectural changes, new abstractions, or significant refactoring.",
@@ -46,7 +81,8 @@
                 ]
               },
               "effort_to_fix_justification": {
-                "description": "Describe the fix approach and why it requires the stated level of effort. Constraints: minLength: 1.",
+                "description": "Describe the fix approach and why it requires the stated level of effort.",
+                "minLength": 1,
                 "type": "string"
               },
               "evidence_quality": {
@@ -58,7 +94,8 @@
                 ]
               },
               "evidence_quality_justification": {
-                "description": "Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed. Constraints: minLength: 1.",
+                "description": "Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed.",
+                "minLength": 1,
                 "type": "string"
               },
               "failure_mode": {
@@ -73,7 +110,8 @@
                 ]
               },
               "failure_mode_justification": {
-                "description": "Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified. Constraints: minLength: 1.",
+                "description": "Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified.",
+                "minLength": 1,
                 "type": "string"
               },
               "runtime_scope": {
@@ -87,7 +125,8 @@
                 ]
               },
               "runtime_scope_justification": {
-                "description": "Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test. Constraints: minLength: 1.",
+                "description": "Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test.",
+                "minLength": 1,
                 "type": "string"
               },
               "trace_origin": {
@@ -99,14 +138,15 @@
                 ]
               },
               "trace_origin_justification": {
-                "description": "For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed. Constraints: minLength: 1.",
+                "description": "For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed.",
+                "minLength": 1,
                 "type": "string"
               }
             },
             "type": "object"
           },
           "reasoning": {
-            "description": "Constraints: minLength: 1.",
+            "minLength": 1,
             "type": "string"
           }
         },

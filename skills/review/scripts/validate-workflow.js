@@ -3,12 +3,13 @@
 // Workflow script for review skill validator agent dispatch.
 // Schema enforcement via agent(schema:) on validation-output schema.
 //
-// The Workflow tool's args global is broken — all dynamic data is injected
-// by the main thread as const declarations at the INJECT marker below.
+// Workflow tool serializes args as a JSON string. Use JSON.parse(args) to recover.
 //
-// Required consts (main thread must provide):
-//   BATCHES          - [{batch_number, total_batches, findings: [...]}]
-//   PROJECT_ROOT     - string
+// args (JSON string): {
+//   validationOutputSchema: object,  // resolved validation-output schema
+//   batches: [{batch_number, total_batches, findings: [...]}],
+//   projectRoot: string,
+// }
 
 export const meta = {
   name: 'review-validators',
@@ -18,13 +19,7 @@ export const meta = {
   ],
 }
 
-// --- INJECT CONSTS HERE ---
-// The main thread reads this script, finds this marker, and inserts const
-// declarations for BATCHES and PROJECT_ROOT immediately after it.
-
-// Embedded from skills/review/schemas/validation-output.resolved.schema.json
-// Auto-synced by scripts/resolve_schema.py — do not edit manually.
-const VALIDATION_OUTPUT_SCHEMA = {"title":"Validation Output","description":"Verdicts from one validator agent for one batch of findings.","type":"object","additionalProperties":false,"required":["batch_number","verdicts"],"properties":{"batch_number":{"type":"integer","description":"Constraints: minimum: 1."},"verdicts":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["finding_ref","action","reasoning"],"properties":{"finding_ref":{"type":"object","additionalProperties":false,"required":["content_hash"],"properties":{"content_hash":{"type":"string","description":"Constraints: pattern: \"^[a-f0-9]{16,64}$\"."}}},"action":{"type":"string","enum":["confirm","rescore","remove"]},"new_dimensions":{"type":"object","additionalProperties":false,"properties":{"runtime_scope":{"enum":["documentation","tooling","ci","service-internal","service-external"],"description":"Where the affected code executes in the deployment lifecycle. Values listed from least to most severe: documentation \u2014 non-executable content (e.g., markdown, comments, READMEs). tooling \u2014 developer tooling and local scripts that never execute in CI or production. ci \u2014 CI/CD pipelines and build infrastructure; executes during integration but not at production runtime. Findings about missing or incomplete tests use ci because tests execute in CI, not in production. Use service-internal or service-external only for findings about defects in production runtime code, not for test coverage gaps. service-internal \u2014 production runtime code not directly exposed to untrusted input. service-external \u2014 production runtime code directly exposed to external users or untrusted input. When a finding identifies both a production defect and a test gap, report them as separate findings: the defect uses service-internal or service-external; the test gap uses ci."},"runtime_scope_justification":{"type":"string","description":"Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test. Constraints: minLength: 1."},"failure_mode":{"enum":["unclear","confusion","build-break","degraded-behavior","crash-or-outage","data-loss-or-security"],"description":"The category of consequence if the issue manifests. The failure must be current \u2014 'if a future regression occurs' is not a failure mode; use unclear when the system currently works correctly and the finding is about a coverage or observability gap. Values listed from least to most severe: unclear \u2014 no specific failure scenario can be identified; the issue is stylistic, structural, or speculative. confusion \u2014 misleads developers or users (e.g., incorrect docs, misleading names, unclear APIs) without causing runtime misbehavior. build-break \u2014 prevents successful build, lint, or test execution; blocks CI but does not affect running systems. degraded-behavior \u2014 the system produces incorrect results, loses functionality, or behaves unexpectedly under specific conditions, but remains available. crash-or-outage \u2014 the system becomes unavailable (e.g., process crash, unhandled exception, resource exhaustion, denial of service). data-loss-or-security \u2014 the system's data integrity, confidentiality, or security posture is compromised (e.g., data corruption, exfiltration, unauthorized access, privilege escalation, injection, information disclosure)."},"failure_mode_justification":{"type":"string","description":"Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified. Constraints: minLength: 1."},"evidence_quality":{"enum":["speculative","inferred","demonstrated"],"description":"How strongly the finding is grounded in observable code evidence. 'demonstrated' requires demonstrating a failure in the code, not demonstrating the absence of a test. Proving that a test does not exist is not demonstrated evidence of a defect \u2014 use inferred if you can identify a plausible failure scenario the test would catch, or speculative if you cannot. Values listed from least to most severe: speculative \u2014 suspected based on patterns or general best practices; no concrete code path identified. inferred \u2014 a plausible scenario is visible in the code structure, but the conclusion requires assumptions about runtime state, configuration, or input that are not verified. demonstrated \u2014 a specific code path is traced from input to problematic outcome, citing concrete lines; the issue is visible from the code alone without runtime assumptions."},"evidence_quality_justification":{"type":"string","description":"Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed. Constraints: minLength: 1."},"trace_origin":{"enum":["local","component","entry-point"],"description":"How far back the agent traced to establish reachability. The trace must lead to a problematic outcome \u2014 tracing to working code and noting 'but there is no test' is not an entry-point trace. For test coverage gaps, use local because the finding observes a single code site (the missing test) without tracing a failure through callers. Values listed from least to most severe: local \u2014 observed at a single code site without tracing callers or callees. component \u2014 traced within a module or package boundary (e.g., function A calls function B which exhibits the issue); external reachability is not established. entry-point \u2014 traced from an identified external entry point (e.g., API handler, CLI command, CI trigger, user action) through the call chain to the problematic code."},"trace_origin_justification":{"type":"string","description":"For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed. Constraints: minLength: 1."},"effort_to_fix":{"enum":["trivial","small","moderate","large"],"description":"Estimated remediation cost. Not used in criticality assessment; used for prioritization. Values: trivial \u2014 a one-line change, rename, or config tweak with no design decisions. small \u2014 a localized fix within one file or function. moderate \u2014 changes spanning multiple files or functions, potentially requiring test updates. large \u2014 requires architectural changes, new abstractions, or significant refactoring."},"effort_to_fix_justification":{"type":"string","description":"Describe the fix approach and why it requires the stated level of effort. Constraints: minLength: 1."}},"description":"Constraints: minProperties: 1."},"reasoning":{"type":"string","description":"Constraints: minLength: 1."}}}}}}
+const config = JSON.parse(args)
 
 function buildValidatorPrompt(batch) {
   const findingsList = batch.findings.map((f, i) =>
@@ -44,7 +39,7 @@ function buildValidatorPrompt(batch) {
 
   return `You are a validator agent for batch ${batch.batch_number} of ${batch.total_batches}. Your job is to adversarially challenge each finding below.
 
-PROJECT ROOT: ${PROJECT_ROOT}
+PROJECT ROOT: ${config.projectRoot}
 
 For each finding:
 1. Open the cited locations and verify the code exists as described
@@ -65,15 +60,15 @@ ${findingsList}`
 }
 
 phase('Validate')
-log('Dispatching ' + BATCHES.length + ' validator agents')
+log('Dispatching ' + config.batches.length + ' validator agents')
 
 const results = await parallel(
-  BATCHES.map(batch => () =>
+  config.batches.map(batch => () =>
     agent(buildValidatorPrompt(batch), {
       label: 'validate-batch-' + batch.batch_number,
       model: 'sonnet',
       phase: 'Validate',
-      schema: VALIDATION_OUTPUT_SCHEMA,
+      schema: config.validationOutputSchema,
     }).then(output => output ? {
       batch_number: batch.batch_number,
       filename: 'batch-' + batch.batch_number + '-output.json',

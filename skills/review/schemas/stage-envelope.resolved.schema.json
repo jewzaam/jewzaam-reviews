@@ -8,14 +8,14 @@
         "additionalProperties": false,
         "properties": {
           "dimension_name": {
-            "description": "Constraints: minLength: 1.",
+            "minLength": 1,
             "type": "string"
           },
           "dimension_scope": {
             "type": "object"
           },
           "dimension_slug": {
-            "description": "Constraints: pattern: \"^[a-z0-9][a-z0-9-]{0,30}$\".",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$",
             "type": "string"
           }
         },
@@ -44,7 +44,7 @@
             ]
           },
           "message": {
-            "description": "Constraints: minLength: 1.",
+            "minLength": 1,
             "type": "string"
           },
           "severity": {
@@ -54,7 +54,7 @@
             ]
           },
           "source_component": {
-            "description": "Constraints: minLength: 1.",
+            "minLength": 1,
             "type": "string"
           }
         },
@@ -72,7 +72,7 @@
       "additionalProperties": false,
       "properties": {
         "name": {
-          "description": "Constraints: minLength: 1.",
+          "minLength": 1,
           "type": "string"
         },
         "scope_slug": {
