@@ -271,7 +271,28 @@ What the script does (you do **not** re-implement this in your reasoning):
 
 If a `00-raw/*.json` file fails its agent-output schema validation, the consolidator skips it with a warning on stderr and records a `schema_rejected_input` issue in the envelope. Note any skipped files in the supplementary "Decomposition" preamble at render time.
 
-### 7. Validate Findings
+### 7. Diff-Scope Filter (PR reviews only)
+
+For PR-scoped reviews only, run the diff-scope filter to remove findings whose primary locations fall outside the PR diff. This catches findings that review agents reported against unchanged code — a common model failure mode. Skips automatically when no base ref is available (full-repo reviews).
+
+Extract the merge base from the PR Scope pre-fetch output (the line `Merge base: <hash> (against <branch>)`) and pass it as `--base-ref`:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/diff-scope-filter.py \
+  --stage-dir ./.tmp-review/10-merged/ \
+  --base-ref <merge-base-hash>
+```
+
+The script:
+- Computes changed lines from `git diff <base-ref>...HEAD -U0`
+- Marks all lines as changed for newly added files
+- For each finding, checks whether any primary location overlaps with changed lines
+- Removes non-overlapping findings from the stage directory and records them as `diff_scope_filtered` issues in the envelope
+- No-ops when `--base-ref` is empty
+
+If no PR Scope section was injected by the pre-fetch, skip this step entirely.
+
+### 8. Validate Findings
 
 Run the batcher script — it reads per-finding files from `10-merged/`, predicts severity buckets, and slices **only Critical and Important findings** into validation-input batches. Suggestion and Needs-review findings skip validation (they pass through `apply-verdicts.py` unchanged):
 
@@ -323,7 +344,7 @@ After the Workflow returns, write each validator output to disk:
 For each entry in `result.validatorOutputs`:
 - Write `entry.output` as JSON to `./.tmp-review/15-validation/<entry.filename>`
 
-### 8. Apply Verdicts
+### 9. Apply Verdicts
 
 Run the verdict application script — it reads verdicts from `15-validation/` and findings from `10-merged/`, applies them deterministically, and writes the surviving findings to `20-findings/`:
 
@@ -346,7 +367,7 @@ What the script does (you do **not** re-implement this in your reasoning):
 - Copies `_envelope.json` to `--output-dir`, merging any verdict-parsing issues into `issues[]`.
 - Findings with `speculative` evidence quality are kept; the renderer segregates them into `needs-review`.
 
-### 9. Red/Green Test Validation
+### 10. Red/Green Test Validation
 
 Run the red/green validator. The script computes the merge base internally and skips automatically for non-PR reviews. Synthetic findings land in `20-findings/` alongside review findings.
 
@@ -361,7 +382,7 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/redgreen-validate.py \
   --strip-prefix '<subdirectory prefix if tests run from a subdir, e.g. "backend/">'
 ```
 
-### 10. Render
+### 11. Render
 
 Run the renderer:
 
@@ -382,7 +403,7 @@ The slug derivation from `/review` arguments matches today's behavior (max 12 ch
 
 - **No writes outside `./.tmp-review/` and the three final output files.** The only permitted Write targets for the main agent are `Findings-review[-<slug>].json`, `Findings-review[-<slug>].md`, and `Findings-review[-<slug>]-supplementary.md`. Any other Write — to `${CLAUDE_PLUGIN_ROOT}/...`, to `docs/`, to `scripts/`, to `/tmp/`, anywhere — is a violation.
 
-### 11. Present Summary
+### 12. Present Summary
 
 After rendering, read the counts from the rendered JSON (`findings[]` grouped by `severity`) and output a terse summary:
 
