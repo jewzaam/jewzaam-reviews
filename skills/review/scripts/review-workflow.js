@@ -7,6 +7,7 @@
 //
 // args (JSON string): {
 //   agentOutputSchema: object,    // resolved agent-output schema
+//   concerns: [{concern, slug, model, scope}],  // concern axes to dispatch
 //   dimensions: [{name, slug, scope}],
 //   projectRoot: string,
 //   pluginHome: string,
@@ -29,22 +30,8 @@ export const meta = {
 
 const config = JSON.parse(args)
 
-const CONCERNS = [
-  { concern: 'Architecture and Design', slug: 'architecture', model: 'sonnet',
-    scope: 'Project structure, module boundaries, coupling, data model, configuration management, design pattern consistency.' },
-  { concern: 'Implementation Quality', slug: 'implementation', model: 'sonnet',
-    scope: 'Logic correctness, error handling, type safety, resource management, edge cases, concurrency. Security excluded.' },
-  { concern: 'Test Quality and Coverage', slug: 'test', model: 'sonnet',
-    scope: 'Test plan alignment, isolation, assertion quality, edge case coverage, mock usage, missing scenarios, fixture design.' },
-  { concern: 'Maintainability and Standards', slug: 'maintainability', model: 'sonnet',
-    scope: 'Naming, duplication, import organization, function complexity, internal consistency, build system. Documentation excluded.' },
-  { concern: 'Security', slug: 'security', model: 'sonnet',
-    scope: 'Authn/authz, input validation, injection vectors, credential/secret handling, path traversal, deserialization, supply chain, TLS/crypto. Auth chain rule: verify full auth chain before reporting filter-level IDOR.' },
-  { concern: 'Documentation', slug: 'documentation', model: 'haiku',
-    scope: 'README accuracy, docstrings, inline comments where non-obvious, examples, ADRs, changelog, public API docs, install/usage instructions.' },
-  { concern: 'Observability', slug: 'observability', model: 'haiku',
-    scope: 'Log quality (levels, structured fields, sensitive data), error context, metrics, traces, debug affordances, alerting hooks.' },
-]
+// ponytail: concerns passed via args from SKILL.md, not hardcoded — supports light review (2 concerns) and dimension selection (subset of 7)
+const CONCERNS = config.concerns
 
 function buildConcernPrompt(concern, dimension) {
   const prScopeBlock = config.prScope ? '\nPR SCOPE:\n' + config.prScope + '\n' : ''

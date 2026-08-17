@@ -1,6 +1,6 @@
 ---
 name: review
-description: Perform a multi-agent codebase review by spinning up parallel review agents across multiple dimensions (1 + 7×N agents per run). Use when the user asks to review, assess, audit, or evaluate a codebase or project. Accepts an optional PR number and/or free-form guidance text to focus the review.
+description: Perform a multi-agent codebase review. Prompts for review depth (light or full) and dimension selection. Light review runs 3 agents for scope/fit checks. Full review runs 1 + C×N agents across selected concern axes and dimensions. Use when the user asks to review, assess, audit, or evaluate a codebase or project. Accepts an optional PR number and/or free-form guidance text to focus the review.
 disable-model-invocation: true
 argument-hint: "[PR-number] [guidance text...]"
 allowed-tools:
@@ -121,6 +121,87 @@ Follow explicit file path references found in rules or instructions sections (e.
 
 **Allowlist:** The allowed commands were provided in this prompt. Include them in each agent's prompt so agents know what they can run without blocking on user approval.
 
+### 1a. Select Review Depth
+
+Use AskUserQuestion to determine review depth:
+
+- **Question:** "What review depth?"
+- **Header:** "Depth"
+- **multiSelect:** false
+- **Options:**
+  1. **Full review (Recommended)** — description: "Multi-dimension deep review with independent validation"
+  2. **Light review** — description: "Scope/fit check: scope creep, missed scope, quick quality pass"
+
+If "Other" is selected, treat as full review unless the response specifies differently.
+
+If **light review** selected → skip to the **Light Review Process** section below.
+
+### 1b. Select Review Dimensions (full review only)
+
+Use AskUserQuestion to select which concern groups to include:
+
+- **Question:** "Which review dimensions to include?"
+- **Header:** "Dimensions"
+- **multiSelect:** true
+- **Options:**
+  1. **Core (Recommended)** — description: "Architecture, Implementation, Security"
+  2. **Quality** — description: "Test Coverage, Maintainability"
+  3. **Docs** — description: "Documentation, Observability"
+
+Map selected groups to concern axes for the Workflow dispatch:
+- **Core** → Architecture and Design (`architecture`), Implementation Quality (`implementation`), Security (`security`)
+- **Quality** → Test Quality and Coverage (`test`), Maintainability and Standards (`maintainability`)
+- **Docs** → Documentation (`documentation`), Observability (`observability`)
+
+If all groups are selected (or no explicit selection made), use all 7 concern axes. Build the `concerns` array from the Concern Axes table in Step 3, filtered to only the selected groups.
+
+### Light Review Process
+
+*Entered when "Light review" is selected in Step 1a. Uses the same pipeline with 2 concerns, 1 dimension, and no validation pass.*
+
+#### L1. Scope Context
+
+Light review requires PR context. If the pre-fetch did not inject a "PR Scope" section, inform the user that light review requires a PR number and fall back to full review (return to Step 1b).
+
+Collect:
+- PR Scope (changed files from pre-fetch)
+- `pr-context.md` at the project root if present (PR description, JIRA context, acceptance criteria)
+- User Guidance from pre-fetch
+
+#### L2. Dispatch via Workflow
+
+Use a single dimension covering all changed files:
+- **name:** "PR scope", **slug:** `pr-scope`, **scope:** `{"paths": [<changed files from PR scope>]}`
+
+Construct a 2-entry concerns array using existing concern slugs with light-review-focused scope text:
+
+| # | Concern | `concern_slug` | Model | Scope |
+|---|---|---|---|---|
+| 1 | Architecture and Design | `architecture` | sonnet | Scope alignment: review changes against PR description and JIRA acceptance criteria. Identify (a) scope creep — changes not justified by stated requirements, (b) missed scope — requirements or acceptance criteria not addressed, (c) partial coverage of a requirement. Focus on fit, not deep architecture review. |
+| 2 | Implementation Quality | `implementation` | sonnet | Quick quality scan of changed files only: obvious bugs, error handling gaps, security red flags, missing error paths. Do NOT report style, naming, documentation, test coverage, or architectural concerns. |
+
+Read the Workflow script and agent-output schema, then invoke the Workflow as described in Step 3 (same script, same `agent(schema:)` enforcement), passing the 2-entry concerns array and the single dimension.
+
+#### L3. Post-Pipeline
+
+Execute Steps 4, 5, and 6 (write raw output, re-validate, consolidate). **Skip Steps 7–9** (no validation dispatch, no verdict application, no red/green).
+
+Render directly from `10-merged/` instead of `20-findings/`:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/render-review.py \
+  --input-dir ./.tmp-review/10-merged/ \
+  --out-dir <project root> \
+  --project-name <project name> \
+  --scope-slug <slug if applicable, else empty>
+```
+
+Proceed to Step 11 (Present Summary). Light reviews do not offer the `/review-supplementary` follow-up.
+
+---
+
+*Steps 2–11 below are the full review path.*
+
 ### 2. Decompose Scope into Dimensions
 
 A **dimension** is a coherent slice of the review scope handed to a set of review agents. Decomposition decides how the work is sliced before any agent is dispatched.
@@ -159,9 +240,10 @@ After decomposition produces N dimensions:
      - `prScope`: PR Scope output from pre-fetch (empty string if none)
      - `userGuidance`: User Guidance output from pre-fetch (empty string if none)
      - `allowlist`: allowed commands text (empty string if unavailable)
+     - `concerns`: array of `{concern, slug, model, scope}` objects — the concern axes to dispatch, built from the dimension selection in Step 1b (all 7 if no groups were deselected). Use the Concern Axes table below for the full definitions.
      - `buildPrompt`: prompt for the build-checks agent (see below)
 
-The Workflow dispatches 1 build agent + 7×N concern agents with `agent(schema:)` enforcement and returns the results. The `agent(schema:)` option validates output at the harness level via Ajv — the model must produce conformant output via the StructuredOutput tool call before the agent can complete.
+The Workflow dispatches 1 build agent + C×N concern agents (where C is the number of selected concern axes) with `agent(schema:)` enforcement and returns the results. The `agent(schema:)` option validates output at the harness level via Ajv — the model must produce conformant output via the StructuredOutput tool call before the agent can complete.
 
 #### Build & Checks Agent
 
@@ -348,7 +430,25 @@ What the script does (you do **not** re-implement this in your reasoning):
 
 ### 9. Red/Green Test Validation
 
-Run the red/green validator. The script computes the merge base internally and skips automatically for non-PR reviews. Synthetic findings land in `20-findings/` alongside review findings.
+Before running, check whether red/green testing is applicable and worthwhile. Use AskUserQuestion:
+
+- **Question:** "Run red/green test validation?"
+- **Header:** "Red/Green"
+- **multiSelect:** false
+- **Options:**
+  1. **Skip (Recommended)** — description: "Skip red/green testing — faster, no runtime dependency"
+  2. **Run red/green** — description: "Execute tests to validate test-related findings (requires venv and test runner)"
+
+Automatically skip (without asking) when any of these are true:
+- No PR scope (non-PR review — red/green computes merge base from PR)
+- No test files in the changed file set
+- No `make test` or `make test-unit` target exists
+
+If skipped, proceed directly to Step 10.
+
+If "Run red/green" is selected:
+
+Run the red/green validator. The script computes the merge base internally. Synthetic findings land in `20-findings/` alongside review findings.
 
 Before invoking, read the project's `Makefile` to understand how the venv is built and how tests run. If a venv build target exists (e.g., `make install`, `make deps`), run it, then activate the venv. Pass the activation and test command to the script:
 
@@ -395,11 +495,16 @@ Files:
 - Findings-review[-<slug>]-supplementary.md
 ```
 
-If suggestion + needs-review > 0, append:
+If suggestion + needs-review > 0, use AskUserQuestion to offer supplementary validation:
 
-```
-To validate supplementary findings, run: /review-supplementary
-```
+- **Question:** "N supplementary findings were not validated. Validate them now?" (replace N with the actual count)
+- **Header:** "Supplementary"
+- **multiSelect:** false
+- **Options:**
+  1. **Skip (Recommended)** — description: "Leave supplementary findings unvalidated"
+  2. **Validate now** — description: "Run /review-supplementary to validate suggestion and needs-review findings"
+
+If "Validate now" is selected, invoke `/review-supplementary` via the Skill tool.
 
 No inline findings, no commentary. The files have everything.
 
