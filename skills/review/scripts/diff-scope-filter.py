@@ -157,11 +157,15 @@ def main(argv: list[str]) -> int:
             primary_locs = f.get("locations", [])[:1]
         loc_str = ", ".join(f"{l['path']}:{l['line']}" for l in primary_locs)
         issues.append({
-            "severity": "info",
-            "kind": "diff_scope_filtered",
+            # ponytail: findings.schema.json's issue.kind has no diff-scope value
+            # and issue.severity has no "info" — use the "other" escape hatch and
+            # carry the classification in the message prefix. Widen the shared
+            # enum only if another skill needs the same category.
+            "severity": "warning",
+            "kind": "other",
             "message": (
-                f"Finding '{f['title']}' ({f['content_hash']}) filtered: "
-                f"primary location(s) {loc_str} not in PR diff"
+                f"diff_scope_filtered: finding '{f['title']}' ({f['content_hash']}) "
+                f"removed — primary location(s) {loc_str} not in PR diff"
             ),
             "source_component": "diff-scope-filter",
         })

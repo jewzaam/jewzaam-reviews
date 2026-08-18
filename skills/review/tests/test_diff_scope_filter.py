@@ -7,8 +7,32 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import jsonschema
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "diff-scope-filter.py"
+SCHEMAS = REPO_ROOT / "schemas"
+PLUGIN_ROOT = REPO_ROOT.parent.parent
+
+sys.path.insert(0, str(PLUGIN_ROOT))
+from scripts.envelope import schema_registry  # noqa: E402
+
+
+def _assert_envelope_valid(envelope: dict) -> None:
+    """The envelope this script writes must satisfy stage-envelope.schema.json.
+
+    apply-verdicts.py validates the envelope it reads, so an envelope this
+    script emits with an out-of-enum issue kind/severity breaks the pipeline
+    one stage downstream.
+    """
+    with (SCHEMAS / "stage-envelope.schema.json").open() as fh:
+        schema = json.load(fh)
+    validator = jsonschema.Draft202012Validator(schema, registry=schema_registry())
+    errors = sorted(validator.iter_errors(envelope), key=lambda e: list(e.absolute_path))
+    assert not errors, "\n".join(
+        f"{'/'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}"
+        for e in errors
+    )
 
 
 def _load_module():
@@ -138,7 +162,9 @@ class TestDiffScopeFilter:
         assert rc == 0
         envelope, findings = _read_stage_dir(stage)
         assert len(findings) == 0
-        assert any(i["kind"] == "diff_scope_filtered" for i in envelope["issues"])
+        assert len(envelope["issues"]) == 1
+        assert "diff_scope_filtered" in envelope["issues"][0]["message"]
+        _assert_envelope_valid(envelope)
 
     def test_removes_finding_in_unmodified_file(self, tmp_path: Path):
         stage = tmp_path / "merged"
@@ -161,8 +187,9 @@ class TestDiffScopeFilter:
         envelope, kept = _read_stage_dir(stage)
         assert len(kept) == 1
         assert kept[0]["content_hash"] == "a" * 16
-        filtered_issues = [i for i in envelope["issues"] if i["kind"] == "diff_scope_filtered"]
-        assert len(filtered_issues) == 2
+        filtered = [i for i in envelope["issues"] if "diff_scope_filtered" in i["message"]]
+        assert len(filtered) == 2
+        _assert_envelope_valid(envelope)
 
     def test_new_file_keeps_all_findings(self, tmp_path: Path):
         stage = tmp_path / "merged"
@@ -207,3 +234,62 @@ class TestDiffScopeFilter:
         assert rc == 0
         _, kept = _read_stage_dir(stage)
         assert len(kept) == 2
+
+
+class TestDownstreamCompatibility:
+    """Regression: v0.7.5 emitted kind=diff_scope_filtered / severity=info,
+    neither in findings.schema.json's issue enums, so apply-verdicts.py
+    rejected the envelope its own upstream script had written."""
+
+    def test_emitted_issues_satisfy_schema_enums(self, tmp_path: Path):
+        stage = tmp_path / "merged"
+        _write_stage_dir(stage, [_finding(chash="b" * 16, path="src/gone.py", line="1")])
+        rc = _run_filter(stage)
+        assert rc == 0
+        envelope, _ = _read_stage_dir(stage)
+        issue = envelope["issues"][0]
+        assert issue["severity"] in ("error", "warning")
+        assert issue["kind"] in (
+            "permission_denied",
+            "subagent_failure",
+            "validation_failed",
+            "tool_unavailable",
+            "schema_rejected_input",
+            "other",
+        )
+        _assert_envelope_valid(envelope)
+
+    def test_apply_verdicts_accepts_filtered_envelope(self, tmp_path: Path):
+        """End-to-end: filter → apply-verdicts must not reject the envelope."""
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(
+            stage,
+            [
+                _finding(chash="a" * 16, path="src/a.py", line="10"),
+                _finding(chash="b" * 16, path="src/gone.py", line="1"),
+            ],
+        )
+        assert _run_filter(stage) == 0
+
+        verdicts = tmp_path / "15-validation"
+        verdicts.mkdir()
+        out = tmp_path / "20-findings"
+        out.mkdir()
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "apply-verdicts.py"),
+                "--input-dir", str(stage),
+                "--verdicts-dir", str(verdicts),
+                "--output-dir", str(out),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        envelope, findings = _read_stage_dir(out)
+        assert len(findings) == 1
+        assert findings[0]["content_hash"] == "a" * 16
+        # The filter's issue survived into the downstream envelope.
+        assert any("diff_scope_filtered" in i["message"] for i in envelope["issues"])
