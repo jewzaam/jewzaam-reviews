@@ -161,3 +161,56 @@ class TestValidationOutputSchema:
         )
         with pytest.raises(jsonschema.ValidationError):
             _validate(schema, instance)
+
+    def _verdict_doc(self, verdict: dict) -> dict:
+        return {"batch_number": 1, "verdicts": [verdict]}
+
+    def test_remove_without_reason_fails(self, schemas_dir):
+        """remove_reason is the enforcement lever — the harness must reject a
+        removal that does not say why."""
+        schema = _load_json(schemas_dir / "validation-output.schema.json")
+        with pytest.raises(jsonschema.ValidationError):
+            _validate(schema, self._verdict_doc({
+                "finding_ref": {"content_hash": "a1b2c3d4e5f60718"},
+                "action": "remove",
+                "reasoning": "no reason supplied",
+            }))
+
+    @pytest.mark.parametrize(
+        "reason", ["not_real", "pre_existing", "positive_observation"]
+    )
+    def test_remove_reasons_accepted(self, schemas_dir, reason):
+        schema = _load_json(schemas_dir / "validation-output.schema.json")
+        _validate(schema, self._verdict_doc({
+            "finding_ref": {"content_hash": "a1b2c3d4e5f60718"},
+            "action": "remove",
+            "remove_reason": reason,
+            "reasoning": "checked against the merge base",
+        }))
+
+    def test_unknown_remove_reason_fails(self, schemas_dir):
+        schema = _load_json(schemas_dir / "validation-output.schema.json")
+        with pytest.raises(jsonschema.ValidationError):
+            _validate(schema, self._verdict_doc({
+                "finding_ref": {"content_hash": "a1b2c3d4e5f60718"},
+                "action": "remove",
+                "remove_reason": "out_of_scope",
+                "reasoning": "invented reason",
+            }))
+
+    @pytest.mark.parametrize("action", ["confirm", "rescore"])
+    def test_remove_reason_forbidden_on_non_removal(self, schemas_dir, action):
+        schema = _load_json(schemas_dir / "validation-output.schema.json")
+        verdict = {
+            "finding_ref": {"content_hash": "a1b2c3d4e5f60718"},
+            "action": action,
+            "remove_reason": "pre_existing",
+            "reasoning": "kept but tagged",
+        }
+        if action == "rescore":
+            verdict["new_dimensions"] = {
+                "evidence_quality": "inferred",
+                "evidence_quality_justification": "weaker than claimed",
+            }
+        with pytest.raises(jsonschema.ValidationError):
+            _validate(schema, self._verdict_doc(verdict))

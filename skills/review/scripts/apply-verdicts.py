@@ -159,6 +159,8 @@ def main(argv: list[str]) -> int:
     rescored = 0
     removed = 0
     passthrough = 0
+    removed_by_reason: dict[str, int] = {}
+    removal_issues: list[dict] = []
     output_findings: list[dict] = []
 
     for finding in findings:
@@ -173,6 +175,21 @@ def main(argv: list[str]) -> int:
         result = _apply_verdict(finding, verdict)
         if result is None:
             removed += 1
+            # Record why, so a dropped finding leaves a trail instead of
+            # vanishing. The schema requires remove_reason on removal and
+            # _load_verdicts drops whole files that fail validation, so the
+            # default is belt-and-braces rather than a reachable path.
+            reason = verdict.get("remove_reason", "unspecified")
+            removed_by_reason[reason] = removed_by_reason.get(reason, 0) + 1
+            removal_issues.append({
+                "severity": "warning",
+                "kind": "other",
+                "message": (
+                    f"validator_removed[{reason}]: finding "
+                    f"'{finding['title']}' ({ch}) — {verdict['reasoning']}"
+                ),
+                "source_component": "apply-verdicts",
+            })
         else:
             errors = _validate(result, finding_schema)
             if errors:
@@ -189,7 +206,9 @@ def main(argv: list[str]) -> int:
             else:
                 rescored += 1
 
-    all_issues = envelope.get("issues", []) + verdict_issues + additional_issues
+    all_issues = (
+        envelope.get("issues", []) + verdict_issues + removal_issues + additional_issues
+    )
     output_envelope = dict(envelope)
     output_envelope["issues"] = all_issues
 
@@ -202,8 +221,17 @@ def main(argv: list[str]) -> int:
 
     write_stage_dir(args.output_dir, output_envelope, output_findings)
 
+    breakdown = ""
+    if removed_by_reason:
+        parts = ", ".join(
+            f"{reason}={count}"
+            for reason, count in sorted(removed_by_reason.items())
+        )
+        breakdown = f" ({parts})"
+
     print(
-        f"OK: {confirmed} confirmed, {rescored} rescored, {removed} removed, "
+        f"OK: {confirmed} confirmed, {rescored} rescored, "
+        f"{removed} removed{breakdown}, "
         f"{passthrough} passthrough → {len(output_findings)} finding(s) "
         f"at {args.output_dir}"
     )

@@ -9,6 +9,7 @@
 //   validationOutputSchema: object,  // resolved validation-output schema
 //   batches: [{batch_number, total_batches, findings: [...]}],
 //   projectRoot: string,
+//   baseRef: string,                 // merge base for PR reviews, '' for full-repo
 // }
 
 export const meta = {
@@ -37,20 +38,61 @@ function buildValidatorPrompt(batch) {
     '- suggested_fix: ' + f.suggested_fix
   ).join('\n\n')
 
+  const attribution = config.baseRef ? `
+
+## PR ATTRIBUTION CHECK (this is a PR-scoped review)
+
+MERGE BASE: ${config.baseRef}
+
+This review covers one pull request. A finding is only in scope if this PR
+**introduced or exposed** it. An issue that is real but would hold identically
+at the merge base is pre-existing and belongs in a separate cleanup, not this
+review.
+
+You have read-only git access. Use it — do not guess at what the PR changed:
+- \`git diff ${config.baseRef}...HEAD -- <path>\` — what this PR did to a file
+- \`git diff ${config.baseRef}...HEAD --stat\` — the PR's overall shape
+- \`git log ${config.baseRef}..HEAD --oneline\` — the commits involved
+
+Read-only git only. Do NOT run tests, builds, installers, or the project's code.
+
+For each finding, answer: **would this finding hold at ${config.baseRef}?**
+- If yes, and the PR does not change the behavior → remove it, remove_reason "pre_existing"
+- If no → the PR introduced it. In scope.
+
+Do not confuse *anchor position* with *attribution*. Legitimate findings often
+cite lines the PR never touched:
+- The PR deletes a function; an unchanged caller is now orphaned. In scope — the
+  deletion caused it, and deleted lines have no position in HEAD to cite.
+- The PR changes a contract; unchanged consumers now violate it. In scope.
+- A changed file has a bug on an untouched line that predates the PR and is
+  unrelated to it. Pre-existing — remove.
+
+The deciding question is causation, not whether the cited line appears in the
+diff.` : ''
+
   return `You are a validator agent for batch ${batch.batch_number} of ${batch.total_batches}. Your job is to adversarially challenge each finding below.
 
 PROJECT ROOT: ${config.projectRoot}
+${attribution}
 
 For each finding:
 1. Open the cited locations and verify the code exists as described
 2. Challenge the premise — a finding may cite real code but be wrong because its assumptions are invalid (e.g., framework-level validation already handles it, auth middleware prevents the attack path, behavior is tested indirectly)
-3. Challenge the dimensional classifications (runtime_scope, failure_mode, evidence_quality, trace_origin, effort_to_fix)
-4. Remove positive observations — if the issue describes something working correctly, remove it
+3. Challenge the dimensional classifications (runtime_scope, failure_mode, evidence_quality, trace_origin, effort_to_fix)${config.baseRef ? '\n4. Challenge attribution — check against the merge base per the section above' : ''}
 
 For each finding, produce a verdict:
 - action: "confirm" — finding stands as-is
 - action: "rescore" — provide new_dimensions with corrected dimension values and justifications
-- action: "remove" — finding is wrong (cited line doesn't exist, issue isn't real, premise is invalid)
+- action: "remove" — provide remove_reason, one of:
+  - "not_real" — cited line doesn't exist, issue isn't real, or the premise is invalid
+  - "pre_existing" — issue is real but holds at the merge base; this PR did not cause it
+  - "positive_observation" — describes working code, not a problem (suggested_fix says
+    "no action needed", "continue", or "maintain")
+
+remove_reason is REQUIRED when action is "remove" and must be absent otherwise.
+State the evidence for your choice in "reasoning" — for "pre_existing", say what you
+checked at the base and what you found.
 
 CRITICAL: Copy each finding's content_hash EXACTLY into finding_ref.content_hash. Do NOT recompute it.
 

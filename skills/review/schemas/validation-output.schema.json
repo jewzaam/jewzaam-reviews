@@ -29,6 +29,11 @@
           }
         },
         "action": {"type": "string", "enum": ["confirm", "rescore", "remove"]},
+        "remove_reason": {
+          "type": "string",
+          "enum": ["not_real", "pre_existing", "positive_observation"],
+          "description": "Why the finding was removed. Required when action is 'remove', forbidden otherwise. not_real = the issue does not exist or the premise is invalid. pre_existing = the issue is real but would hold at the merge base, so this PR did not introduce or expose it. positive_observation = the finding describes working code, not a problem."
+        },
         "new_dimensions": {
           "type": "object",
           "additionalProperties": false,
@@ -56,6 +61,14 @@
         {
           "if": {"properties": {"action": {"enum": ["confirm", "remove"]}}},
           "then": {"not": {"required": ["new_dimensions"]}}
+        },
+        {
+          "if": {"properties": {"action": {"const": "remove"}}},
+          "then": {"required": ["remove_reason"]}
+        },
+        {
+          "if": {"properties": {"action": {"enum": ["confirm", "rescore"]}}},
+          "then": {"not": {"required": ["remove_reason"]}}
         }
       ]
     }
