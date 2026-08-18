@@ -15,7 +15,14 @@
     {
       "finding_ref": {"content_hash": "c3d4e5f607182930"},
       "action": "remove",
+      "remove_reason": "not_real",
       "reasoning": "Cited line does not exist; finding appears speculative."
+    },
+    {
+      "finding_ref": {"content_hash": "d4e5f60718293041"},
+      "action": "remove",
+      "remove_reason": "pre_existing",
+      "reasoning": "git diff 9fdaf134...HEAD -- src/auth/policy.py shows the PR did not touch this validation branch; the same missing check is present at the merge base."
     }
   ]
 }

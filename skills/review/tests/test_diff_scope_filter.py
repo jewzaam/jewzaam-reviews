@@ -18,6 +18,13 @@ sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.envelope import schema_registry  # noqa: E402
 
 
+def _load_module():
+    spec = importlib.util.spec_from_file_location("diff_scope_filter", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _assert_envelope_valid(envelope: dict) -> None:
     """The envelope this script writes must satisfy stage-envelope.schema.json.
 
@@ -33,13 +40,6 @@ def _assert_envelope_valid(envelope: dict) -> None:
         f"{'/'.join(str(p) for p in e.absolute_path) or '<root>'}: {e.message}"
         for e in errors
     )
-
-
-def _load_module():
-    spec = importlib.util.spec_from_file_location("diff_scope_filter", SCRIPT)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def _write_stage_dir(stage_dir: Path, findings: list[dict]) -> None:
@@ -105,7 +105,7 @@ def _read_stage_dir(stage_dir: Path) -> tuple[dict, list[dict]]:
     return envelope, findings
 
 
-# Diff where src/a.py lines 9-13 are changed
+# src/a.py: lines 9-13 added. src/gone.py: deleted outright.
 DIFF_OUTPUT = (
     "diff --git a/src/a.py b/src/a.py\n"
     "--- a/src/a.py\n"
@@ -116,9 +116,13 @@ DIFF_OUTPUT = (
     "+new line 3\n"
     "+new line 4\n"
     "+new line 5\n"
+    "diff --git a/src/gone.py b/src/gone.py\n"
+    "--- a/src/gone.py\n"
+    "+++ /dev/null\n"
+    "@@ -1,40 +0,0 @@\n"
 )
 
-NAME_STATUS_OUTPUT = ""
+NAME_STATUS_OUTPUT = "M\tsrc/a.py\nD\tsrc/gone.py\n"
 
 
 def _mock_run(cmd, **kwargs):
@@ -129,7 +133,11 @@ def _mock_run(cmd, **kwargs):
     return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="unexpected")
 
 
-def _run_filter(stage_dir: Path, base_ref: str = "origin/main", mock_run=None) -> int:
+def _run_filter(
+    stage_dir: Path,
+    base_ref: str = "origin/main",
+    mock_run=None,
+) -> int:
     mod = _load_module()
     with patch.object(mod.subprocess, "run", side_effect=mock_run or _mock_run):
         return mod.main(["--stage-dir", str(stage_dir), "--base-ref", base_ref])
@@ -146,94 +154,158 @@ class TestNoBaseRef:
         assert len(findings) == 1
 
 
-class TestDiffScopeFilter:
-    def test_keeps_finding_in_diff(self, tmp_path: Path):
+class TestFileLevelScope:
+    """The rule pr-scope.sh actually gives agents: report only on changed FILES."""
+
+    def test_keeps_finding_on_changed_line(self, tmp_path: Path):
         stage = tmp_path / "merged"
         _write_stage_dir(stage, [_finding(chash="a" * 16, path="src/a.py", line="10")])
-        rc = _run_filter(stage)
-        assert rc == 0
+        assert _run_filter(stage) == 0
         _, findings = _read_stage_dir(stage)
         assert len(findings) == 1
 
-    def test_removes_finding_outside_diff(self, tmp_path: Path):
+    def test_keeps_finding_on_unchanged_line_of_changed_file(self, tmp_path: Path):
+        """The v0.7.5 regression: line 1 of a changed file is in scope."""
         stage = tmp_path / "merged"
         _write_stage_dir(stage, [_finding(chash="b" * 16, path="src/a.py", line="1")])
-        rc = _run_filter(stage)
-        assert rc == 0
+        assert _run_filter(stage) == 0
+        _, findings = _read_stage_dir(stage)
+        assert len(findings) == 1
+
+    def test_removes_finding_in_untouched_file(self, tmp_path: Path):
+        stage = tmp_path / "merged"
+        _write_stage_dir(stage, [_finding(chash="c" * 16, path="src/other.py", line="5")])
+        assert _run_filter(stage) == 0
         envelope, findings = _read_stage_dir(stage)
         assert len(findings) == 0
-        assert len(envelope["issues"]) == 1
         assert "diff_scope_filtered" in envelope["issues"][0]["message"]
         _assert_envelope_valid(envelope)
 
-    def test_removes_finding_in_unmodified_file(self, tmp_path: Path):
-        stage = tmp_path / "merged"
-        _write_stage_dir(stage, [_finding(chash="c" * 16, path="src/b.py", line="5")])
-        rc = _run_filter(stage)
-        assert rc == 0
-        _, findings = _read_stage_dir(stage)
-        assert len(findings) == 0
-
     def test_mixed_findings_partial_filter(self, tmp_path: Path):
         stage = tmp_path / "merged"
-        findings = [
-            _finding(chash="a" * 16, path="src/a.py", line="10"),
-            _finding(chash="b" * 16, path="src/a.py", line="1"),
-            _finding(chash="c" * 16, path="src/b.py", line="5"),
-        ]
-        _write_stage_dir(stage, findings)
-        rc = _run_filter(stage)
-        assert rc == 0
+        _write_stage_dir(
+            stage,
+            [
+                _finding(chash="a" * 16, path="src/a.py", line="10"),
+                _finding(chash="b" * 16, path="src/a.py", line="1"),
+                _finding(chash="c" * 16, path="src/other.py", line="5"),
+            ],
+        )
+        assert _run_filter(stage) == 0
         envelope, kept = _read_stage_dir(stage)
-        assert len(kept) == 1
-        assert kept[0]["content_hash"] == "a" * 16
+        assert {f["content_hash"] for f in kept} == {"a" * 16, "b" * 16}
         filtered = [i for i in envelope["issues"] if "diff_scope_filtered" in i["message"]]
-        assert len(filtered) == 2
+        assert len(filtered) == 1
         _assert_envelope_valid(envelope)
 
-    def test_new_file_keeps_all_findings(self, tmp_path: Path):
+    def test_line_range_spanning_unchanged_lines_kept(self, tmp_path: Path):
         stage = tmp_path / "merged"
-        _write_stage_dir(stage, [_finding(chash="d" * 16, path="src/new.py", line="50")])
+        _write_stage_dir(stage, [_finding(chash="e" * 16, path="src/a.py", line="1-8")])
+        assert _run_filter(stage) == 0
+        _, findings = _read_stage_dir(stage)
+        assert len(findings) == 1
 
-        def mock_with_new_file(cmd, **kwargs):
+
+class TestDeletionHeavyDiffs:
+    """Deleted lines have no post-image position, so a line-level test drops
+    legitimate findings in proportion to how deletion-heavy the diff is. A
+    pure-deletion PR filtered to zero findings under v0.7.5."""
+
+    def test_keeps_finding_in_deleted_file(self, tmp_path: Path):
+        stage = tmp_path / "merged"
+        _write_stage_dir(stage, [_finding(chash="d" * 16, path="src/gone.py", line="12")])
+        assert _run_filter(stage) == 0
+        _, findings = _read_stage_dir(stage)
+        assert len(findings) == 1, "deleted files are in the PR's changed set"
+
+    def test_pure_deletion_pr_keeps_findings(self, tmp_path: Path):
+        """No added lines anywhere — every finding must still survive."""
+        only_deletes_status = "D\tsrc/gone.py\nD\tsrc/also_gone.py\n"
+        only_deletes_diff = (
+            "diff --git a/src/gone.py b/src/gone.py\n"
+            "--- a/src/gone.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,40 +0,0 @@\n"
+            "diff --git a/src/also_gone.py b/src/also_gone.py\n"
+            "--- a/src/also_gone.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,12 +0,0 @@\n"
+        )
+
+        def mock(cmd, **kwargs):
+            if "--name-status" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout=only_deletes_status, stderr="")
+            if "-U0" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout=only_deletes_diff, stderr="")
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        stage = tmp_path / "merged"
+        _write_stage_dir(
+            stage,
+            [
+                _finding(chash="a" * 16, path="src/gone.py", line="3"),
+                _finding(chash="b" * 16, path="src/also_gone.py", line="7"),
+            ],
+        )
+        assert _run_filter(stage, mock_run=mock) == 0
+        _, findings = _read_stage_dir(stage)
+        assert len(findings) == 2
+
+    def test_renamed_file_matches_either_path(self, tmp_path: Path):
+        def mock(cmd, **kwargs):
+            if "--name-status" in cmd:
+                return subprocess.CompletedProcess(
+                    cmd, 0, stdout="R096\tsrc/old.py\tsrc/new.py\n", stderr=""
+                )
+            if "-U0" in cmd:
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        stage = tmp_path / "merged"
+        _write_stage_dir(
+            stage,
+            [
+                _finding(chash="a" * 16, path="src/old.py", line="4"),
+                _finding(chash="b" * 16, path="src/new.py", line="4"),
+            ],
+        )
+        assert _run_filter(stage, mock_run=mock) == 0
+        _, findings = _read_stage_dir(stage)
+        assert len(findings) == 2
+
+    def test_added_file_kept(self, tmp_path: Path):
+        def mock(cmd, **kwargs):
             if "--name-status" in cmd:
                 return subprocess.CompletedProcess(cmd, 0, stdout="A\tsrc/new.py\n", stderr="")
             if "-U0" in cmd:
                 return subprocess.CompletedProcess(cmd, 0, stdout=DIFF_OUTPUT, stderr="")
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
 
-        rc = _run_filter(stage, mock_run=mock_with_new_file)
-        assert rc == 0
+        stage = tmp_path / "merged"
+        _write_stage_dir(stage, [_finding(chash="d" * 16, path="src/new.py", line="50")])
+        assert _run_filter(stage, mock_run=mock) == 0
         _, findings = _read_stage_dir(stage)
         assert len(findings) == 1
 
-    def test_line_range_overlap(self, tmp_path: Path):
-        stage = tmp_path / "merged"
-        _write_stage_dir(stage, [_finding(chash="e" * 16, path="src/a.py", line="8-11")])
-        rc = _run_filter(stage)
-        assert rc == 0
-        _, findings = _read_stage_dir(stage)
-        assert len(findings) == 1
 
-    def test_line_range_no_overlap(self, tmp_path: Path):
-        stage = tmp_path / "merged"
-        _write_stage_dir(stage, [_finding(chash="f" * 16, path="src/a.py", line="1-8")])
-        rc = _run_filter(stage)
-        assert rc == 0
-        _, findings = _read_stage_dir(stage)
-        assert len(findings) == 0
+class TestLineAdvisory:
+    """Line-level overlap is reported, never enforced."""
 
-    def test_all_findings_in_diff(self, tmp_path: Path):
+    def test_off_line_finding_reported_but_kept(self, tmp_path: Path, capsys):
         stage = tmp_path / "merged"
-        findings = [
-            _finding(chash="a" * 16, path="src/a.py", line="9"),
-            _finding(chash="b" * 16, path="src/a.py", line="13"),
-        ]
-        _write_stage_dir(stage, findings)
-        rc = _run_filter(stage)
-        assert rc == 0
-        _, kept = _read_stage_dir(stage)
-        assert len(kept) == 2
+        _write_stage_dir(stage, [_finding(chash="b" * 16, path="src/a.py", line="1")])
+        assert _run_filter(stage) == 0
+        err = capsys.readouterr().err
+        assert "anchor to unchanged lines" in err
+        assert "b" * 16 in err
+        _, findings = _read_stage_dir(stage)
+        assert len(findings) == 1, "advisory must not delete"
+
+    def test_no_advisory_when_all_on_changed_lines(self, tmp_path: Path, capsys):
+        stage = tmp_path / "merged"
+        _write_stage_dir(stage, [_finding(chash="a" * 16, path="src/a.py", line="10")])
+        assert _run_filter(stage) == 0
+        assert "anchor to unchanged lines" not in capsys.readouterr().err
 
 
 class TestDownstreamCompatibility:
@@ -243,9 +315,8 @@ class TestDownstreamCompatibility:
 
     def test_emitted_issues_satisfy_schema_enums(self, tmp_path: Path):
         stage = tmp_path / "merged"
-        _write_stage_dir(stage, [_finding(chash="b" * 16, path="src/gone.py", line="1")])
-        rc = _run_filter(stage)
-        assert rc == 0
+        _write_stage_dir(stage, [_finding(chash="b" * 16, path="src/untouched.py", line="1")])
+        assert _run_filter(stage) == 0
         envelope, _ = _read_stage_dir(stage)
         issue = envelope["issues"][0]
         assert issue["severity"] in ("error", "warning")
@@ -266,7 +337,7 @@ class TestDownstreamCompatibility:
             stage,
             [
                 _finding(chash="a" * 16, path="src/a.py", line="10"),
-                _finding(chash="b" * 16, path="src/gone.py", line="1"),
+                _finding(chash="b" * 16, path="src/untouched.py", line="1"),
             ],
         )
         assert _run_filter(stage) == 0
@@ -291,5 +362,4 @@ class TestDownstreamCompatibility:
         envelope, findings = _read_stage_dir(out)
         assert len(findings) == 1
         assert findings[0]["content_hash"] == "a" * 16
-        # The filter's issue survived into the downstream envelope.
         assert any("diff_scope_filtered" in i["message"] for i in envelope["issues"])

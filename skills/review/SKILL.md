@@ -273,7 +273,7 @@ If a `00-raw/*.json` file fails its agent-output schema validation, the consolid
 
 ### 7. Diff-Scope Filter (PR reviews only)
 
-For PR-scoped reviews only, run the diff-scope filter to remove findings whose primary locations fall outside the PR diff. This catches findings that review agents reported against unchanged code — a common model failure mode. Skips automatically when no base ref is available (full-repo reviews).
+For PR-scoped reviews only, run the diff-scope filter to remove findings anchored to files the PR never touched. This enforces the same rule `pr-scope.sh` gives the agents — *"Report findings ONLY for the changed files listed above"* — catching agents that wandered outside the changed file set. Skips automatically when no base ref is available (full-repo reviews).
 
 Extract the merge base from the PR Scope pre-fetch output (the line `Merge base: <hash> (against <branch>)`) and pass it as `--base-ref`:
 
@@ -284,11 +284,13 @@ python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/diff-scope-filter.py \
 ```
 
 The script:
-- Computes changed lines from `git diff <base-ref>...HEAD -U0`
-- Marks all lines as changed for newly added files
-- For each finding, checks whether any primary location overlaps with changed lines
-- Removes non-overlapping findings from the stage directory and records them as `diff_scope_filtered` issues in the envelope
+- Builds the changed-path set from `git diff <base-ref>...HEAD --name-status` — added, modified, deleted, renamed (both names), and copied paths all count
+- Keeps a finding when any primary location names a path in that set
+- Removes the rest from the stage directory and records each as a `diff_scope_filtered:` message in the envelope's `issues[]`
+- Prints an advisory to stderr listing kept findings that sit on unchanged *lines* within changed files. This is information only — it never removes anything
 - No-ops when `--base-ref` is empty
+
+**The filter is file-level by design; do not tighten it to line-level.** `git diff base...HEAD` resolves against HEAD, so lines a PR *removed* have no addressable position. A finding that correctly reports "this PR deleted X, so the caller is now orphaned" must anchor to the nearest surviving line, and a line-level test reads that as out-of-scope. The error rate scales with how deletion-heavy the diff is — a pure-deletion PR filters to zero findings. The stderr advisory exists to surface line-level drift without acting on it.
 
 If no PR Scope section was injected by the pre-fetch, skip this step entirely.
 
@@ -327,16 +329,19 @@ Invoke the Workflow tool with:
   - `validationOutputSchema`: the validation-output resolved schema object
   - `batches`: array of batch objects read from the batch input files
   - `projectRoot`: the Project Root from Pre-Fetch
+  - `baseRef`: the merge base from the PR Scope pre-fetch (the hash on the `Merge base:` line). Pass `""` for full-repo reviews — the attribution section is omitted from the validator prompt when it is empty.
 
 The Workflow dispatches `total_batches` validator agents with `agent(schema:)` enforcement. Each validator:
 
 - Opens the cited `finding.locations`, challenges accuracy and the five categorical dimensions.
 - **Challenges the premise, not just the symptom.** A finding may cite real code and describe a technically accurate gap, yet be wrong because its premise is invalid. Examples: (1) an IDOR finding against a filter parameter when endpoint-level RBAC already restricts access to privileged roles — the filter cannot be reached by unprivileged users; (2) a "missing test" finding when the behavior is already tested indirectly through a higher-level test; (3) a security concern about input validation when the framework (FastAPI/Pydantic) validates before the code runs. Validators must verify assumptions, not just locations.
+- **Challenges attribution on PR reviews** (only when `baseRef` is non-empty). The question is *"would this finding hold at the merge base?"* — if yes and the PR does not change that behavior, it is pre-existing and out of scope. Validators run read-only git themselves (`git diff <base>...HEAD -- <path>`) rather than being handed a precomputed diff, so each pulls exactly the context its finding needs.
+  - **Causation, not anchor position.** A finding that cites a line the PR never touched is frequently still in scope: the PR deleted a function and an unchanged caller is now orphaned; the PR changed a contract and unchanged consumers now violate it. Deleted lines have no position in HEAD at all, so a reviewer describing a removal must anchor to surviving context. Judging scope by whether the cited line appears in the diff is the mistake the Step 7 filter is deliberately built to avoid — do not reintroduce it here.
 - **Removes positive observations.** If a finding's `issue` describes something working correctly and `suggested_fix` says "no action needed", "continue", or "maintain", remove it — it is praise, not a finding.
 - Each verdict is one of:
   - `"action": "confirm"` — finding stands as-is.
   - `"action": "rescore"` — provide `new_dimensions` with any subset of the five dimension fields (value + justification pairs). Validators may upgrade `evidence_quality` or `trace_origin` if they find stronger evidence.
-  - `"action": "remove"` — finding is wrong (e.g., cited line does not exist, issue is not real).
+  - `"action": "remove"` — provide `remove_reason`, one of `not_real` (cited line does not exist, issue is not real, premise invalid), `pre_existing` (real but holds at the merge base), or `positive_observation` (describes working code). The schema requires `remove_reason` on removal and forbids it otherwise, so the harness rejects a removal that does not say why.
 - Each verdict carries `finding_ref: {content_hash}` — **copy the `content_hash` verbatim from the input batch finding**. Do NOT recompute the hash. The `content_hash` is both the filename and the integrity key across pipeline stages.
 
 After the Workflow returns, write each validator output to disk:
@@ -362,9 +367,10 @@ What the script does (you do **not** re-implement this in your reasoning):
 - For each finding in `--input-dir`:
   - `"confirm"`: copy unchanged to `--output-dir`.
   - `"rescore"`: shallow-merge `new_dimensions` into the finding, validate the result against `merged-finding.schema.json`, write to `--output-dir`.
-  - `"remove"`: skip (finding absent from `--output-dir`).
+  - `"remove"`: skip (finding absent from `--output-dir`) and record a `validator_removed[<remove_reason>]:` entry in the envelope's `issues[]` carrying the finding title, hash, and the validator's reasoning. Removals leave a trail rather than vanishing silently.
   - No verdict (e.g., failed validator batch): pass through unchanged.
 - Copies `_envelope.json` to `--output-dir`, merging any verdict-parsing issues into `issues[]`.
+- Prints a per-reason removal breakdown (e.g. `12 removed (not_real=3, pre_existing=9)`) so a run that drops a large number of findings as pre-existing is visible immediately.
 - Findings with `speculative` evidence quality are kept; the renderer segregates them into `needs-review`.
 
 ### 10. Red/Green Test Validation
@@ -432,9 +438,10 @@ No inline findings, no commentary. The files have everything.
   - No piping code to a runtime (`echo "..." | python`, `python -c "..."`, equivalents in any language)
   - No writing or running ad-hoc test files to "verify" a finding. The presence of a missing test is itself a finding — file it as one. **Anything that would otherwise need a runtime check is a missing test, not a script you write.**
   - No `make install`, `make build`, `make run`, `make deploy`, or any target that installs or executes the program.
-  - The Build & Checks agent is the only agent allowed to run anything (`make` check targets only — `format`, `lint`, `typecheck`, `test`, `coverage`).
+  - The Build & Checks agent is the only agent allowed to **execute** anything (`make` check targets only — `format`, `lint`, `typecheck`, `test`, `coverage`). Validation agents may run read-only git for the Step 8 attribution check; inspecting version control is not execution.
 - **Writes are restricted by tool boundary, not just intent:**
-  - **Concern agents and validation agents** do not Write or Bash — their output is returned via `agent(schema:)` and written to disk by the main agent in Steps 5 and 6.
+  - **Concern agents and validation agents** do not Write — their output is returned via `agent(schema:)` and written to disk by the main agent in Steps 5 and 6.
+  - **Validation agents may run read-only git** (`git diff`, `git log`, `git show`, `git blame`) to compare a finding against the merge base. Reading version control is not executing the user's code — it is the same category as Read, and the attribution check in Step 8 depends on it. The prohibition is on execution: no tests, builds, installers, package managers, or the project's own program. Concern agents get no Bash at all.
   - **Main agent** writes only to `./.tmp-review/00-raw/` (Workflow results), `./.tmp-review/15-validation/` (validator results), and the three output files at the project root (`Findings-review[-<slug>].json|.md|-supplementary.md`). No edits anywhere else. In particular: **never Write, Edit, or `mv` anything into `${CLAUDE_PLUGIN_ROOT}/`** — the plugin tree is read-only from inside a skill run. The `apply-verdicts.py` script handles the `10-merged/ → 20-findings/` transition; the main agent does not write to `20-findings/` directly.
 - **Bash is restricted:** main agent Bash limited to the skill's allowlisted scripts (bootstrap, schema cleaner, validators, consolidator, batcher, verdict applicator, red/green validator, renderer, pre-fetch helpers).
 - **Prefer allowlisted commands** — agents receive the allowlist as context. Stick to pre-approved commands to avoid blocking the review on user approval prompts.

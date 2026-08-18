@@ -111,7 +111,7 @@ class TestApplyVerdicts:
         _write_stage_dir(tmp_path / "10-merged", [f1, f2])
         _write_verdicts(tmp_path / "15-validation", [
             {"finding_ref": {"content_hash": "aaaaaaaaaaaaaaaa"}, "action": "confirm", "reasoning": "ok"},
-            {"finding_ref": {"content_hash": "bbbbbbbbbbbbbbbb"}, "action": "remove", "reasoning": "wrong"},
+            {"finding_ref": {"content_hash": "bbbbbbbbbbbbbbbb"}, "action": "remove", "remove_reason": "not_real", "reasoning": "wrong"},
         ])
         out = tmp_path / "20-findings"
         out.mkdir()
@@ -124,6 +124,83 @@ class TestApplyVerdicts:
         _envelope, findings = _load_stage(out)
         assert len(findings) == 1
         assert findings[0]["content_hash"] == "aaaaaaaaaaaaaaaa"
+
+
+class TestRemovalTrail:
+    """A removed finding must leave an auditable trail. The v0.7.5 diff filter
+    dropped 62 findings with nothing in the output explaining which or why."""
+
+    def _run_with_removals(self, tmp_path: Path, verdicts: list[dict]) -> tuple[dict, list[dict], str]:
+        findings = [
+            _finding(chash="aaaaaaaaaaaaaaaa", title="keep"),
+            _finding(chash="bbbbbbbbbbbbbbbb", title="stale bug"),
+            _finding(chash="cccccccccccccccc", title="phantom"),
+        ]
+        _write_stage_dir(tmp_path / "10-merged", findings)
+        _write_verdicts(tmp_path / "15-validation", verdicts)
+        out = tmp_path / "20-findings"
+        out.mkdir()
+        result = _run([
+            "--input-dir", str(tmp_path / "10-merged"),
+            "--verdicts-dir", str(tmp_path / "15-validation"),
+            "--output-dir", str(out),
+        ])
+        assert result.returncode == 0, result.stderr
+        envelope, kept = _load_stage(out)
+        return envelope, kept, result.stdout
+
+    def test_removals_recorded_in_envelope_issues(self, tmp_path: Path):
+        envelope, kept, _ = self._run_with_removals(tmp_path, [
+            {"finding_ref": {"content_hash": "aaaaaaaaaaaaaaaa"}, "action": "confirm", "reasoning": "ok"},
+            {"finding_ref": {"content_hash": "bbbbbbbbbbbbbbbb"}, "action": "remove",
+             "remove_reason": "pre_existing", "reasoning": "present unchanged at merge base"},
+            {"finding_ref": {"content_hash": "cccccccccccccccc"}, "action": "remove",
+             "remove_reason": "not_real", "reasoning": "cited line does not exist"},
+        ])
+        assert len(kept) == 1
+
+        trail = [i for i in envelope["issues"] if i["message"].startswith("validator_removed[")]
+        assert len(trail) == 2
+
+        pre_existing = next(i for i in trail if "pre_existing" in i["message"])
+        assert "stale bug" in pre_existing["message"]
+        assert "bbbbbbbbbbbbbbbb" in pre_existing["message"]
+        assert "present unchanged at merge base" in pre_existing["message"]
+
+        # Must survive the envelope schema, per the v0.7.5 enum break.
+        for issue in trail:
+            assert issue["severity"] in ("error", "warning")
+            assert issue["kind"] == "other"
+
+    def test_stdout_breaks_down_removals_by_reason(self, tmp_path: Path):
+        _envelope, _kept, stdout = self._run_with_removals(tmp_path, [
+            {"finding_ref": {"content_hash": "aaaaaaaaaaaaaaaa"}, "action": "confirm", "reasoning": "ok"},
+            {"finding_ref": {"content_hash": "bbbbbbbbbbbbbbbb"}, "action": "remove",
+             "remove_reason": "pre_existing", "reasoning": "at base"},
+            {"finding_ref": {"content_hash": "cccccccccccccccc"}, "action": "remove",
+             "remove_reason": "pre_existing", "reasoning": "at base"},
+        ])
+        assert "pre_existing=2" in stdout
+
+    def test_verdict_without_remove_reason_is_rejected(self, tmp_path: Path):
+        """The schema is the enforcement lever — a bare removal must not pass."""
+        _write_stage_dir(tmp_path / "10-merged", [_finding(chash="aaaaaaaaaaaaaaaa", title="x")])
+        _write_verdicts(tmp_path / "15-validation", [
+            {"finding_ref": {"content_hash": "aaaaaaaaaaaaaaaa"}, "action": "remove", "reasoning": "no reason given"},
+        ])
+        out = tmp_path / "20-findings"
+        out.mkdir()
+        result = _run([
+            "--input-dir", str(tmp_path / "10-merged"),
+            "--verdicts-dir", str(tmp_path / "15-validation"),
+            "--output-dir", str(out),
+        ])
+        # Verdict file fails validation, so the finding passes through unremoved
+        # rather than being dropped on an unexplained verdict.
+        assert result.returncode == 0, result.stderr
+        envelope, kept = _load_stage(out)
+        assert len(kept) == 1
+        assert any(i["kind"] == "validation_failed" for i in envelope["issues"])
 
     def test_rescore_updates_dimensions(self, tmp_path: Path):
         f = _finding(
