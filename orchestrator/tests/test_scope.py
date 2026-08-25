@@ -151,3 +151,56 @@ class TestComputeScope:
         assert s.guidance == "Focus on Auth Layer!"
         assert s.scope_slug == "focus-on-aut"
         assert len(s.scope_slug) <= 12
+
+
+class TestRemoteOwner:
+    def test_https_simple(self):
+        assert scope._remote_owner("https://github.com/jewzaam/repo.git") == "jewzaam"
+
+    def test_ssh_simple(self):
+        assert scope._remote_owner("git@gitlab.com:nmalik/repo.git") == "nmalik"
+
+    def test_nested_subgroup_path(self):
+        assert scope._remote_owner("https://gitlab.com/topgroup/sub/repo.git") == "topgroup"
+        assert scope._remote_owner("git@gitlab.com:topgroup/sub/repo.git") == "topgroup"
+
+
+class TestDiffStatFailure:
+    def test_diff_stat_error_degrades_to_warning(self, git_repo, monkeypatch):
+        real_git = scope._git
+
+        def failing_git(root, *args):
+            if args[0] == "diff":
+                raise scope.subprocess.CalledProcessError(128, ["git", "diff"])
+            return real_git(root, *args)
+
+        monkeypatch.setattr(scope, "_git", failing_git)
+        text, base = scope.compute_pr_scope(str(git_repo), 5, "origin/main")
+        assert "WARNING: Could not compute diff stats" in text
+        assert base == ""
+
+
+class TestProbeBranches:
+    def test_go_repo(self, tmp_path):
+        repo = tmp_path / "gorepo"
+        repo.mkdir()
+        (repo / "main.go").write_text("package main\n")
+        name, language, build, test = scope.probe_project(str(repo))
+        assert language == "Go"
+        assert test == "go test"
+
+    def test_npm_repo_with_test_script(self, tmp_path):
+        repo = tmp_path / "js"
+        repo.mkdir()
+        (repo / "app.js").write_text("x\n")
+        (repo / "package.json").write_text('{"scripts": {"test": "jest"}}')
+        name, language, build, test = scope.probe_project(str(repo))
+        assert build == "npm"
+        assert test == "npm test"
+
+    def test_unknown_everything(self, tmp_path):
+        repo = tmp_path / "empty"
+        repo.mkdir()
+        (repo / "data.txt").write_text("x\n")
+        name, language, build, test = scope.probe_project(str(repo))
+        assert (language, build, test) == ("unknown", "unknown", "unknown")

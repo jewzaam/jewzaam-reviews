@@ -180,3 +180,45 @@ class TestSimpleEndToEnd:
         # validator saw the simple finding block
         validator_prompts = [c for c in calls if "validator agent" in c]
         assert validator_prompts and "severity: critical" in validator_prompts[0]
+
+
+class TestWriteBatches:
+    def test_only_critical_important_batched_in_chunks(self, tmp_path):
+        vdir = tmp_path / "15-validation"
+        vdir.mkdir()
+        findings = []
+        for i in range(10):
+            f = _finding(f"crit {i}", severity="critical", line=str(i + 1))
+            f["concern_slug"] = "implementation"
+            f["content_hash"] = f"{i:016x}"
+            findings.append(f)
+        low = _finding("sugg", severity="suggestion", line="99")
+        low["concern_slug"] = "implementation"
+        low["content_hash"] = "f" * 16
+        findings.append(low)
+        count = simple_mode.write_batches(vdir, findings)
+        assert count == 2  # 10 critical / batch size 8
+        batch1 = json.loads((vdir / "batch-1-input.json").read_text())
+        batch2 = json.loads((vdir / "batch-2-input.json").read_text())
+        assert len(batch1["findings"]) == 8
+        assert len(batch2["findings"]) == 2
+        assert batch1["total_batches"] == 2
+        titles = [f["title"] for f in batch1["findings"] + batch2["findings"]]
+        assert "sugg" not in titles
+
+    def test_verdicts_merged_across_batch_files(self, tmp_path):
+        vdir = tmp_path / "15-validation"
+        vdir.mkdir()
+        f1 = _finding("a", line="1"); f1["concern_slug"] = "implementation"; f1["content_hash"] = "a" * 16
+        f2 = _finding("b", line="2"); f2["concern_slug"] = "implementation"; f2["content_hash"] = "b" * 16
+        (vdir / "batch-1-output.json").write_text(json.dumps({
+            "batch_number": 1,
+            "verdicts": [{"finding_ref": {"content_hash": "a" * 16}, "action": "remove", "remove_reason": "not_real", "reasoning": "no"}],
+        }))
+        (vdir / "batch-2-output.json").write_text(json.dumps({
+            "batch_number": 2,
+            "verdicts": [{"finding_ref": {"content_hash": "b" * 16}, "action": "confirm", "reasoning": "yes"}],
+        }))
+        survivors, issues = simple_mode.apply_verdicts(vdir, [f1, f2])
+        assert [f["title"] for f in survivors] == ["b"]
+        assert len(issues) == 1

@@ -176,8 +176,11 @@ def _record_agent_failure(state, component: str, result) -> None:
         )
 
 
-def _stage_cli(script_name: str, *args: str, cwd: str) -> None:
-    """Run one of the tested stage CLIs; raise PipelineError on failure."""
+def stage_cli(script_name: str, *args: str, cwd: str) -> None:
+    """Run one of the tested stage CLIs; raise PipelineError on failure.
+
+    Public: the simple-mode path reuses this and run_validators.
+    """
     argv = [sys.executable, str(REVIEW_SCRIPTS / script_name), *args]
     proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -335,7 +338,7 @@ def _merge_issues_into_envelope(state, stage_dir: Path) -> None:
     state.issues_merged = len(state.issues)
 
 
-def _run_validators(state) -> None:
+def run_validators(state) -> None:
     """Dispatch one validator agent per batch input file."""
     validation_dir = state.tmp_dir / "15-validation"
     batch_files = sorted(validation_dir.glob("batch-*-input.json"))
@@ -528,11 +531,11 @@ def _run_stages(state: RunState) -> int:
         ]
         if review_scope.scope_slug:
             consolidate_args += ["--scope-slug", review_scope.scope_slug]
-        _stage_cli("consolidate-findings.py", *consolidate_args, cwd=cwd)
+        stage_cli("consolidate-findings.py", *consolidate_args, cwd=cwd)
         _merge_issues_into_envelope(state, state.tmp_dir / "10-merged")
 
         if review_scope.merge_base:
-            _stage_cli(
+            stage_cli(
                 "diff-scope-filter.py",
                 "--stage-dir",
                 f"./{TMP_DIR_NAME}/10-merged/",
@@ -541,7 +544,7 @@ def _run_stages(state: RunState) -> int:
                 cwd=cwd,
             )
 
-        _stage_cli(
+        stage_cli(
             "batch-findings.py",
             "--input-dir",
             f"./{TMP_DIR_NAME}/10-merged/",
@@ -551,8 +554,8 @@ def _run_stages(state: RunState) -> int:
             "critical,important",
             cwd=cwd,
         )
-        _run_validators(state)
-        _stage_cli(
+        run_validators(state)
+        stage_cli(
             "apply-verdicts.py",
             "--input-dir",
             f"./{TMP_DIR_NAME}/10-merged/",
@@ -575,7 +578,7 @@ def _run_stages(state: RunState) -> int:
         ]
         if review_scope.scope_slug:
             render_args += ["--scope-slug", review_scope.scope_slug]
-        _stage_cli("render-review.py", *render_args, cwd=cwd)
+        stage_cli("render-review.py", *render_args, cwd=cwd)
     else:
         from orchestrator import simple_mode
 

@@ -10,7 +10,7 @@ import json
 import re
 import subprocess
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -20,6 +20,8 @@ class ScopeError(Exception):
 
 @dataclass
 class ReviewScope:
+    """Everything deterministic the pipeline knows about one review target."""
+
     project_root: str
     project_name: str
     default_branch: str  # e.g. "origin/main"
@@ -82,7 +84,13 @@ def compute_pr_scope(
             + f"\nWARNING: Could not determine merge base against {default_branch}.",
             "",
         )
-    diff_stat = _git(project_root, "diff", "--stat", f"{base}..HEAD")
+    try:
+        diff_stat = _git(project_root, "diff", "--stat", f"{base}..HEAD")
+    except subprocess.CalledProcessError:
+        return (
+            header + "\nWARNING: Could not compute diff stats against the merge base.",
+            "",
+        )
     if not diff_stat:
         return (
             header
@@ -129,6 +137,22 @@ def gather_standards(project_root: str) -> str:
     return "\n\n".join(parts)
 
 
+def _remote_owner(url: str) -> str:
+    """Top-level owner segment of a git remote URL.
+
+    Handles https://host/owner[/sub]/repo and git@host:owner[/sub]/repo —
+    the owner is the first path segment, not the second-to-last (which
+    breaks on nested/subgroup paths).
+    """
+    path = url.rstrip("/")
+    if "://" in path:
+        path = path.split("://", 1)[1]
+        path = path.split("/", 1)[1] if "/" in path else ""
+    elif ":" in path:
+        path = path.split(":", 1)[1]
+    return path.split("/", 1)[0] if path else ""
+
+
 def _external_standards(project_root: str) -> str:
     standards_dir = Path.home() / "source" / "standards"
     claude_md = standards_dir / "CLAUDE.md"
@@ -146,8 +170,7 @@ def _external_standards(project_root: str) -> str:
         url = _git(project_root, "remote", "get-url", "origin")
     except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
         return ""
-    owner = url.rstrip("/").rsplit("/", 2)[-2] if "/" in url else ""
-    owner = owner.rsplit(":", 1)[-1]
+    owner = _remote_owner(url)
     if gh_user.stdout.strip() != owner:
         return ""
     text = claude_md.read_text(encoding="utf-8")

@@ -222,3 +222,46 @@ class TestRetry:
         assert final.error is None
         assert final.output == {"needed": 1}
         assert len(state.costs) == 2
+
+
+class TestStageCli:
+    def test_nonzero_exit_raises_pipeline_error(self, tmp_path):
+        state_cwd = str(tmp_path)
+        try:
+            pipeline.stage_cli("validate-findings.py", "/nonexistent.json", cwd=state_cwd)
+        except pipeline.PipelineError as exc:
+            assert "validate-findings.py failed" in str(exc)
+        else:
+            raise AssertionError("expected PipelineError")
+
+
+class TestRevalidateRaw:
+    def test_invalid_raw_file_removed_and_recorded(self, git_repo):
+        state = pipeline.RunState(
+            options=_options(git_repo), scope=None
+        )
+        raw = state.tmp_dir / "00-raw"
+        raw.mkdir(parents=True)
+        (raw / "implementation-full-scope.json").write_text('{"not": "agent output"}')
+        pipeline._revalidate_raw(state)
+        assert not (raw / "implementation-full-scope.json").exists()
+        assert state.issues and state.issues[0]["kind"] == "validation_failed"
+
+
+class TestLedgerOnFatal:
+    def test_costs_written_when_stage_raises(self, git_repo, monkeypatch):
+        calls = []
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
+
+        def boom(*args, **kwargs):
+            raise pipeline.PipelineError("consolidator exploded")
+
+        monkeypatch.setattr(pipeline, "stage_cli", boom)
+        try:
+            pipeline.run_review(_options(git_repo))
+        except pipeline.PipelineError:
+            pass
+        else:
+            raise AssertionError("expected PipelineError")
+        costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
+        assert costs["total_cost_usd"] > 0  # spend persisted despite fatal error

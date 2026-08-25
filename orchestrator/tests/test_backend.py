@@ -24,22 +24,36 @@ def _cli_result(**overrides):
 
 
 class _FakeProc:
+    """Stands in for subprocess.Popen of the claude CLI."""
+
     def __init__(self, stdout, returncode=0, stderr=""):
-        self.stdout = stdout
+        self._stdout = stdout
         self.returncode = returncode
-        self.stderr = stderr
+        self._stderr = stderr
+        self.pid = 12345
+
+    def communicate(self, timeout=None):
+        if isinstance(self._stdout, Exception):
+            raise self._stdout
+        return self._stdout, self._stderr
+
+    def wait(self):
+        return self.returncode
 
 
 def _patch_run(monkeypatch, response, capture=None):
-    def fake_run(argv, **kwargs):
+    def fake_popen(argv, **kwargs):
         if capture is not None:
             capture["argv"] = argv
             capture["kwargs"] = kwargs
+        if isinstance(response, subprocess.TimeoutExpired):
+            return _FakeProc(response)
         if isinstance(response, Exception):
             raise response
         return response
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr("os.killpg", lambda pid, sig: None)
 
 
 class TestArgvConstruction:
@@ -65,9 +79,8 @@ class TestArgvConstruction:
         assert "--bare" not in argv
         assert argv[argv.index("--model") + 1] == "sonnet"
         assert argv[argv.index("--effort") + 1] == "low"
-        assert argv[argv.index("--allowedTools") + 1] == "Read Grep"
+        assert argv[argv.index("--allowedTools") + 1] == "Read,Grep"
         assert json.loads(argv[argv.index("--json-schema") + 1]) == {"type": "object"}
-        assert capture["kwargs"]["timeout"] == 42
         assert capture["kwargs"]["cwd"] == "/tmp"
 
     def test_no_schema_omits_json_schema_flag(self, monkeypatch):
@@ -296,3 +309,38 @@ class TestErrorCategories:
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result(is_error=True))))
         res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
         assert res.error_category == "agent"
+
+
+class TestRoundTwoFixes:
+    def test_allowed_tools_with_internal_space_survive_join(self, monkeypatch):
+        capture = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        backend.run_agent(
+            "p", schema=None, model="haiku",
+            allowed_tools=["Read", "Bash(git diff:*)", "Bash(git log:*)"],
+            cwd="/tmp",
+        )
+        argv = capture["argv"]
+        joined = argv[argv.index("--allowedTools") + 1]
+        assert joined == "Read,Bash(git diff:*),Bash(git log:*)"
+        assert " " not in joined.replace("git diff", "").replace("git log", "")
+
+    def test_trace_write_failure_warns(self, monkeypatch, tmp_path, capsys):
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())))
+        unwritable = tmp_path / "nodir" / "trace.jsonl"  # parent missing
+        res = backend.run_agent(
+            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            trace_file=unwritable, label="x",
+        )
+        assert res.error is None  # tracing failure never fails the run
+        assert "trace write failed" in capsys.readouterr().err
+
+    def test_redaction_survives_allcaps_inside_guidance(self):
+        prompt = (
+            "USER GUIDANCE:\nfocus here\nNOTE:\nstill secret\n\n"
+            "METHODOLOGY:\nPhase 1\n"
+        )
+        redacted = backend.redact_prompt(prompt)
+        assert "still secret" not in redacted
+        assert "focus here" not in redacted
+        assert "METHODOLOGY:" in redacted

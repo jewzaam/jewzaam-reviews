@@ -133,14 +133,18 @@ def resolve_dimensions(
     """
     default = [{"name": "full scope", "slug": "full-scope", "scope": {}}]
     proposed = (selector_output or {}).get("dimensions") or []
-    dims = [
-        {
-            "name": d["name"],
-            "slug": d["slug"],
-            "scope": d.get("scope", {}),
-        }
-        for d in proposed[:3]
-        if isinstance(d, dict) and d.get("name") and d.get("slug")
-    ] or default
+    dims: list[dict] = []
+    seen_slugs: set[str] = set()
+    for d in proposed[:3]:
+        # scope keys are free-form ({"paths": [...]}, {"theme": ...}); the
+        # optional shared_infrastructure flag alters agent prompts.
+        if not (isinstance(d, dict) and d.get("name") and d.get("slug")):
+            continue
+        if d["slug"] in seen_slugs:
+            # Duplicate slugs would race on the same output filename.
+            continue
+        seen_slugs.add(d["slug"])
+        dims.append({"name": d["name"], "slug": d["slug"], "scope": d.get("scope", {})})
+    dims = dims or default
     max_dims = max(1, max_agents // max(1, lens_count))
     return dims[:max_dims]

@@ -19,6 +19,7 @@ the wrapper repeats until it stops returning exit code 3:
 import argparse
 import hashlib
 import os
+import traceback
 import subprocess
 import sys
 import tempfile
@@ -33,6 +34,8 @@ from orchestrator import pipeline  # noqa: E402
 
 EXIT_STILL_RUNNING = 3
 _EXIT_FILE_ENV = "REVIEW_ORCHESTRATOR_EXIT_FILE"
+_LOG_TAIL_LINES = 40
+_POLL_INTERVAL_S = 5
 
 
 def _run_files(project_root: str) -> dict[str, Path]:
@@ -98,7 +101,7 @@ def _wait(args) -> int:
             code = int(files["exit"].read_text().strip() or "1")
             log = files["log"].read_text(encoding="utf-8") if files["log"].is_file() else ""
             # The summary is the tail of the run log.
-            tail = "\n".join(log.splitlines()[-40:])
+            tail = "\n".join(log.splitlines()[-_LOG_TAIL_LINES:])
             print(tail)
             print(f"\nreview finished with exit code {code}")
             return code
@@ -108,10 +111,12 @@ def _wait(args) -> int:
         if _pid_alive(files["pid"]) is None:
             # Process died without writing its exit file (killed, OOM, ...).
             log = files["log"].read_text(encoding="utf-8")
-            print("\n".join(log.splitlines()[-40:]))
+            print("\n".join(log.splitlines()[-_LOG_TAIL_LINES:]))
             print("\nreview process died without completing (killed or crashed)")
             return 1
-        time.sleep(5)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(_POLL_INTERVAL_S, remaining))
     print(f"still running after {args.wait_timeout_s}s — run --wait again")
     return EXIT_STILL_RUNNING
 
@@ -163,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--wait-timeout-s",
-        type=int,
+        type=_positive_int,
         default=100,
         help="how long one --wait call blocks before returning still-running",
     )
@@ -197,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("ERROR: interrupted", file=sys.stderr)
         code = 130
+    except Exception as exc:  # noqa: BLE001 — CLI boundary: format, record, exit
+        traceback.print_exc()
+        print(f"ERROR: unexpected failure: {exc}", file=sys.stderr)
+        code = 1
     if exit_file:
         Path(exit_file).write_text(str(code), encoding="utf-8")
     return code
