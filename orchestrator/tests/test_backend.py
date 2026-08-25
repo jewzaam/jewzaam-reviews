@@ -32,7 +32,7 @@ class _FakeProc:
         self._stderr = stderr
         self.pid = 12345
 
-    def communicate(self, timeout=None):
+    def communicate(self, input=None, timeout=None):
         if isinstance(self._stdout, Exception):
             raise self._stdout
         return self._stdout, self._stderr
@@ -71,7 +71,8 @@ class TestArgvConstruction:
             timeout_s=42,
         )
         argv = capture["argv"]
-        assert argv[:3] == ["claude", "-p", "the prompt"]
+        assert argv[:2] == ["claude", "-p"]
+        assert "the prompt" not in argv  # prompt rides stdin
         assert argv[argv.index("--tools") + 1] == "Read,Grep"
         assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
         assert "--output-format" in argv and argv[argv.index("--output-format") + 1] == "json"
@@ -161,7 +162,7 @@ class TestResultParsing:
         res = backend.run_agent(
             "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp"
         )
-        assert "non-JSON output" in res.error
+        assert "malformed CLI result" in res.error
 
     def test_timeout(self, monkeypatch):
         _patch_run(
@@ -247,7 +248,7 @@ class TestAgentTrace:
         )
         records = [_json.loads(x) for x in trace.read_text().strip().splitlines()]
         assert len(records) == 2
-        assert "non-JSON output" in records[0]["error"]
+        assert "malformed CLI result" in records[0]["error"]
         assert records[0]["result"]["stderr"] == "bad"
         assert "timeout" in records[1]["error"]
 
@@ -344,3 +345,24 @@ class TestRoundTwoFixes:
         assert "still secret" not in redacted
         assert "focus here" not in redacted
         assert "METHODOLOGY:" in redacted
+
+
+class TestMalformedResults:
+    def test_non_dict_json_result_is_protocol_error(self, monkeypatch):
+        _patch_run(monkeypatch, _FakeProc('["not", "a", "dict"]'))
+        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        assert res.error_category == "protocol"
+        assert "malformed CLI result" in res.error
+
+    def test_junk_cost_value_tolerated(self, monkeypatch):
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result(total_cost_usd="junk"))))
+        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        assert res.error is None
+        assert res.cost_usd == 0.0
+
+    def test_prompt_goes_via_stdin_not_argv(self, monkeypatch):
+        capture = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        backend.run_agent("the secret prompt", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        assert "the secret prompt" not in capture["argv"]
+        assert capture["kwargs"]["stdin"] is not None

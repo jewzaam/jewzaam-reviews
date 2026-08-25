@@ -204,3 +204,12 @@ class TestProbeBranches:
         (repo / "data.txt").write_text("x\n")
         name, language, build, test = scope.probe_project(str(repo))
         assert (language, build, test) == ("unknown", "unknown", "unknown")
+
+
+class TestProbeFallback:
+    def test_rglob_fallback_outside_git(self, tmp_path):
+        repo = tmp_path / "plain"
+        (repo / "sub").mkdir(parents=True)
+        (repo / "sub" / "thing.py").write_text("x\n")
+        name, language, build, test = scope.probe_project(str(repo))
+        assert language == "Python"  # found via rglob, no git

@@ -14,7 +14,6 @@ reporting is real spend, never an estimate.
 
 import json
 import os
-import re
 import signal
 import subprocess
 import sys
@@ -111,12 +110,11 @@ def _write_trace(trace_file, record: dict) -> None:
     try:
         line = json.dumps(record) + "\n"
         with _TRACE_LOCK:
-            path = Path(trace_file)
-            existed = path.exists()
-            with path.open("a", encoding="utf-8") as fh:
+            fd = os.open(
+                str(trace_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600
+            )
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
                 fh.write(line)
-            if not existed:
-                path.chmod(0o600)
     except OSError as exc:
         print(
             f"warning: agent trace write failed ({exc}); "
@@ -182,6 +180,7 @@ def run_agent(
         _write_trace(
             trace_file,
             {
+                "ts": round(time.time(), 3),
                 "label": label,
                 "model": model,
                 "effort": effort,
@@ -198,10 +197,11 @@ def run_agent(
         )
         return agent_result
 
+    # Prompt goes via stdin, not argv: argv is world-visible in `ps` and
+    # subject to ARG_MAX; prompts carry project content and can be large.
     argv = [
         "claude",
         "-p",
-        prompt,
         "--output-format",
         "json",
         "--model",
@@ -230,6 +230,7 @@ def run_agent(
             argv,
             cwd=cwd,
             env=_scrubbed_env(),
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -238,7 +239,7 @@ def run_agent(
     except OSError as exc:
         return _finish(AgentResult(error=f"failed to spawn claude: {exc}", error_category="spawn"))
     try:
-        stdout, stderr = popen.communicate(timeout=timeout_s)
+        stdout, stderr = popen.communicate(input=prompt, timeout=timeout_s)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(popen.pid, signal.SIGKILL)
@@ -254,18 +255,25 @@ def run_agent(
     try:
         result = json.loads(proc.stdout)
     except json.JSONDecodeError:
-        stderr_tail = (proc.stderr or "").strip()[-500:]
+        result = None
+    if not isinstance(result, dict):
+        stderr_tail = (proc.stderr or "").strip()[-2000:]
         return _finish(
             AgentResult(
-                error=f"non-JSON output (exit {proc.returncode}): {stderr_tail}",
+                error=f"malformed CLI result (exit {proc.returncode}): {stderr_tail[:500]}",
                 error_category="protocol",
             ),
             raw_result={"stdout": proc.stdout[-2000:], "stderr": stderr_tail},
         )
 
+    try:
+        cost_usd = float(result.get("total_cost_usd") or 0.0)
+    except (TypeError, ValueError):
+        cost_usd = 0.0
+    denials = result.get("permission_denials")
     agent_result = AgentResult(
-        cost_usd=float(result.get("total_cost_usd") or 0.0),
-        permission_denials=result.get("permission_denials") or [],
+        cost_usd=cost_usd,
+        permission_denials=denials if isinstance(denials, list) else [],
     )
 
     if proc.returncode != 0 or result.get("is_error"):

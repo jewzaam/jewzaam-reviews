@@ -41,6 +41,8 @@ Run this via foreground Bash from the project root, EXACTLY ONCE. The path below
 python ${CLAUDE_PLUGIN_ROOT}/orchestrator/cli.py --detach [--pr N] [--scoring MODE] [--guidance "..."]
 ```
 
+The bracketed flags come from Step 1's parse of `$ARGUMENTS`: include `--pr` only when a leading PR number was given, `--scoring` from the argument or Step 2's answer, `--guidance` only when non-empty. A relative `python orchestrator/cli.py ...` will be permission-denied — the absolute form above is the only allowed one.
+
 It returns immediately; the review runs as a detached process that survives this session.
 
 ### 4. Wait For Completion

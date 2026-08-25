@@ -144,10 +144,11 @@ def main(argv: list[str] | None = None) -> int:
             raise argparse.ArgumentTypeError("must be >= 1")
         return parsed
 
-    parser.add_argument("--max-agents", type=_positive_int, default=16)
-    parser.add_argument("--parallel", type=_positive_int, default=4)
+    defaults = pipeline.Options(project_root=".")
+    parser.add_argument("--max-agents", type=_positive_int, default=defaults.max_agents)
+    parser.add_argument("--parallel", type=_positive_int, default=defaults.parallel)
     parser.add_argument(
-        "--timeout", type=_positive_int, default=600,
+        "--timeout", type=_positive_int, default=defaults.timeout_s,
         help="per-agent timeout in seconds",
     )
     parser.add_argument(

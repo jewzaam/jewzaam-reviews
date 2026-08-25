@@ -121,8 +121,12 @@ The orchestrator also runs standalone (useful outside Claude Code or from other 
 
 ```
 python <plugin-root>/orchestrator/cli.py --pr 42 --scoring simple
-python <plugin-root>/orchestrator/cli.py --dry-run    # scope + selector prompt, no agents
+python <plugin-root>/orchestrator/cli.py --dry-run     # scope + selector prompt, no agents
+python <plugin-root>/orchestrator/cli.py --detach ...  # long runs: start detached, survives the caller
+python <plugin-root>/orchestrator/cli.py --wait        # poll it: exit 3 = still running, rerun until done
 ```
+
+The orchestrator needs only a `claude` CLI on PATH with working auth — any shell, CI job, or non-Claude agent frontend can drive it.
 
 ## Filename convention
 
