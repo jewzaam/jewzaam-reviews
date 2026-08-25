@@ -1,0 +1,35 @@
+{
+  "schema_version": "0.8.0",
+  "source": "review",
+  "scoring": "simple",
+  "project": {
+    "name": "sample"
+  },
+  "decomposition": [
+    {
+      "dimension_name": "auth subsystem",
+      "dimension_slug": "auth"
+    }
+  ],
+  "findings": [
+    {
+      "id": "C0",
+      "title": "Simple finding must not carry categorical dimensions",
+      "severity": "critical",
+      "content_hash": "a1b2c3d4e5f6a7b8",
+      "concern_slug": "security",
+      "confidence": "high",
+      "runtime_scope": "service-external",
+      "locations": [
+        {
+          "path": "src/auth/session.js",
+          "line": "42"
+        }
+      ],
+      "issue": "x",
+      "why_it_matters": "y",
+      "suggested_fix": "z"
+    }
+  ],
+  "issues": []
+}

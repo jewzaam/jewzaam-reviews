@@ -32,6 +32,19 @@
     "issues": {
       "type": "array",
       "items": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/issue"}
+    },
+    "cross_cutting_observations": {
+      "type": "array",
+      "description": "Informational notes from review agents about patterns outside their dimension scope. Surfaced in the supplementary markdown; never findings.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["agent", "text"],
+        "properties": {
+          "agent": {"type": "string", "minLength": 1},
+          "text": {"type": "string", "minLength": 1}
+        }
+      }
     }
   }
 }

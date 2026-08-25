@@ -420,3 +420,116 @@ class TestAssignBucket:
             trace_origin="local",
         )
         assert mod.assign_bucket(f) == "suggestion"
+
+
+class TestRenderReviewSimpleScoring:
+    def _stage(self, tmp_path):
+        stage = tmp_path / "20-findings"
+        stage.mkdir(parents=True)
+        envelope = {
+            "project": {"name": "myapp"},
+            "decomposition": [
+                {"dimension_name": "full scope", "dimension_slug": "full-scope"}
+            ],
+            "issues": [],
+        }
+        (stage / "_envelope.json").write_text(json.dumps(envelope))
+        findings = [
+            {
+                "title": "Crash on empty input",
+                "severity": "critical",
+                "confidence": "high",
+                "concern_slug": "implementation",
+                "content_hash": "aaaaaaaaaaaaaaaa",
+                "locations": [{"path": "app.py", "line": "3", "role": "primary"}],
+                "issue": "x",
+                "why_it_matters": "y",
+                "suggested_fix": "z",
+            },
+            {
+                "title": "Speculative hunch",
+                "severity": "suggestion",
+                "confidence": "low",
+                "concern_slug": "implementation",
+                "content_hash": "bbbbbbbbbbbbbbbb",
+                "locations": [{"path": "app.py", "line": "9", "role": "primary"}],
+                "issue": "x",
+                "why_it_matters": "y",
+                "suggested_fix": "z",
+            },
+        ]
+        for f in findings:
+            (stage / f"{f['content_hash']}.json").write_text(json.dumps(f))
+        return stage
+
+    def test_simple_scoring_render(self, tmp_path):
+        stage = self._stage(tmp_path)
+        out_dir = tmp_path / "out"
+        result = _run(
+            [
+                "--input-dir",
+                str(stage),
+                "--out-dir",
+                str(out_dir),
+                "--project-name",
+                "myapp",
+                "--scoring",
+                "simple",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        rendered = _load(out_dir / "Findings-review.json")
+        assert rendered["scoring"] == "simple"
+        by_title = {f["title"]: f for f in rendered["findings"]}
+        # Direct severity preserved; low confidence lands in needs-review.
+        assert by_title["Crash on empty input"]["severity"] == "critical"
+        assert by_title["Crash on empty input"]["id"] == "C0"
+        assert by_title["Speculative hunch"]["severity"] == "needs-review"
+        # Validates against the shared schema's simple branch.
+        schema = _load(SHARED_SCHEMA)
+        jsonschema.validate(instance=rendered, schema=schema)
+        # Markdown shows confidence instead of the dimensions line.
+        md = (out_dir / "Findings-review.md").read_text(encoding="utf-8")
+        assert "**Confidence:** high" in md
+        assert "runtime_scope=" not in md
+
+
+class TestCrossCuttingObservationsRender:
+    def test_observations_render_in_supplementary(self, tmp_path):
+        stage = tmp_path / "20-findings"
+        stage.mkdir(parents=True)
+        envelope = {
+            "project": {"name": "myapp"},
+            "decomposition": [
+                {"dimension_name": "full scope", "dimension_slug": "full-scope"}
+            ],
+            "issues": [],
+            "cross_cutting_observations": [
+                {"agent": "architecture/full-scope", "text": "Pattern A everywhere"}
+            ],
+        }
+        (stage / "_envelope.json").write_text(json.dumps(envelope))
+        out_dir = tmp_path / "out"
+        result = _run(
+            [
+                "--input-dir",
+                str(stage),
+                "--out-dir",
+                str(out_dir),
+                "--project-name",
+                "myapp",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        rendered = _load(out_dir / "Findings-review.json")
+        assert rendered["supplementary"]["cross_cutting_observations"] == [
+            {"agent": "architecture/full-scope", "text": "Pattern A everywhere"}
+        ]
+        supp = (out_dir / "Findings-review-supplementary.md").read_text(
+            encoding="utf-8"
+        )
+        assert "## Cross-Cutting Observations" in supp
+        assert "Pattern A everywhere" in supp
+        # Shared-schema validation still passes with the supplementary field.
+        schema = _load(SHARED_SCHEMA)
+        jsonschema.validate(instance=rendered, schema=schema)

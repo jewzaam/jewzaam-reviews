@@ -22,6 +22,7 @@ class TestValidExamples:
         "fixture",
         [
             "review.valid.json",
+            "review-simple.valid.json",
             "standards.valid.json",
             "c4-reverse-engineer.valid.json",
             "apply-review.valid.json",
@@ -37,6 +38,7 @@ class TestInvalidExamples:
         "fixture",
         [
             "review.invalid-missing-concern.json",
+            "review-simple.invalid-dims-present.json",
             "standards.invalid-bad-severity.json",
             "c4-reverse-engineer.invalid-missing-verdict.json",
             "apply-review.invalid-findings-nonempty.json",

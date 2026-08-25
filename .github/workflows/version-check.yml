@@ -25,10 +25,10 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: make install-dev PY_SYS=python
 
       - name: Run pytest
-        run: make test
+        run: make test PY_SYS=python
 
   version-check:
     if: github.event_name == 'pull_request'
@@ -45,10 +45,10 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: make install-dev PY_SYS=python
 
       - name: Validate semantic versioning
-        run: make version-check
+        run: make version-check PY_SYS=python
 
   auto-tag:
     if: github.event_name == 'push'

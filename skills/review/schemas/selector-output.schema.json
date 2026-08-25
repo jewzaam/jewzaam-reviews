@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jewzaam/jewzaam-reviews/skills/review/schemas/selector-output.schema.json",
+  "title": "Review lens selector output",
+  "description": "Output of the lens selector agent: which review lenses should run for this scope, and an optional dimension decomposition for large scopes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "lenses"
+  ],
+  "properties": {
+    "lenses": {
+      "type": "array",
+      "description": "Selected lenses. Empty or invalid selection triggers the all-lenses fallback in the orchestrator.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "rationale"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "architecture",
+              "implementation",
+              "test",
+              "maintainability",
+              "security",
+              "documentation",
+              "observability"
+            ],
+            "description": "Lens slug \u2014 must match the concern_slug enum in agent-output.schema.json."
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "description": "One line grounded in what the scope actually touches."
+          }
+        }
+      }
+    },
+    "dimensions": {
+      "type": "array",
+      "maxItems": 3,
+      "description": "Optional decomposition for large scopes. Omit for small scopes \u2014 the orchestrator defaults to a single full-scope dimension.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "slug",
+          "scope"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Short human-readable dimension name, e.g. \"auth subsystem\"."
+          },
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$",
+            "description": "Filesystem-safe slug (lowercase, hyphens, max 31 chars)."
+          },
+          "scope": {
+            "type": "object",
+            "description": "What the dimension covers, e.g. {\"paths\": [\"src/auth/\"]} or {\"theme\": \"all CLI entry points\"}.",
+            "properties": {
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "theme": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

@@ -3,6 +3,28 @@
   "additionalProperties": false,
   "description": "Metadata envelope (_envelope.json) at each pipeline stage directory. Carries project identity, decomposition, and accumulated issues \u2014 but not findings (those are individual files in the same directory).",
   "properties": {
+    "cross_cutting_observations": {
+      "description": "Informational notes from review agents about patterns outside their dimension scope. Surfaced in the supplementary markdown; never findings.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "text": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent",
+          "text"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "decomposition": {
       "items": {
         "additionalProperties": false,

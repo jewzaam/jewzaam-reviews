@@ -16,6 +16,10 @@
       "enum": ["review", "standards", "c4-reverse-engineer", "apply-review"]
     },
     "project": {"$ref": "#/$defs/project"},
+    "scoring": {
+      "enum": ["categorical", "simple"],
+      "description": "Scoring mode used by the producing review run. Absent means categorical (the five-dimension rubric). simple means findings carry direct severity + confidence and omit the categorical dimensions. Only meaningful for source: review."
+    },
     "decomposition": {
       "type": "array",
       "items": {"$ref": "#/$defs/dimension"}
@@ -37,12 +41,29 @@
   "unevaluatedProperties": false,
   "allOf": [
     {
-      "if": {"properties": {"source": {"const": "review"}}, "required": ["source"]},
+      "if": {
+        "properties": {"source": {"const": "review"}},
+        "required": ["source"],
+        "not": {"properties": {"scoring": {"const": "simple"}}, "required": ["scoring"]}
+      },
       "then": {
         "required": ["decomposition"],
         "properties": {
           "decomposition": {"minItems": 1},
           "findings": {"items": {"$ref": "#/$defs/review_finding"}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"source": {"const": "review"}, "scoring": {"const": "simple"}},
+        "required": ["source", "scoring"]
+      },
+      "then": {
+        "required": ["decomposition"],
+        "properties": {
+          "decomposition": {"minItems": 1},
+          "findings": {"items": {"$ref": "#/$defs/simple_review_finding"}}
         }
       }
     },
@@ -211,6 +232,29 @@
           "type": "array",
           "minItems": 1,
           "items": {"type": "string"}
+        },
+        "pr_comment": {"$ref": "#/$defs/pr_comment"}
+      },
+      "unevaluatedProperties": false
+    },
+    "simple_review_finding": {
+      "allOf": [{"$ref": "#/$defs/base_finding"}],
+      "required": ["concern_slug", "confidence"],
+      "properties": {
+        "concern_slug": {
+          "enum": [
+            "architecture",
+            "implementation",
+            "test",
+            "maintainability",
+            "security",
+            "documentation",
+            "observability"
+          ]
+        },
+        "confidence": {
+          "enum": ["high", "medium", "low"],
+          "description": "Reviewer confidence from the simple scoring mode. low-confidence findings carry severity needs-review."
         },
         "pr_comment": {"$ref": "#/$defs/pr_comment"}
       },

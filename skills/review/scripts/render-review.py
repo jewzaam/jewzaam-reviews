@@ -50,8 +50,21 @@ BUCKET_PREFIX = {
 BUCKET_ORDER = list(SEVERITY_BUCKETS)
 
 
-def assign_buckets_and_ids(findings: list[dict]) -> list[dict]:
-    annotated = [{**f, "severity": assign_bucket(f)} for f in findings]
+def assign_buckets_and_ids(findings: list[dict], scoring: str = "categorical") -> list[dict]:
+    if scoring == "simple":
+        # Simple mode: severity comes directly from the agents/verdicts;
+        # low confidence lands in needs-review instead of a rubric mapping.
+        annotated = [
+            {
+                **f,
+                "severity": "needs-review"
+                if f.get("confidence") == "low"
+                else f["severity"],
+            }
+            for f in findings
+        ]
+    else:
+        annotated = [{**f, "severity": assign_bucket(f)} for f in findings]
     return assign_ids_per_bucket(
         annotated,
         bucket_order=BUCKET_ORDER,
@@ -61,14 +74,20 @@ def assign_buckets_and_ids(findings: list[dict]) -> list[dict]:
 
 def _format_finding_block(f: dict) -> str:
     locations = format_locations_block(f["locations"])
+    if "runtime_scope" in f:
+        ratings = (
+            f"**Dimensions:** runtime_scope={f['runtime_scope']}, "
+            f"failure_mode={f['failure_mode']}, "
+            f"evidence_quality={f['evidence_quality']}, "
+            f"trace_origin={f['trace_origin']}, "
+            f"effort_to_fix={f['effort_to_fix']}"
+        )
+    else:
+        ratings = f"**Confidence:** {f['confidence']}"
     return (
         f"#### {f['id']}: {f['title']}\n\n"
         f"**Locations:**\n{locations}\n\n"
-        f"**Dimensions:** runtime_scope={f['runtime_scope']}, "
-        f"failure_mode={f['failure_mode']}, "
-        f"evidence_quality={f['evidence_quality']}, "
-        f"trace_origin={f['trace_origin']}, "
-        f"effort_to_fix={f['effort_to_fix']}\n\n"
+        f"{ratings}\n\n"
         f"**Issue:** {f['issue']}\n\n"
         f"**Why it matters:** {f['why_it_matters']}\n\n"
         f"**Suggested fix:** {f['suggested_fix']}\n"
@@ -162,6 +181,15 @@ def render_supplementary_markdown(
     else:
         parts.append("(no findings to detail)\n")
 
+    observations = (rendered.get("supplementary") or {}).get(
+        "cross_cutting_observations", []
+    )
+    if observations:
+        parts.append("## Cross-Cutting Observations\n")
+        for obs in observations:
+            parts.append(f"- (`{obs['agent']}`) {obs['text']}")
+        parts.append("")
+
     return "\n".join(parts)
 
 
@@ -195,6 +223,12 @@ def main(argv: list[str]) -> int:
         help="optional slug appended to filenames (PR number, theme, etc.)",
     )
     parser.add_argument(
+        "--scoring",
+        choices=["categorical", "simple"],
+        default="categorical",
+        help="scoring mode of the pipeline that produced the input findings",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="verbose diagnostic logging to stderr",
@@ -226,13 +260,18 @@ def main(argv: list[str]) -> int:
         logger.error("could not read stage directory %s: %s", args.input_dir, exc)
         return 1
 
-    rendered_findings = assign_buckets_and_ids(findings)
+    rendered_findings = assign_buckets_and_ids(findings, scoring=args.scoring)
+    observations = envelope.get("cross_cutting_observations", [])
     rendered = build_envelope(
         source=SOURCE,
         project=envelope.get("project", {"name": args.project_name}),
         decomposition=envelope.get("decomposition", []),
         findings=rendered_findings,
         issues=envelope.get("issues", []),
+        scoring="simple" if args.scoring == "simple" else None,
+        supplementary={"cross_cutting_observations": observations}
+        if observations
+        else None,
     )
 
     try:

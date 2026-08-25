@@ -1,6 +1,7 @@
 {
   "schema_version": "0.8.0",
   "source": "review",
+  "scoring": "simple",
   "project": {
     "name": "sample",
     "scope_slug": "pr-42"
@@ -23,19 +24,7 @@
       "severity": "critical",
       "content_hash": "a1b2c3d4e5f6a7b8",
       "concern_slug": "security",
-      "source_dimensions": [
-        "auth"
-      ],
-      "runtime_scope": "service-external",
-      "runtime_scope_justification": "src/auth/session.js runs in the browser, directly exposed to user input.",
-      "failure_mode": "data-loss-or-security",
-      "failure_mode_justification": "Any XSS vector can exfiltrate the session token from localStorage.",
-      "evidence_quality": "demonstrated",
-      "evidence_quality_justification": "Line 42 writes the raw token to localStorage without encryption.",
-      "trace_origin": "entry-point",
-      "trace_origin_justification": "Traced from login handler at auth/login.js:10 through session.create() to localStorage.setItem() at session.js:42.",
-      "effort_to_fix": "small",
-      "effort_to_fix_justification": "Move to httpOnly secure cookies or encrypt at rest with a per-session key.",
+      "confidence": "high",
       "locations": [
         {
           "path": "src/auth/session.js",

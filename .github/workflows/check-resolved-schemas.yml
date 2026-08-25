@@ -24,7 +24,7 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -e ".[test]"
+        run: make install-dev PY_SYS=python
 
       - name: Verify resolved schemas are up-to-date
-        run: make check-resolved-schemas
+        run: make check-resolved-schemas PY_SYS=python

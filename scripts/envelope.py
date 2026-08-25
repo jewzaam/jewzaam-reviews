@@ -102,14 +102,16 @@ def build_envelope(
     decomposition: list[dict] | None = None,
     applied: list[dict] | None = None,
     supplementary: dict | None = None,
+    scoring: str | None = None,
 ) -> dict:
     """Construct the shared-schema envelope.
 
     `schema_version`, `source`, `project`, `findings`, and `issues` are
     always present (findings and issues default to empty lists).
-    `decomposition`, `applied`, `supplementary` are included only when
-    passed (i.e., the key is absent from the envelope when the argument
-    is None).
+    `decomposition`, `applied`, `supplementary`, `scoring` are included only
+    when passed (i.e., the key is absent from the envelope when the argument
+    is None). `scoring` is only meaningful for `source: review` — absent
+    means categorical.
     """
     envelope: dict[str, Any] = {
         "schema_version": plugin_version(),
@@ -118,6 +120,8 @@ def build_envelope(
         "findings": list(findings) if findings is not None else [],
         "issues": list(issues) if issues is not None else [],
     }
+    if scoring is not None:
+        envelope["scoring"] = scoring
     if decomposition is not None:
         envelope["decomposition"] = list(decomposition)
     if applied is not None:
