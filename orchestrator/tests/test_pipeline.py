@@ -265,3 +265,55 @@ class TestLedgerOnFatal:
             raise AssertionError("expected PipelineError")
         costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
         assert costs["total_cost_usd"] > 0  # spend persisted despite fatal error
+
+
+class TestMaxAgentsCapsLenses:
+    def test_lens_count_trimmed_to_max_agents(self, git_repo, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            backend,
+            "run_agent",
+            _fake_run_agent_factory(calls, selector_response="fail"),  # all 7 lenses
+        )
+        rc = pipeline.run_review(_options(git_repo, max_agents=3))
+        assert rc == 0
+        lens_calls = [c for c in calls if "axis within the dimension" in c["prompt"]]
+        assert len(lens_calls) == 3
+
+
+class TestPartialFanOutFailure:
+    def test_one_failed_lens_does_not_block_others(self, git_repo, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            backend,
+            "run_agent",
+            _fake_run_agent_factory(
+                calls, selector_response="fail", fail_labels={"security"}
+            ),
+        )
+        rc = pipeline.run_review(_options(git_repo))
+        assert rc == 0
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        assert len(findings["findings"]) >= 1  # survivors consolidated
+        kinds = [i["kind"] for i in findings["issues"]]
+        assert "subagent_failure" in kinds
+
+
+class TestIssuesMergedOffsets:
+    def test_no_duplicate_issues_across_two_merges(self, git_repo, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            backend,
+            "run_agent",
+            _fake_run_agent_factory(
+                calls, fail_labels={"security"}, fail_validators=True,
+                selector_response="fail",
+            ),
+        )
+        rc = pipeline.run_review(_options(git_repo))
+        assert rc == 0
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        messages = [i["message"] for i in findings["issues"]]
+        assert len(messages) == len(set(messages))  # merged once each
+        assert any("security" in m for m in messages)
+        assert any("validator" in m for m in messages)

@@ -311,11 +311,15 @@ def _revalidate_raw(state) -> None:
         )
         if proc.returncode != 0:
             path.unlink()
+            detail = (proc.stderr or "").strip().splitlines()
             state.issues.append(
                 {
                     "severity": "warning",
                     "kind": "validation_failed",
-                    "message": f"raw output {path.name} failed re-validation and was excluded",
+                    "message": (
+                        f"raw output {path.name} failed re-validation and was excluded"
+                        + (f": {detail[0][:200]}" if detail else "")
+                    ),
                     "source_component": "revalidate",
                 }
             )
@@ -496,6 +500,13 @@ def _run_stages(state: RunState) -> int:
 
     selector_output = _run_selector(state)
     selected, source, rationales = lenses.resolve_selection(selector_output)
+    if len(selected) > options.max_agents:
+        dropped = [lens.slug for lens in selected[options.max_agents :]]
+        selected = selected[: options.max_agents]
+        print(
+            f"max-agents={options.max_agents}: dropped lenses {', '.join(dropped)}",
+            file=sys.stderr,
+        )
     dimensions = lenses.resolve_dimensions(
         selector_output, len(selected), options.max_agents
     )
