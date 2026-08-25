@@ -72,6 +72,52 @@ class TestStandards:
         monkeypatch.setenv("HOME", str(git_repo))
         assert scope._external_standards(str(git_repo)) == ""
 
+    def test_external_injected_when_owner_matches(self, git_repo, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        standards = home / "source" / "standards"
+        standards.mkdir(parents=True)
+        (standards / "CLAUDE.md").write_text("See [naming](common/naming.md).\n")
+        monkeypatch.setenv("HOME", str(home))
+        _git(git_repo, "remote", "add", "origin", "git@github.com:jewzaam/repo.git")
+
+        real_run = scope.subprocess.run
+
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["gh", "api"]:
+                class R:
+                    returncode = 0
+                    stdout = "jewzaam\n"
+                    stderr = ""
+                return R()
+            return real_run(argv, **kwargs)
+
+        monkeypatch.setattr(scope.subprocess, "run", fake_run)
+        text = scope._external_standards(str(git_repo))
+        # Injected with relative links rewritten to absolute standards paths.
+        assert "~/source/standards/common/naming.md" in text
+
+    def test_external_skipped_when_owner_differs(self, git_repo, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        standards = home / "source" / "standards"
+        standards.mkdir(parents=True)
+        (standards / "CLAUDE.md").write_text("content\n")
+        monkeypatch.setenv("HOME", str(home))
+        _git(git_repo, "remote", "add", "origin", "git@github.com:someone-else/repo.git")
+
+        real_run = scope.subprocess.run
+
+        def fake_run(argv, **kwargs):
+            if argv[:2] == ["gh", "api"]:
+                class R:
+                    returncode = 0
+                    stdout = "jewzaam\n"
+                    stderr = ""
+                return R()
+            return real_run(argv, **kwargs)
+
+        monkeypatch.setattr(scope.subprocess, "run", fake_run)
+        assert scope._external_standards(str(git_repo)) == ""
+
 
 class TestProbe:
     def test_python_repo(self, git_repo):

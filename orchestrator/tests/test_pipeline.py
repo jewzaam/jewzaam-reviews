@@ -42,7 +42,7 @@ def _lens_output(concern, concern_slug, dimension_slug="full-scope"):
     }
 
 
-def _fake_run_agent_factory(calls, selector_response="default", fail_labels=()):
+def _fake_run_agent_factory(calls, selector_response="default", fail_labels=(), fail_validators=False):
     """Route fake responses by prompt content; record every call."""
 
     def fake_run_agent(prompt, *, schema, model, allowed_tools, cwd, tools=None, effort=None, timeout_s=600, trace_file=None, label=""):
@@ -64,6 +64,8 @@ def _fake_run_agent_factory(calls, selector_response="default", fail_labels=()):
             )
 
         if "validator agent" in prompt:
+            if fail_validators:
+                return backend.AgentResult(error="validator exploded", cost_usd=0.002)
             hashes = re.findall(r"content_hash: ([a-f0-9]{16,64})", prompt)
             return backend.AgentResult(
                 output={
@@ -119,8 +121,8 @@ class TestCategoricalEndToEnd:
         # Only the selected lens ran (selector picked implementation only).
         lens_calls = [c for c in calls if "axis within the dimension" in c["prompt"]]
         assert len(lens_calls) == 1
-        assert lens_calls[0]["allowed"] == pipeline.LENS_TOOLS["allowed"]
-        assert lens_calls[0]["tools"] == pipeline.LENS_TOOLS["tools"]  # no Bash
+        assert lens_calls[0]["allowed"] == list(pipeline.LENS_TOOLS.allowed)
+        assert lens_calls[0]["tools"] == pipeline.LENS_TOOLS.tools  # no Bash
 
     def test_selector_failure_falls_back_to_all_lenses(self, git_repo, monkeypatch):
         calls = []
@@ -151,6 +153,21 @@ class TestCategoricalEndToEnd:
         costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
         impl_entries = [e for e in costs["entries"] if e["label"] == "implementation/full-scope"]
         assert len(impl_entries) == 3  # initial + 2 retries, all costed
+
+    def test_validator_failure_passes_findings_through(self, git_repo, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            backend,
+            "run_agent",
+            _fake_run_agent_factory(calls, fail_validators=True),
+        )
+        rc = pipeline.run_review(_options(git_repo))
+        assert rc == 0  # run completes despite validator failure
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        # Finding survives unvalidated (apply-verdicts passthrough).
+        assert len(findings["findings"]) == 1
+        kinds = [issue["kind"] for issue in findings["issues"]]
+        assert "subagent_failure" in kinds
 
     def test_dry_run_dispatches_nothing(self, git_repo, monkeypatch, capsys):
         def explode(*args, **kwargs):

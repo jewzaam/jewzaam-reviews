@@ -7,6 +7,7 @@ guidance handling, standards gathering, and a project probe
 """
 
 import json
+import re
 import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
@@ -149,8 +150,6 @@ def _external_standards(project_root: str) -> str:
     owner = owner.rsplit(":", 1)[-1]
     if gh_user.stdout.strip() != owner:
         return ""
-    import re
-
     text = claude_md.read_text(encoding="utf-8")
     return re.sub(r"\]\(([^)]+)\)", r"](~/source/standards/\1)", text)
 
@@ -220,6 +219,7 @@ def compute_scope(
     pr_number: int | None,
     guidance: str,
 ) -> ReviewScope:
+    """Build the full ReviewScope: git context, PR scope, standards, probe."""
     default_branch = check_git_context(project_root)
     name, language, build_system, test_framework = probe_project(project_root)
 
@@ -241,8 +241,6 @@ def compute_scope(
         scope.scope_slug = f"pr-{pr_number}"
     elif scope.guidance:
         # Slug from guidance: max 12 chars, lowercase, hyphens (SKILL.md rule).
-        import re
-
         slug = re.sub(r"[^a-z0-9]+", "-", scope.guidance.lower()).strip("-")[:12]
         scope.scope_slug = slug.strip("-")
     return scope

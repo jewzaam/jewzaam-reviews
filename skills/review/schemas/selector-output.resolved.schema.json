@@ -15,7 +15,7 @@
           },
           "scope": {
             "additionalProperties": true,
-            "description": "What the dimension covers, e.g. {\"paths\": [\"src/auth/\"]} or {\"theme\": \"all CLI entry points\"}.",
+            "description": "What the dimension covers, e.g. {\"paths\": [\"src/auth/\"]} or {\"theme\": \"all CLI entry points\"}. Set \"shared_infrastructure\": true when the dimension covers shared code (core/, lib/, shared utils) changed alongside feature files \u2014 its agents then only report issues introduced or exposed by the change.",
             "properties": {
               "paths": {
                 "items": {
