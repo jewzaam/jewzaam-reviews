@@ -415,3 +415,37 @@ class TestTelemetryEnvFill:
         monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
         env = backend._scrubbed_env()
         assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in env
+
+
+class TestOtelAttributes:
+    def test_attributes_appended_to_existing(self, monkeypatch):
+        capture = {}
+        monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "host.name=phantom")
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://c:4318")
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        backend.run_agent(
+            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            otel_attributes={"review.run_id": "abc123", "review.agent": "impl/full-scope"},
+        )
+        attrs = capture["kwargs"]["env"]["OTEL_RESOURCE_ATTRIBUTES"]
+        assert attrs.startswith("host.name=phantom,")
+        assert "review.run_id=abc123" in attrs
+        assert "review.agent=impl/full-scope" in attrs
+
+    def test_attribute_values_sanitized(self, monkeypatch):
+        capture = {}
+        monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        backend.run_agent(
+            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            otel_attributes={"review.agent": "a,b=c"},
+        )
+        attrs = capture["kwargs"]["env"]["OTEL_RESOURCE_ATTRIBUTES"]
+        assert attrs == "review.agent=a-b-c"
+
+    def test_no_attributes_leaves_env_untouched(self, monkeypatch):
+        capture = {}
+        monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        assert "OTEL_RESOURCE_ATTRIBUTES" not in capture["kwargs"]["env"]

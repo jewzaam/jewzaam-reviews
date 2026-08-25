@@ -11,6 +11,7 @@ import json
 import subprocess
 import sys
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -92,9 +93,19 @@ class RunState:
 
     options: Options
     scope: scope_mod.ReviewScope
+    run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     costs: list[CostEntry] = field(default_factory=list)
     issues: list[dict] = field(default_factory=list)
     issues_merged: int = 0  # how many of `issues` already reached an envelope
+
+    def agent_attributes(self, stage: str, label: str) -> dict:
+        """OTEL resource attributes stamping a child with run correlation."""
+        return {
+            "review.run_id": self.run_id,
+            "review.stage": stage,
+            "review.agent": label,
+            "review.scoring": self.options.scoring,
+        }
 
     @property
     def tmp_dir(self) -> Path:
@@ -249,6 +260,7 @@ def _run_selector(state) -> dict | None:
             trace_file=state.tmp_dir / TRACE_FILENAME,
             label="lens-selector",
             redact=state.scope.guidance or None,
+            otel_attributes=state.agent_attributes("select", "lens-selector"),
         ),
         schema=schema,
     )
@@ -303,6 +315,7 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
                 trace_file=state.tmp_dir / TRACE_FILENAME,
                 label=label,
                 redact=state.scope.guidance or None,
+                otel_attributes=state.agent_attributes("review", label),
             ),
             schema=schema,
         )
@@ -406,6 +419,9 @@ def run_validators(state) -> None:
                 trace_file=state.tmp_dir / TRACE_FILENAME,
                 label=f"validator-batch-{batch['batch_number']}",
                 redact=state.scope.guidance or None,
+                otel_attributes=state.agent_attributes(
+                    "validate", f"validator-batch-{batch['batch_number']}"
+                ),
             ),
             schema=schema,
         )
@@ -431,6 +447,7 @@ def run_validators(state) -> None:
 def _write_costs(state) -> dict:
     """Persist the run ledger (cost, latency, denials) to .tmp-review/costs.json."""
     report = {
+        "run_id": state.run_id,
         "scoring": state.options.scoring,
         "total_cost_usd": round(sum(c.cost_usd for c in state.costs), 6),
         "by_stage": {},
@@ -490,6 +507,7 @@ def _print_summary(state, cost_report) -> None:
     for suffix in (".json", ".md", "-supplementary.md"):
         print(f"- {base}{suffix}")
 
+    print(f"\nRun ID: {state.run_id} (telemetry label review_run_id)")
     print(f"\nCost (measured, scoring={cost_report['scoring']}):")
     for stage, cost in cost_report["by_stage"].items():
         seconds = cost_report["seconds_by_stage"].get(stage, 0.0)
