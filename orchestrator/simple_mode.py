@@ -19,6 +19,7 @@ if str(PLUGIN_ROOT) not in sys.path:
 from orchestrator import pipeline  # noqa: E402
 from scripts.envelope import (  # noqa: E402
     content_hash,
+    primary_location,
     load_stage_dir,
     write_stage_dir,
     _line_start,
@@ -29,17 +30,9 @@ CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2}
 BATCH_SIZE = 8  # keep in sync with MAX_BATCH_SIZE in skills/review/scripts/batch-findings.py
 
 
-def _primary_location(finding: dict) -> dict:
-    """First location with role primary (or absent), else the first location."""
-    for loc in finding["locations"]:
-        if loc.get("role", "primary") == "primary":
-            return loc
-    return finding["locations"][0]
-
-
 def _dedup_key(finding: dict) -> tuple:
     """Identity for merging: (concern, primary path, primary start line)."""
-    loc = _primary_location(finding)
+    loc = primary_location(finding)
     return (
         finding["concern_slug"],
         loc["path"],
@@ -82,7 +75,7 @@ def collect_findings(raw_dir: Path) -> tuple[list[dict], list[dict], list[dict]]
         for finding in output["findings"]:
             entry = dict(finding)
             entry["concern_slug"] = output["concern_slug"]
-            loc = _primary_location(entry)
+            loc = primary_location(entry)
             entry["content_hash"] = content_hash(
                 output["concern_slug"],
                 output["dimension_slug"],
@@ -209,15 +202,7 @@ def run_simple_path(state) -> None:
         tmp / "10-merged", project, decomposition, state.issues, findings, observations
     )
 
-    if review_scope.merge_base:
-        pipeline.stage_cli(
-            "diff-scope-filter.py",
-            "--stage-dir",
-            f"./{pipeline.TMP_DIR_NAME}/10-merged/",
-            "--base-ref",
-            review_scope.merge_base,
-            cwd=cwd,
-        )
+    pipeline.maybe_diff_scope_filter(state, cwd)
 
     envelope, findings = load_stage(tmp / "10-merged")
     write_batches(tmp / "15-validation", findings)

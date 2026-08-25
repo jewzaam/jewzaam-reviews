@@ -205,7 +205,7 @@ diff."""
         else ""
     )
     rescore_line = (
-        '- action: "rescore" — provide new_severity and new_confidence'
+        '- action: "rescore" — provide BOTH new_severity and new_confidence (severity alone can be overridden by a stale low confidence)'
         if simple
         else '- action: "rescore" — provide new_dimensions with corrected dimension values and justifications'
     )

@@ -55,7 +55,7 @@ SCHEMAS_DIR = REPO_ROOT / "schemas"
 PLUGIN_ROOT = REPO_ROOT.parent.parent
 
 sys.path.insert(0, str(PLUGIN_ROOT))
-from scripts.envelope import _line_start, content_hash, safe_load_json, schema_registry, write_stage_dir  # noqa: E402
+from scripts.envelope import primary_location, _line_start, content_hash, safe_load_json, schema_registry, write_stage_dir  # noqa: E402
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
 
@@ -99,14 +99,6 @@ def _validate(instance: object, schema_path: Path) -> list[str]:
             validator.iter_errors(instance), key=lambda e: list(e.absolute_path)
         )
     ]
-
-
-def _primary_location(finding: dict) -> dict:
-    """First location whose role is 'primary' or absent; falls back to [0]."""
-    for loc in finding["locations"]:
-        if loc.get("role", "primary") == "primary":
-            return loc
-    return finding["locations"][0]
 
 
 def _location_key(loc: dict) -> tuple[str, str]:
@@ -211,7 +203,7 @@ def _cross_concern_merge(findings: list[dict], threshold: float) -> list[dict]:
 
     by_location: dict[tuple[str, str], list[dict]] = {}
     for f in findings:
-        primary = _primary_location(f)
+        primary = primary_location(f)
         by_location.setdefault((primary["path"], primary["line"]), []).append(f)
 
     output: list[dict] = []
@@ -408,7 +400,7 @@ def consolidate(
     # Pass 1: group by (concern_slug, primary location)
     pass1_groups: dict[tuple[str, str, str], list[dict]] = {}
     for f in flat:
-        primary = _primary_location(f)
+        primary = primary_location(f)
         key = (f["concern_slug"], primary["path"], primary["line"])
         pass1_groups.setdefault(key, []).append(f)
 
@@ -433,7 +425,7 @@ def consolidate(
     # Strip internal annotations and add content_hash.
     final_findings: list[dict] = []
     for f in pass3_output:
-        primary = _primary_location(f)
+        primary = primary_location(f)
         chash = _content_hash(
             concern_slug=f["concern_slug"],
             dimension_slug=f["source_dimensions"][0],
@@ -470,8 +462,8 @@ def consolidate(
     final_findings.sort(
         key=lambda f: (
             f["concern_slug"],
-            _primary_location(f)["path"],
-            _line_start(_primary_location(f).get("line", "")),
+            primary_location(f)["path"],
+            _line_start(primary_location(f).get("line", "")),
             f["title"],
         )
     )

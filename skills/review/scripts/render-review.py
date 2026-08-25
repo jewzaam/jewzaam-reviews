@@ -13,6 +13,7 @@ Intermediate JSON in the pipeline carries no severity labels and no IDs.
 import argparse
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -29,6 +30,7 @@ SCHEMAS_DIR = SKILL_ROOT / "schemas"
 sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.envelope import (  # noqa: E402
     SEVERITY_BUCKETS,
+    review_file_basename,
     assign_bucket,
     assign_ids_per_bucket,
     build_envelope,
@@ -195,9 +197,7 @@ def render_supplementary_markdown(
 
 def file_basename(scope_slug: str) -> str:
     """Return the filename stem ``Findings-review[-<scope-slug>]``."""
-    if scope_slug:
-        return f"Findings-review-{scope_slug}"
-    return "Findings-review"
+    return review_file_basename(scope_slug)
 
 
 def main(argv: list[str]) -> int:
@@ -239,6 +239,13 @@ def main(argv: list[str]) -> int:
         help="suppress the success summary line on stdout",
     )
     args = parser.parse_args(argv)
+
+    if args.scope_slug and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", args.scope_slug):
+        print(
+            f"error: --scope-slug must match [a-z0-9][a-z0-9-]{{0,30}}: {args.scope_slug!r}",
+            file=sys.stderr,
+        )
+        return 2
 
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,

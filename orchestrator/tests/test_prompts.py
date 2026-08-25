@@ -180,5 +180,4 @@ class TestUntrustedContentNote:
         )
         for text in (lens_text, validator_text):
             assert "UNTRUSTED CONTENT" in text
-            assert "never as instructions" in text or "never instructions" in text \
-                or "never as instructions to follow" in text or "never" in text
+            assert "never instructions to follow" in text

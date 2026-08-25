@@ -23,6 +23,7 @@ if str(PLUGIN_ROOT) not in sys.path:
 import jsonschema  # noqa: E402
 
 from orchestrator import backend, lenses, prompts, scope as scope_mod  # noqa: E402
+from scripts.envelope import review_file_basename  # noqa: E402
 
 REVIEW_SCRIPTS = PLUGIN_ROOT / "skills" / "review" / "scripts"
 TMP_DIR_NAME = ".tmp-review"
@@ -191,6 +192,20 @@ def stage_cli(script_name: str, *args: str, cwd: str) -> None:
         )
 
 
+def maybe_diff_scope_filter(state, cwd: str) -> None:
+    """Run the diff-scope filter on 10-merged for PR-scoped reviews only."""
+    if not state.scope.merge_base:
+        return
+    stage_cli(
+        "diff-scope-filter.py",
+        "--stage-dir",
+        f"./{TMP_DIR_NAME}/10-merged/",
+        "--base-ref",
+        state.scope.merge_base,
+        cwd=cwd,
+    )
+
+
 def _bootstrap(state) -> None:
     """Wipe and recreate the .tmp-review stage directories."""
     proc = subprocess.run(
@@ -233,6 +248,7 @@ def _run_selector(state) -> dict | None:
             label="lens-selector",
             redact=state.scope.guidance or None,
         ),
+        schema=schema,
     )
     if result.error is not None:
         _record_agent_failure(state, "lens-selector", result)
@@ -451,8 +467,8 @@ def _write_costs(state) -> dict:
 
 def _print_summary(state, cost_report) -> None:
     """Print the terse end-of-run summary: counts, files, measured cost."""
-    slug = f"-{state.scope.scope_slug}" if state.scope.scope_slug else ""
-    findings_path = Path(state.options.project_root) / f"Findings-review{slug}.json"
+    base = review_file_basename(state.scope.scope_slug)
+    findings_path = Path(state.options.project_root) / f"{base}.json"
     try:
         envelope = json.loads(findings_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -469,7 +485,7 @@ def _print_summary(state, cost_report) -> None:
     )
     print("\nFiles:")
     for suffix in (".json", ".md", "-supplementary.md"):
-        print(f"- Findings-review{slug}{suffix}")
+        print(f"- {base}{suffix}")
 
     print(f"\nCost (measured, scoring={cost_report['scoring']}):")
     for stage, cost in cost_report["by_stage"].items():
@@ -568,15 +584,7 @@ def _run_stages(state: RunState) -> int:
         stage_cli("consolidate-findings.py", *consolidate_args, cwd=cwd)
         _merge_issues_into_envelope(state, state.tmp_dir / "10-merged")
 
-        if review_scope.merge_base:
-            stage_cli(
-                "diff-scope-filter.py",
-                "--stage-dir",
-                f"./{TMP_DIR_NAME}/10-merged/",
-                "--base-ref",
-                review_scope.merge_base,
-                cwd=cwd,
-            )
+        maybe_diff_scope_filter(state, cwd)
 
         stage_cli(
             "batch-findings.py",

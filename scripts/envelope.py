@@ -241,6 +241,19 @@ def content_hash(*parts: str) -> str:
     return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+def primary_location(finding: dict) -> dict:
+    """First location whose role is 'primary' or absent; falls back to [0]."""
+    for loc in finding["locations"]:
+        if loc.get("role", "primary") == "primary":
+            return loc
+    return finding["locations"][0]
+
+
+def review_file_basename(scope_slug: str) -> str:
+    """Filename stem ``Findings-review[-<scope-slug>]`` shared by producers."""
+    return f"Findings-review-{scope_slug}" if scope_slug else "Findings-review"
+
+
 def format_locations_block(locations: list[dict]) -> str:
     """Render a locations[] list as a bullet list for markdown output.
 

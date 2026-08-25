@@ -26,7 +26,6 @@ from scripts.envelope import safe_load_json, schema_registry  # noqa: E402
 KNOWN_SCHEMAS = {
     "agent-output",
     "agent-output-simple",
-    "consolidated",
     "merged-finding",
     "stage-envelope",
     "validation-input",
@@ -56,10 +55,6 @@ def detect_schema(input_path: Path) -> str | None:
             return "validation-input"
         if stem.endswith("-output.json"):
             return "validation-output"
-    if parent == ".tmp-review":
-        if stem in ("consolidated.json", "post-validation.json"):
-            return "consolidated"
-
     return None
 
 

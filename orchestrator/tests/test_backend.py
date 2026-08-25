@@ -201,7 +201,13 @@ class TestLoadResolvedSchema:
 
     def test_no_root_composition(self):
         # --json-schema rejects root-level composition like StructuredOutput.
-        for name in ("agent-output", "validation-output"):
+        for name in (
+            "agent-output",
+            "agent-output-simple",
+            "selector-output",
+            "validation-output",
+            "validation-output-simple",
+        ):
             schema = backend.load_resolved_schema(name)
             for keyword in ("allOf", "anyOf", "oneOf"):
                 assert keyword not in schema, f"{name} has root {keyword}"

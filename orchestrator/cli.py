@@ -19,11 +19,11 @@ the wrapper repeats until it stops returning exit code 3:
 import argparse
 import hashlib
 import os
-import traceback
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -212,6 +212,19 @@ def main(argv: list[str] | None = None) -> int:
         dry_run=args.dry_run,
     )
     exit_file = os.environ.get(_EXIT_FILE_ENV)
+    files = _run_files(options.project_root)
+    claimed = False
+    if exit_file is None and not args.dry_run:
+        # Foreground runs share .tmp-review with detached ones — same slot.
+        if not _claim_run(files):
+            print(
+                "error: a review for this project is already running; "
+                "poll it with --wait or kill it first",
+                file=sys.stderr,
+            )
+            return 2
+        files["pid"].write_text(str(os.getpid()), encoding="utf-8")
+        claimed = True
     try:
         code = pipeline.run_review(options)
     except pipeline.PipelineError as exc:
@@ -224,8 +237,14 @@ def main(argv: list[str] | None = None) -> int:
         traceback.print_exc()
         print(f"ERROR: unexpected failure: {exc}", file=sys.stderr)
         code = 1
+    finally:
+        if claimed:
+            files["pid"].unlink(missing_ok=True)
     if exit_file:
-        Path(exit_file).write_text(str(code), encoding="utf-8")
+        # Atomic: readers must never observe a torn/empty exit file.
+        tmp = Path(exit_file).with_suffix(".exit.tmp")
+        tmp.write_text(str(code), encoding="utf-8")
+        os.replace(tmp, exit_file)
     return code
 
 

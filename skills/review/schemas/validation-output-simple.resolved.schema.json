@@ -36,6 +36,18 @@
           },
           {
             "if": {
+              "required": [
+                "new_severity"
+              ]
+            },
+            "then": {
+              "required": [
+                "new_confidence"
+              ]
+            }
+          },
+          {
+            "if": {
               "properties": {
                 "action": {
                   "enum": [
@@ -128,7 +140,7 @@
             "type": "string"
           },
           "new_severity": {
-            "description": "Corrected severity. At least one of new_severity/new_confidence required when action is 'rescore'.",
+            "description": "Corrected severity. Requires new_confidence alongside it \u2014 the renderer derives the needs-review bucket from confidence, so a severity-only rescore could be silently overridden by a stale low confidence.",
             "enum": [
               "critical",
               "important",
