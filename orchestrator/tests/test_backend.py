@@ -14,6 +14,7 @@ from orchestrator import backend  # noqa: E402
 def _cli_result(**overrides):
     result = {
         "is_error": False,
+        "session_id": "sess-1234",
         "total_cost_usd": 0.0123,
         "permission_denials": [],
         "result": "raw text",
@@ -126,6 +127,7 @@ class TestResultParsing:
         assert res.error is None
         assert res.output == {"ok": True}
         assert res.cost_usd == 0.0123
+        assert res.session_id == "sess-1234"
         assert res.permission_denials == []
 
     def test_success_without_schema_returns_text(self, monkeypatch):
@@ -377,3 +379,39 @@ class TestDenialsFallback:
         res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
         assert res.error is None
         assert res.permission_denials == []
+
+
+class TestTelemetryEnvFill:
+    def test_telemetry_keys_loaded_from_file(self, monkeypatch, tmp_path):
+        env_file = tmp_path / "site.env"
+        env_file.write_text(
+            "# comment\n"
+            "OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318\n"
+            "export OTEL_METRICS_EXPORTER=otlp\n"
+            "CLAUDE_CODE_ENABLE_TELEMETRY=1\n"
+            "SECRET_TOKEN=do-not-leak\n"
+            "SANDBOX_UNIQUE_TEST_KEY=nope\n"
+        )
+        monkeypatch.setenv(backend._OTEL_ENV_FILE_OVERRIDE, str(env_file))
+        monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+        env = backend._scrubbed_env()
+        assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
+        assert env["OTEL_METRICS_EXPORTER"] == "otlp"
+        assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+        assert "SECRET_TOKEN" not in env
+        assert "SANDBOX_UNIQUE_TEST_KEY" not in env  # only telemetry keys load
+
+    def test_inherited_endpoint_not_overridden(self, monkeypatch, tmp_path):
+        env_file = tmp_path / "site.env"
+        env_file.write_text("OTEL_EXPORTER_OTLP_ENDPOINT=http://file:4318\n")
+        monkeypatch.setenv(backend._OTEL_ENV_FILE_OVERRIDE, str(env_file))
+        monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://inherited:4318")
+        env = backend._scrubbed_env()
+        assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://inherited:4318"
+
+    def test_no_file_no_endpoint_is_fine(self, monkeypatch, tmp_path):
+        monkeypatch.setenv(backend._OTEL_ENV_FILE_OVERRIDE, str(tmp_path / "absent"))
+        monkeypatch.setattr(backend, "_OTEL_ENV_FILES", ())
+        monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+        env = backend._scrubbed_env()
+        assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in env

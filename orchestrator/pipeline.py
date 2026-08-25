@@ -82,6 +82,7 @@ class CostEntry:
     retries: int = 0
     error: str | None = None
     error_category: str | None = None
+    session_id: str = ""  # child session id — joins the ledger to telemetry
     denials: list = field(default_factory=list)  # denied tool inputs, if any
 
 
@@ -145,6 +146,7 @@ def _run_with_retry(state, stage, label, model, fn, schema=None, retries=2):
                 retries=attempt_number,
                 error=failure_reason,
                 error_category=category,
+                session_id=attempt.session_id,
                 denials=list(attempt.permission_denials),
             )
         )
@@ -444,6 +446,7 @@ def _write_costs(state) -> dict:
                 "retries": c.retries,
                 "error": c.error,
                 "error_category": c.error_category,
+                "session_id": c.session_id,
                 "denials": c.denials,
             }
             for c in state.costs
