@@ -63,18 +63,35 @@ def _pid_alive(pid_file: Path) -> int | None:
         return None
 
 
+def _claim_run(files: dict[str, Path]) -> bool:
+    """Atomically claim the run slot via O_EXCL on the pid file.
+
+    Returns False when another live run holds it. A stale claim (dead pid
+    or completed run) is cleared and re-claimed once.
+    """
+    for _ in range(2):
+        try:
+            fd = os.open(str(files["pid"]), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(fd)
+            return True
+        except FileExistsError:
+            if _pid_alive(files["pid"]) is not None and not files["exit"].is_file():
+                return False
+            files["pid"].unlink(missing_ok=True)
+    return False
+
+
 def _detach(args, passthrough: list[str]) -> int:
     files = _run_files(args.project_root)
-    running = _pid_alive(files["pid"])
-    if running is not None and not files["exit"].is_file():
+    if not _claim_run(files):
         print(
-            f"error: a review for this project is already running (pid {running}); "
+            "error: a review for this project is already running; "
             "poll it with --wait or kill it first",
             file=sys.stderr,
         )
         return 2
-    for path in files.values():
-        path.unlink(missing_ok=True)
+    files["log"].unlink(missing_ok=True)
+    files["exit"].unlink(missing_ok=True)
     log_fh = files["log"].open("w", encoding="utf-8")
     env = dict(os.environ)
     env[_EXIT_FILE_ENV] = str(files["exit"])

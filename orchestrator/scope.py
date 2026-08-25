@@ -61,8 +61,10 @@ def check_git_context(project_root: str) -> str:
     try:
         ref = _git(project_root, "symbolic-ref", "refs/remotes/origin/HEAD")
     except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip().splitlines()
         raise ScopeError(
             "Cannot determine default branch. Are you in the right directory?"
+            + (f" ({detail[0]})" if detail else "")
         ) from exc
     return ref.removeprefix("refs/remotes/")
 

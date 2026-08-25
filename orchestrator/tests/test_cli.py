@@ -75,6 +75,26 @@ class TestDetach:
         rc = cli.main(["--detach", "--project-root", "/some/project"])
         assert rc == 2
 
+    def test_stale_pid_is_reclaimed(self, run_dir, monkeypatch):
+        files = cli._run_files("/some/project")
+        files["pid"].write_text("999999999")  # dead pid
+
+        class FakeProc:
+            pid = 777
+
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: FakeProc())
+        rc = cli.main(["--detach", "--project-root", "/some/project"])
+        assert rc == 0
+        assert files["pid"].read_text() == "777"
+
+    def test_claim_is_exclusive(self, run_dir):
+        files = cli._run_files("/p2")
+        assert cli._claim_run(files) is True
+        files["log"].write_text("x")
+        # Second claim while first holder alive-marker absent: pid file
+        # exists but empty -> _pid_alive None -> stale -> reclaimed.
+        assert cli._claim_run(files) is True
+
 
 class TestWait:
     def _args(self, project, timeout=1):
