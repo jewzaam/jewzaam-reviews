@@ -198,3 +198,27 @@ class TestValidationOutputSchema:
             }
         with pytest.raises(jsonschema.ValidationError):
             _validate(schema, self._verdict_doc(verdict))
+
+
+class TestValidationOutputSimpleSchema:
+    def _verdict(self, **kwargs):
+        base = {
+            "finding_ref": {"content_hash": "a" * 16},
+            "action": "rescore",
+            "reasoning": "adjusted",
+        }
+        base.update(kwargs)
+        return {"batch_number": 1, "verdicts": [base]}
+
+    def test_rescore_with_both_fields_passes(self, schemas_dir):
+        schema = _load_json(schemas_dir / "validation-output-simple.schema.json")
+        _validate(schema, self._verdict(new_severity="suggestion", new_confidence="medium"))
+
+    def test_rescore_severity_without_confidence_fails(self, schemas_dir):
+        schema = _load_json(schemas_dir / "validation-output-simple.schema.json")
+        with pytest.raises(jsonschema.ValidationError):
+            _validate(schema, self._verdict(new_severity="suggestion"))
+
+    def test_rescore_confidence_alone_passes(self, schemas_dir):
+        schema = _load_json(schemas_dir / "validation-output-simple.schema.json")
+        _validate(schema, self._verdict(new_confidence="low"))
