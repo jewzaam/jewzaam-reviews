@@ -45,7 +45,7 @@ def _lens_output(concern, concern_slug, dimension_slug="full-scope"):
 def _fake_run_agent_factory(calls, selector_response="default", fail_labels=(), fail_validators=False):
     """Route fake responses by prompt content; record every call."""
 
-    def fake_run_agent(prompt, *, schema, model, allowed_tools, cwd, tools=None, effort=None, timeout_s=600, trace_file=None, label="", redact=None):
+    def fake_run_agent(prompt, *, schema, model, allowed_tools, cwd, tools=None, effort=None, timeout_s=600, trace_file=None, label="", redact=None, otel_attributes=None):
         calls.append({"prompt": prompt, "model": model, "allowed": allowed_tools, "tools": tools})
 
         if "Select which review lenses" in prompt:

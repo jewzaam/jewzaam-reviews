@@ -14,6 +14,7 @@ reporting is real spend, never an estimate.
 
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -180,6 +181,7 @@ def run_agent(
     trace_file: str | Path | None = None,
     label: str = "",
     redact: str | None = None,
+    otel_attributes: dict | None = None,
 ) -> AgentResult:
     """Run one headless claude agent and parse its result JSON.
 
@@ -188,6 +190,10 @@ def run_agent(
     is the permission allowlist within the available set. Both are needed:
     permission rules cannot block commands on the CLI's built-in read-only
     auto-allow list (git diff/log/...), but removing the tool can.
+
+    `otel_attributes` are appended to the child's OTEL_RESOURCE_ATTRIBUTES
+    (values sanitized for the comma/equals list format) so its telemetry
+    carries run-level correlation labels.
 
     When `trace_file` is set, every invocation appends one JSON line there:
     the prompt (with the literal `redact` text replaced), invocation
@@ -244,13 +250,22 @@ def run_agent(
         # and the CLI splits a space-joined list inside them.
         argv += ["--allowedTools", ",".join(allowed_tools)]
 
+    child_env = _scrubbed_env()
+    if otel_attributes:
+        pairs = ",".join(
+            f"{key}={re.sub(r'[,=]', '-', str(value))}"
+            for key, value in otel_attributes.items()
+        )
+        existing = child_env.get("OTEL_RESOURCE_ATTRIBUTES", "")
+        child_env["OTEL_RESOURCE_ATTRIBUTES"] = f"{existing},{pairs}" if existing else pairs
+
     try:
         # start_new_session so a timeout can reap the CLI's own children
         # (the API worker processes it spawns) via the process group.
         popen = subprocess.Popen(
             argv,
             cwd=cwd,
-            env=_scrubbed_env(),
+            env=child_env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
