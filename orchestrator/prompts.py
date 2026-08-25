@@ -12,6 +12,7 @@ from orchestrator.scope import ReviewScope
 
 
 def build_selector_prompt(scope: ReviewScope, roster: tuple[Lens, ...]) -> str:
+    """Prompt for the lens-selector agent: pick lenses, optionally split dimensions."""
     roster_lines = "\n".join(f"- {lens.slug}: {lens.runs_when}" for lens in roster)
 
     if scope.merge_base:
@@ -45,6 +46,7 @@ SELECTION RULES:
 - implementation (general correctness) always runs — always include it.
 - Give a one-line rationale per selected lens, grounded in what the scope actually touches.
 - Only propose `dimensions` (max 3) when the scope is large enough that a single agent per lens cannot cover it — e.g. a large multi-subsystem diff or a full-repo review of a big codebase. For small scopes, omit dimensions entirely.
+- When a proposed dimension covers shared infrastructure files (e.g. core/, lib/, shared utils) changed alongside feature files, set `"shared_infrastructure": true` in that dimension's scope object so its agents only report issues introduced or exposed by the change.
 
 Do not report findings. Do not modify anything. Read-only analysis only."""
 

@@ -4,7 +4,6 @@ description: Perform a scope-aware multi-agent codebase review via the script or
 disable-model-invocation: true
 argument-hint: "[PR-number] [--scoring categorical|simple] [guidance text...]"
 allowed-tools:
-  - Bash(bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh*)
   - Bash(python ${CLAUDE_PLUGIN_ROOT}/orchestrator/**)
   - Bash(python3 ${CLAUDE_PLUGIN_ROOT}/orchestrator/**)
 ---
@@ -14,14 +13,6 @@ allowed-tools:
 ## Purpose
 
 Run the review orchestrator: a Python CLI that owns the whole review pipeline. Models are used only for reasoning (lens selection, lens review agents, validators) via headless agent invocations; everything deterministic is script. The main agent's job here is just to launch the CLI and relay its output.
-
-## Pre-Fetch
-
-### Plugin Home (auto-detected)
-
-Plugin root with `~` prefix. Use this path when constructing the orchestrator command.
-
-!`bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-plugin-home.sh ${CLAUDE_PLUGIN_ROOT}`
 
 ## Process
 
@@ -42,19 +33,31 @@ If `--scoring` was not given, ask via AskUserQuestion:
 
 If a prior run's `.tmp-review/costs.json` exists in the project, read `total_cost_usd` and `scoring` from it and include that measured number in the option descriptions. Never invent cost numbers — cite measured ones or give none.
 
-### 3. Run the Orchestrator
+### 3. Start the Review (detached)
 
-Invoke via Bash with `run_in_background: true` (reviews can exceed the foreground timeout), from the project root:
+Run this via foreground Bash from the project root, EXACTLY ONCE. The path below is pre-substituted with the plugin root and matches this skill's allowed-tools; never rewrite it into another form:
 
 ```
-python <plugin-home>/orchestrator/cli.py [--pr N] [--scoring MODE] [--guidance "..."]
+python ${CLAUDE_PLUGIN_ROOT}/orchestrator/cli.py --detach [--pr N] [--scoring MODE] [--guidance "..."]
 ```
 
-Wait for the background task to complete. Do not run other commands against the project while it runs.
+It returns immediately; the review runs as a detached process that survives this session.
 
-### 4. Relay Results
+### 4. Wait For Completion
 
-Print the orchestrator's final summary verbatim: severity counts, output filenames, and the measured per-stage cost table. If the orchestrator exited non-zero, show its stderr and stop — do not attempt to reconstruct findings yourself.
+Run this via foreground Bash, repeatedly:
+
+```
+python ${CLAUDE_PLUGIN_ROOT}/orchestrator/cli.py --wait
+```
+
+- Exit code 3 means still running (each call blocks up to ~100 s). Run the SAME command again. Reviews commonly take 10-30 minutes — 10 or more repeats is normal.
+- Any other exit code means done; the command has printed the run's final output.
+- Do not run any other commands against the project between waits, and do not end your turn while the exit code is 3.
+
+### 5. Relay Results
+
+Relay the final `--wait` output verbatim: severity counts, output filenames, and the measured per-stage cost table. If it reports a non-zero finish, show that output and stop — do not attempt to reconstruct findings yourself.
 
 ## Critical Rules
 

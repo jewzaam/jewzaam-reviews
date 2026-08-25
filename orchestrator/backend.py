@@ -14,6 +14,7 @@ reporting is real spend, never an estimate.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -37,6 +38,9 @@ class AgentResult:
     cost_usd: float = 0.0  # total_cost_usd (0.0 if unavailable)
     permission_denials: list = field(default_factory=list)
     error: str | None = None
+    # Machine-readable failure class for aggregation/alerting:
+    # timeout | spawn | protocol | agent | schema (set by callers) | None
+    error_category: str | None = None
 
 
 def load_resolved_schema(name: str) -> dict:
@@ -54,18 +58,61 @@ def load_resolved_schema(name: str) -> dict:
 
 _TRACE_LOCK = threading.Lock()
 
+# Delimiters for the user-guidance block inside prompts. Guidance is the
+# only user-authored free text in a prompt; it is redacted from traces.
+_GUIDANCE_HEADER = "USER GUIDANCE"
+
+
+def redact_prompt(prompt: str) -> str:
+    """Redact the user-guidance block from a prompt before tracing.
+
+    Guidance is redacted from its header until the next ALL-CAPS section
+    header (or end of prompt). Everything else in a prompt is
+    project-derived (paths, diff stats, instructions) and is the debugging
+    value of the trace.
+    """
+    if _GUIDANCE_HEADER not in prompt:
+        return prompt
+    section_header = re.compile(r"^[A-Z][A-Z /&-]+:?\s*$")
+    out: list[str] = []
+    in_guidance = False
+    for line in prompt.splitlines():
+        if line.startswith(_GUIDANCE_HEADER):
+            in_guidance = True
+            out.append(line)
+            out.append("[guidance redacted from trace]")
+            continue
+        if in_guidance and section_header.match(line):
+            in_guidance = False
+        if not in_guidance:
+            out.append(line)
+    return "\n".join(out)
+
 
 def _write_trace(trace_file, record: dict) -> None:
-    """Append one JSON line to the agent trace. Best-effort — tracing must
-    never fail a run."""
+    """Append one JSON line to the agent trace.
+
+    Best-effort — tracing must never fail a run — but failures are warned
+    to stderr rather than swallowed silently. The trace file is created
+    owner-only: prompts carry project content.
+    """
     if trace_file is None:
         return
     try:
         line = json.dumps(record) + "\n"
-        with _TRACE_LOCK, open(trace_file, "a", encoding="utf-8") as fh:
-            fh.write(line)
-    except OSError:
-        pass
+        with _TRACE_LOCK:
+            path = Path(trace_file)
+            existed = path.exists()
+            with path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+            if not existed:
+                path.chmod(0o600)
+    except OSError as exc:
+        print(
+            f"warning: agent trace write failed ({exc}); "
+            f"attempt for {record.get('label')} not traced",
+            file=sys.stderr,
+        )
 
 
 # CLAUDE* vars that configure telemetry, not session identity — children
@@ -135,7 +182,7 @@ def run_agent(
                 "error": agent_result.error,
                 "cost_usd": agent_result.cost_usd,
                 "denials": agent_result.permission_denials,
-                "prompt": prompt,
+                "prompt": redact_prompt(prompt),
                 "result": raw_result,
             },
         )
@@ -174,9 +221,9 @@ def run_agent(
             timeout=timeout_s,
         )
     except subprocess.TimeoutExpired:
-        return _finish(AgentResult(error=f"timeout after {timeout_s}s"))
+        return _finish(AgentResult(error=f"timeout after {timeout_s}s", error_category="timeout"))
     except OSError as exc:
-        return _finish(AgentResult(error=f"failed to spawn claude: {exc}"))
+        return _finish(AgentResult(error=f"failed to spawn claude: {exc}", error_category="spawn"))
 
     try:
         result = json.loads(proc.stdout)
@@ -184,7 +231,8 @@ def run_agent(
         stderr_tail = (proc.stderr or "").strip()[-500:]
         return _finish(
             AgentResult(
-                error=f"non-JSON output (exit {proc.returncode}): {stderr_tail}"
+                error=f"non-JSON output (exit {proc.returncode}): {stderr_tail}",
+                error_category="protocol",
             ),
             raw_result={"stdout": proc.stdout[-2000:], "stderr": stderr_tail},
         )
@@ -198,12 +246,14 @@ def run_agent(
         agent_result.error = f"agent error (exit {proc.returncode}): " + str(
             result.get("result", "")
         )[:500]
+        agent_result.error_category = "agent"
         return _finish(agent_result, raw_result=result)
 
     if schema is not None:
         output = result.get("structured_output")
         if not isinstance(output, dict):
             agent_result.error = "missing structured_output in result"
+            agent_result.error_category = "protocol"
             return _finish(agent_result, raw_result=result)
         agent_result.output = output
     else:

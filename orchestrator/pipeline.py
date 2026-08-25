@@ -10,6 +10,7 @@ subprocess, or plain Python.
 import json
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,17 +28,24 @@ REVIEW_SCRIPTS = PLUGIN_ROOT / "skills" / "review" / "scripts"
 TMP_DIR_NAME = ".tmp-review"
 TRACE_FILENAME = "agent-trace.jsonl"
 
-# Per-role tool boundaries: `tools` is which built-in tools exist at all
-# (lens agents have no Bash, period); `allowed` is the permission allowlist
-# within that set.
-SELECTOR_TOOLS = {
-    "tools": "Read,Glob,Grep,Bash",
-    "allowed": ["Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git ls-files:*)"],
-}
-LENS_TOOLS = {"tools": "Read,Glob,Grep", "allowed": ["Read", "Glob", "Grep"]}
-VALIDATOR_TOOLS = {
-    "tools": "Read,Glob,Grep,Bash",
-    "allowed": [
+@dataclass(frozen=True)
+class ToolConfig:
+    """Per-role tool boundary: `tools` is which built-in tools exist at all
+    (lens agents have no Bash, period); `allowed` is the permission
+    allowlist within that set."""
+
+    tools: str
+    allowed: tuple[str, ...]
+
+
+SELECTOR_TOOLS = ToolConfig(
+    tools="Read,Glob,Grep,Bash",
+    allowed=("Read", "Glob", "Grep", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git ls-files:*)"),
+)
+LENS_TOOLS = ToolConfig(tools="Read,Glob,Grep", allowed=("Read", "Glob", "Grep"))
+VALIDATOR_TOOLS = ToolConfig(
+    tools="Read,Glob,Grep,Bash",
+    allowed=(
         "Read",
         "Glob",
         "Grep",
@@ -45,10 +53,12 @@ VALIDATOR_TOOLS = {
         "Bash(git log:*)",
         "Bash(git show:*)",
         "Bash(git blame:*)",
-    ],
-}
+    ),
+)
 @dataclass
 class Options:
+    """CLI arguments and pipeline configuration for one review run."""
+
     project_root: str
     pr_number: int | None = None
     guidance: str = ""
@@ -61,21 +71,28 @@ class Options:
 
 @dataclass
 class CostEntry:
+    """One agent attempt in the run ledger (real spend, never estimated)."""
+
     stage: str
     label: str
     model: str
     cost_usd: float
+    elapsed_s: float = 0.0
     retries: int = 0
     error: str | None = None
+    error_category: str | None = None
     denials: list = field(default_factory=list)  # denied tool inputs, if any
 
 
 @dataclass
 class RunState:
+    """Mutable per-run state: cost ledger and operational issues."""
+
     options: Options
     scope: scope_mod.ReviewScope
     costs: list[CostEntry] = field(default_factory=list)
     issues: list[dict] = field(default_factory=list)
+    issues_merged: int = 0  # how many of `issues` already reached an envelope
 
     @property
     def tmp_dir(self) -> Path:
@@ -111,16 +128,22 @@ def _run_with_retry(state, stage, label, model, fn, schema=None, retries=2):
     """
     last_attempt = None
     for attempt_number in range(retries + 1):
+        started = time.monotonic()
         attempt = fn()
         failure_reason = _attempt_error(attempt, schema)
+        category = attempt.error_category
+        if failure_reason is not None and category is None:
+            category = "schema"
         state.costs.append(
             CostEntry(
                 stage=stage,
                 label=label,
                 model=model,
                 cost_usd=attempt.cost_usd,
+                elapsed_s=round(time.monotonic() - started, 3),
                 retries=attempt_number,
                 error=failure_reason,
+                error_category=category,
                 denials=list(attempt.permission_denials),
             )
         )
@@ -133,6 +156,7 @@ def _run_with_retry(state, stage, label, model, fn, schema=None, retries=2):
 
 
 def _record_agent_failure(state, component: str, result) -> None:
+    """Record a final agent failure (and any denials) as envelope issues."""
     state.issues.append(
         {
             "severity": "warning",
@@ -163,6 +187,7 @@ def _stage_cli(script_name: str, *args: str, cwd: str) -> None:
 
 
 def _bootstrap(state) -> None:
+    """Wipe and recreate the .tmp-review stage directories."""
     proc = subprocess.run(
         [
             "bash",
@@ -182,6 +207,7 @@ def _bootstrap(state) -> None:
 
 
 def _run_selector(state) -> dict | None:
+    """Run the lens-selector agent; None on failure (callers fall back)."""
     schema = backend.load_resolved_schema("selector-output")
     prompt = prompts.build_selector_prompt(state.scope, lenses.LENSES)
     result = _run_with_retry(
@@ -193,8 +219,8 @@ def _run_selector(state) -> dict | None:
             prompt,
             schema=schema,
             model="haiku",
-            allowed_tools=SELECTOR_TOOLS["allowed"],
-            tools=SELECTOR_TOOLS["tools"],
+            allowed_tools=list(SELECTOR_TOOLS.allowed),
+            tools=SELECTOR_TOOLS.tools,
             cwd=state.options.project_root,
             effort="low",
             timeout_s=state.options.timeout_s,
@@ -233,8 +259,8 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
                 prompt,
                 schema=schema,
                 model=lens.model,
-                allowed_tools=LENS_TOOLS["allowed"],
-                tools=LENS_TOOLS["tools"],
+                allowed_tools=list(LENS_TOOLS.allowed),
+                tools=LENS_TOOLS.tools,
                 cwd=state.options.project_root,
                 timeout_s=state.options.timeout_s,
                 trace_file=state.tmp_dir / TRACE_FILENAME,
@@ -293,13 +319,20 @@ def _revalidate_raw(state) -> None:
 
 
 def _merge_issues_into_envelope(state, stage_dir: Path) -> None:
-    """Append orchestrator-collected issues to a stage envelope."""
-    if not state.issues:
+    """Append not-yet-merged orchestrator issues to a stage envelope.
+
+    Called once after consolidation (agent/selector failures) and again
+    after verdict application (validator failures) — tracked via
+    state.issues_merged so nothing is duplicated or dropped.
+    """
+    pending = state.issues[state.issues_merged :]
+    if not pending:
         return
     envelope_path = stage_dir / "_envelope.json"
     envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
-    envelope.setdefault("issues", []).extend(state.issues)
+    envelope.setdefault("issues", []).extend(pending)
     envelope_path.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+    state.issues_merged = len(state.issues)
 
 
 def _run_validators(state) -> None:
@@ -326,8 +359,8 @@ def _run_validators(state) -> None:
                 prompt,
                 schema=schema,
                 model="sonnet",
-                allowed_tools=VALIDATOR_TOOLS["allowed"],
-                tools=VALIDATOR_TOOLS["tools"],
+                allowed_tools=list(VALIDATOR_TOOLS.allowed),
+                tools=VALIDATOR_TOOLS.tools,
                 cwd=state.options.project_root,
                 timeout_s=state.options.timeout_s,
                 trace_file=state.tmp_dir / TRACE_FILENAME,
@@ -353,18 +386,23 @@ def _run_validators(state) -> None:
 
 
 def _write_costs(state) -> dict:
+    """Persist the run ledger (cost, latency, denials) to .tmp-review/costs.json."""
     report = {
         "scoring": state.options.scoring,
         "total_cost_usd": round(sum(c.cost_usd for c in state.costs), 6),
         "by_stage": {},
+        "seconds_by_stage": {},
+        "denials_by_tool": {},
         "entries": [
             {
                 "stage": c.stage,
                 "label": c.label,
                 "model": c.model,
                 "cost_usd": c.cost_usd,
+                "elapsed_s": c.elapsed_s,
                 "retries": c.retries,
                 "error": c.error,
+                "error_category": c.error_category,
                 "denials": c.denials,
             }
             for c in state.costs
@@ -374,6 +412,12 @@ def _write_costs(state) -> dict:
         report["by_stage"][entry.stage] = round(
             report["by_stage"].get(entry.stage, 0.0) + entry.cost_usd, 6
         )
+        report["seconds_by_stage"][entry.stage] = round(
+            report["seconds_by_stage"].get(entry.stage, 0.0) + entry.elapsed_s, 1
+        )
+        for denial in entry.denials:
+            tool = denial.get("tool_name", "unknown")
+            report["denials_by_tool"][tool] = report["denials_by_tool"].get(tool, 0) + 1
     (state.tmp_dir / "costs.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
     )
@@ -381,6 +425,7 @@ def _write_costs(state) -> dict:
 
 
 def _print_summary(state, cost_report) -> None:
+    """Print the terse end-of-run summary: counts, files, measured cost."""
     slug = f"-{state.scope.scope_slug}" if state.scope.scope_slug else ""
     findings_path = Path(state.options.project_root) / f"Findings-review{slug}.json"
     envelope = json.loads(findings_path.read_text(encoding="utf-8"))
@@ -398,13 +443,21 @@ def _print_summary(state, cost_report) -> None:
 
     print(f"\nCost (measured, scoring={cost_report['scoring']}):")
     for stage, cost in cost_report["by_stage"].items():
-        print(f"  {stage:<10} ${cost:.4f}")
+        seconds = cost_report["seconds_by_stage"].get(stage, 0.0)
+        print(f"  {stage:<10} ${cost:.4f}  ({seconds:.0f}s agent time)")
     print(f"  {'total':<10} ${cost_report['total_cost_usd']:.4f}")
+    if cost_report["denials_by_tool"]:
+        denial_text = ", ".join(
+            f"{tool} ({count})"
+            for tool, count in sorted(cost_report["denials_by_tool"].items())
+        )
+        print(f"\nTool denials: {denial_text}")
     if state.issues:
         print(f"\n{len(state.issues)} issue(s) recorded in the findings envelope.")
 
 
 def run_review(options: Options) -> int:
+    """Run the full review pipeline; returns a process exit code."""
     try:
         review_scope = scope_mod.compute_scope(
             options.project_root, options.pr_number, options.guidance
@@ -424,6 +477,19 @@ def run_review(options: Options) -> int:
         return 0
 
     _bootstrap(state)
+
+    try:
+        return _run_stages(state)
+    except BaseException:
+        # Real spend happened; persist the ledger before propagating,
+        # whatever the failure (PipelineError, bug, KeyboardInterrupt).
+        _write_costs(state)
+        raise
+
+
+def _run_stages(state: RunState) -> int:
+    options = state.options
+    review_scope = state.scope
 
     selector_output = _run_selector(state)
     selected, source, rationales = lenses.resolve_selection(selector_output)
@@ -496,6 +562,9 @@ def run_review(options: Options) -> int:
             f"./{TMP_DIR_NAME}/20-findings/",
             cwd=cwd,
         )
+        # Validator failures were recorded after the 10-merged merge;
+        # fold them into the post-verdict envelope.
+        _merge_issues_into_envelope(state, state.tmp_dir / "20-findings")
         render_args = [
             "--input-dir",
             f"./{TMP_DIR_NAME}/20-findings/",

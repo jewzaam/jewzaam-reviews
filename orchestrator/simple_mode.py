@@ -16,7 +16,12 @@ PLUGIN_ROOT = ORCHESTRATOR_ROOT.parent
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
-from scripts.envelope import content_hash, _line_start  # noqa: E402
+from scripts.envelope import (  # noqa: E402
+    content_hash,
+    load_stage_dir,
+    write_stage_dir,
+    _line_start,
+)
 
 SEVERITY_ORDER = {"critical": 0, "important": 1, "suggestion": 2}
 CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2}
@@ -24,6 +29,7 @@ BATCH_SIZE = 8
 
 
 def _primary_location(finding: dict) -> dict:
+    """First location with role primary (or absent), else the first location."""
     for loc in finding["locations"]:
         if loc.get("role", "primary") == "primary":
             return loc
@@ -31,6 +37,7 @@ def _primary_location(finding: dict) -> dict:
 
 
 def _dedup_key(finding: dict) -> tuple:
+    """Identity for merging: (concern, primary path, primary start line)."""
     loc = _primary_location(finding)
     return (
         finding["concern_slug"],
@@ -104,9 +111,8 @@ def collect_findings(raw_dir: Path) -> tuple[list[dict], list[dict], list[dict]]
 
 
 def write_stage(stage_dir: Path, project: dict, decomposition, issues, findings, observations=None):
+    """Write a stage dir (envelope + per-finding files) via the shared helper."""
     stage_dir.mkdir(parents=True, exist_ok=True)
-    for stale in stage_dir.glob("*.json"):
-        stale.unlink()
     envelope = {
         "project": project,
         "decomposition": decomposition,
@@ -114,23 +120,12 @@ def write_stage(stage_dir: Path, project: dict, decomposition, issues, findings,
     }
     if observations:
         envelope["cross_cutting_observations"] = list(observations)
-    (stage_dir / "_envelope.json").write_text(
-        json.dumps(envelope, indent=2), encoding="utf-8"
-    )
-    for finding in findings:
-        (stage_dir / f"{finding['content_hash']}.json").write_text(
-            json.dumps(finding, indent=2), encoding="utf-8"
-        )
+    write_stage_dir(stage_dir, envelope, findings)
 
 
 def load_stage(stage_dir: Path) -> tuple[dict, list[dict]]:
-    envelope = json.loads((stage_dir / "_envelope.json").read_text(encoding="utf-8"))
-    findings = [
-        json.loads(p.read_text(encoding="utf-8"))
-        for p in sorted(stage_dir.glob("*.json"))
-        if p.name != "_envelope.json"
-    ]
-    return envelope, findings
+    """Read a stage dir back via the shared helper."""
+    return load_stage_dir(stage_dir)
 
 
 def write_batches(validation_dir: Path, findings: list[dict]) -> int:

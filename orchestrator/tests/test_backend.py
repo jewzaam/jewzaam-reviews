@@ -246,3 +246,53 @@ class TestAgentTrace:
             "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp"
         )
         assert list(tmp_path.iterdir()) == []
+
+
+class TestRedactPrompt:
+    def test_guidance_block_redacted_until_next_section(self):
+        prompt = (
+            "PROJECT CONTEXT:\n- Language: Python\n\n"
+            "USER GUIDANCE:\nsecret focus area\nwith a second line\n\n"
+            "METHODOLOGY:\nPhase 1\n"
+        )
+        redacted = backend.redact_prompt(prompt)
+        assert "secret focus area" not in redacted
+        assert "second line" not in redacted
+        assert "[guidance redacted from trace]" in redacted
+        assert "METHODOLOGY:" in redacted
+        assert "- Language: Python" in redacted
+
+    def test_no_guidance_is_passthrough(self):
+        prompt = "PROJECT CONTEXT:\nno guidance here\n"
+        assert backend.redact_prompt(prompt) == prompt
+
+    def test_trace_stores_redacted_prompt(self, monkeypatch, tmp_path):
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())))
+        trace = tmp_path / "trace.jsonl"
+        backend.run_agent(
+            "USER GUIDANCE:\ntopsecret\n\nMETHODOLOGY:\ngo",
+            schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            trace_file=trace, label="x",
+        )
+        content = trace.read_text()
+        assert "topsecret" not in content
+        assert (trace.stat().st_mode & 0o777) == 0o600
+
+
+class TestErrorCategories:
+    def test_timeout_category(self, monkeypatch):
+        _patch_run(monkeypatch, subprocess.TimeoutExpired(cmd=["claude"], timeout=5))
+        res = backend.run_agent(
+            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp", timeout_s=5
+        )
+        assert res.error_category == "timeout"
+
+    def test_spawn_category(self, monkeypatch):
+        _patch_run(monkeypatch, FileNotFoundError("no claude"))
+        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        assert res.error_category == "spawn"
+
+    def test_agent_error_category(self, monkeypatch):
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result(is_error=True))))
+        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        assert res.error_category == "agent"

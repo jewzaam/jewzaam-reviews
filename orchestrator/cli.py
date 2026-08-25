@@ -7,11 +7,22 @@ Usage (typically via the review skill wrapper, but works standalone):
     python orchestrator/cli.py [--pr N] [--guidance "text"]
         [--scoring categorical|simple] [--project-root PATH]
         [--max-agents 16] [--parallel 4] [--timeout 600] [--dry-run]
+
+Long runs from an agent wrapper use the detach/wait pair — the run survives
+the wrapper's process lifetime, and waiting is a short idempotent command
+the wrapper repeats until it stops returning exit code 3:
+
+    python orchestrator/cli.py --detach [run args]   # start, return at once
+    python orchestrator/cli.py --wait                # exit 0/1 done, 3 running
 """
 
 import argparse
+import hashlib
 import os
+import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -19,6 +30,90 @@ if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
 from orchestrator import pipeline  # noqa: E402
+
+EXIT_STILL_RUNNING = 3
+_EXIT_FILE_ENV = "REVIEW_ORCHESTRATOR_EXIT_FILE"
+
+
+def _run_files(project_root: str) -> dict[str, Path]:
+    """Per-project runtime files, outside the repo and outside .tmp-review
+    (which the run itself wipes). Kept in an owner-only directory so the
+    predictable names in the shared temp dir are not attackable."""
+    run_dir = Path(tempfile.gettempdir()) / f"review-orchestrator-{os.getuid()}"
+    run_dir.mkdir(mode=0o700, exist_ok=True)
+    key = hashlib.sha256(str(Path(project_root).resolve()).encode()).hexdigest()[:12]
+    base = run_dir / key
+    return {
+        "log": base.with_suffix(".log"),
+        "exit": base.with_suffix(".exit"),
+        "pid": base.with_suffix(".pid"),
+    }
+
+
+def _pid_alive(pid_file: Path) -> int | None:
+    """Return the recorded child pid if it is still running, else None."""
+    try:
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, 0)
+        return pid
+    except (OSError, ValueError):
+        return None
+
+
+def _detach(args, passthrough: list[str]) -> int:
+    files = _run_files(args.project_root)
+    running = _pid_alive(files["pid"])
+    if running is not None and not files["exit"].is_file():
+        print(
+            f"error: a review for this project is already running (pid {running}); "
+            "poll it with --wait or kill it first",
+            file=sys.stderr,
+        )
+        return 2
+    for path in files.values():
+        path.unlink(missing_ok=True)
+    log_fh = files["log"].open("w", encoding="utf-8")
+    env = dict(os.environ)
+    env[_EXIT_FILE_ENV] = str(files["exit"])
+    proc = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), *passthrough],
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+        env=env,
+        cwd=args.project_root,
+    )
+    log_fh.close()
+    files["pid"].write_text(str(proc.pid), encoding="utf-8")
+    print(f"review started (pid {proc.pid}); poll with: --wait")
+    return 0
+
+
+def _wait(args) -> int:
+    files = _run_files(args.project_root)
+    deadline = time.monotonic() + args.wait_timeout_s
+    while time.monotonic() < deadline:
+        if files["exit"].is_file():
+            code = int(files["exit"].read_text().strip() or "1")
+            log = files["log"].read_text(encoding="utf-8") if files["log"].is_file() else ""
+            # The summary is the tail of the run log.
+            tail = "\n".join(log.splitlines()[-40:])
+            print(tail)
+            print(f"\nreview finished with exit code {code}")
+            return code
+        if not files["log"].is_file():
+            print("no review is running for this project (nothing was started)")
+            return 2
+        if _pid_alive(files["pid"]) is None:
+            # Process died without writing its exit file (killed, OOM, ...).
+            log = files["log"].read_text(encoding="utf-8")
+            print("\n".join(log.splitlines()[-40:]))
+            print("\nreview process died without completing (killed or crashed)")
+            return 1
+        time.sleep(5)
+    print(f"still running after {args.wait_timeout_s}s — run --wait again")
+    return EXIT_STILL_RUNNING
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -38,17 +133,50 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--project-root", default=os.getcwd(), help="project to review"
     )
-    parser.add_argument("--max-agents", type=int, default=16)
-    parser.add_argument("--parallel", type=int, default=4)
+    def _positive_int(value: str) -> int:
+        parsed = int(value)
+        if parsed < 1:
+            raise argparse.ArgumentTypeError("must be >= 1")
+        return parsed
+
+    parser.add_argument("--max-agents", type=_positive_int, default=16)
+    parser.add_argument("--parallel", type=_positive_int, default=4)
     parser.add_argument(
-        "--timeout", type=int, default=600, help="per-agent timeout in seconds"
+        "--timeout", type=_positive_int, default=600,
+        help="per-agent timeout in seconds",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="compute scope and print the selector prompt without dispatching agents",
     )
+    parser.add_argument(
+        "--detach",
+        action="store_true",
+        help="start the run as a detached process and return immediately",
+    )
+    parser.add_argument(
+        "--wait",
+        action="store_true",
+        help="poll a detached run; exit 0/1 when done, "
+        f"{EXIT_STILL_RUNNING} while still running",
+    )
+    parser.add_argument(
+        "--wait-timeout-s",
+        type=int,
+        default=100,
+        help="how long one --wait call blocks before returning still-running",
+    )
     args = parser.parse_args(argv)
+
+    if args.wait:
+        return _wait(args)
+    if args.detach:
+        if args.dry_run:
+            print("error: --detach and --dry-run are mutually exclusive", file=sys.stderr)
+            return 2
+        passthrough = [a for a in (argv if argv is not None else sys.argv[1:]) if a != "--detach"]
+        return _detach(args, passthrough)
 
     options = pipeline.Options(
         project_root=str(Path(args.project_root).resolve()),
@@ -60,11 +188,18 @@ def main(argv: list[str] | None = None) -> int:
         timeout_s=args.timeout,
         dry_run=args.dry_run,
     )
+    exit_file = os.environ.get(_EXIT_FILE_ENV)
     try:
-        return pipeline.run_review(options)
+        code = pipeline.run_review(options)
     except pipeline.PipelineError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        code = 1
+    except KeyboardInterrupt:
+        print("ERROR: interrupted", file=sys.stderr)
+        code = 130
+    if exit_file:
+        Path(exit_file).write_text(str(code), encoding="utf-8")
+    return code
 
 
 if __name__ == "__main__":
