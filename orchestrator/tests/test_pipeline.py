@@ -45,12 +45,23 @@ def _lens_output(concern, concern_slug, dimension_slug="full-scope"):
 def _fake_run_agent_factory(calls, selector_response="default", fail_labels=(), fail_validators=False):
     """Route fake responses by prompt content; record every call."""
 
-    def fake_run_agent(prompt, *, schema, model, allowed_tools, cwd, tools=None, effort=None, timeout_s=600, trace_file=None, label=""):
+    def fake_run_agent(prompt, *, schema, model, allowed_tools, cwd, tools=None, effort=None, timeout_s=600, trace_file=None, label="", redact=None):
         calls.append({"prompt": prompt, "model": model, "allowed": allowed_tools, "tools": tools})
 
         if "Select which review lenses" in prompt:
             if selector_response == "fail":
                 return backend.AgentResult(error="selector exploded", cost_usd=0.001)
+            if selector_response == "two-dims":
+                return backend.AgentResult(
+                    output={
+                        "lenses": [{"name": "implementation", "rationale": "always"}],
+                        "dimensions": [
+                            {"name": "core", "slug": "core", "scope": {}},
+                            {"name": "docs", "slug": "docs", "scope": {}},
+                        ],
+                    },
+                    cost_usd=0.001,
+                )
             if selector_response == "empty":
                 return backend.AgentResult(
                     output={"lenses": []},
@@ -82,13 +93,14 @@ def _fake_run_agent_factory(calls, selector_response="default", fail_labels=(), 
                 cost_usd=0.005,
             )
 
-        match = re.search(r'agent_id to "([a-z]+)/', prompt)
+        match = re.search(r'agent_id to "([a-z]+)/([a-z-]+)"', prompt)
         slug = match.group(1) if match else "implementation"
+        dim_slug = match.group(2) if match else "full-scope"
         if slug in fail_labels:
             return backend.AgentResult(error=f"{slug} agent failed", cost_usd=0.003)
         concern_match = re.search(r"for the \*\*(.+?)\*\* axis", prompt)
         return backend.AgentResult(
-            output=_lens_output(concern_match.group(1), slug),
+            output=_lens_output(concern_match.group(1), slug, dimension_slug=dim_slug),
             cost_usd=0.01,
         )
 
@@ -317,3 +329,32 @@ class TestIssuesMergedOffsets:
         assert len(messages) == len(set(messages))  # merged once each
         assert any("security" in m for m in messages)
         assert any("validator" in m for m in messages)
+
+
+class TestMultiDimensionFanOut:
+    def test_two_dimensions_produce_two_raw_files(self, git_repo, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            backend,
+            "run_agent",
+            _fake_run_agent_factory(calls, selector_response="two-dims"),
+        )
+        rc = pipeline.run_review(_options(git_repo))
+        assert rc == 0
+        raw = git_repo / ".tmp-review" / "00-raw"
+        # wiped-then-refilled by the run; findings JSON aggregates both dims
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        dims = {d["dimension_slug"] for d in findings["decomposition"]}
+        assert dims == {"core", "docs"}
+
+
+class TestDenialAggregation:
+    def test_denials_by_tool_in_costs(self, git_repo):
+        state = pipeline.RunState(options=_options(git_repo), scope=None)
+        state.tmp_dir.mkdir(exist_ok=True)
+        denial = {"tool_name": "Bash", "tool_input": {"command": "git -C x diff"}}
+        result = backend.AgentResult(output={"ok": True}, cost_usd=0.01)
+        result.permission_denials = [denial, dict(denial)]
+        pipeline._run_with_retry(state, "select", "x", "haiku", lambda: result)
+        report = pipeline._write_costs(state)
+        assert report["denials_by_tool"] == {"Bash": 2}

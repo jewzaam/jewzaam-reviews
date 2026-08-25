@@ -89,6 +89,8 @@ Key properties:
 
 Each run's cost table shows what the chosen mode actually cost, so the trade-off can be compared with real numbers across runs.
 
+> Migrating from ≤0.7.x: the `review-supplementary` skill and red/green test validation were removed. Suggestion and needs-review findings still land in the `-supplementary.md` file; validators now run inside `/review` itself.
+
 ## Severity Mapping (categorical mode)
 
 Findings carry five categorical dimensions. The renderer maps them deterministically to severity buckets:
@@ -130,7 +132,7 @@ The orchestrator needs only a `claude` CLI on PATH with working auth — any she
 
 ## Filename convention
 
-Two document types, two prefixes:
+Two document types, two prefixes (`<scope>` is `pr-<N>` for PR reviews or a slug derived from guidance text):
 
 - **`Findings-<skill-name>[-<scope>].{json,md[,-supplementary.md]}`** — produced by the four producer skills. "Findings" because these are things the reviewer found in the user's code.
 - **`Report-apply-review.json`** — produced by apply-review. "Report" because it summarizes actions taken, not findings. No markdown (no user-facing review document).

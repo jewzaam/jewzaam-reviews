@@ -123,7 +123,7 @@ class TestApplyVerdicts:
 
 
 def _fake_simple_backend(calls):
-    def fake_run_agent(prompt, *, schema, model, allowed_tools, cwd, tools=None, effort=None, timeout_s=600, trace_file=None, label=""):
+    def fake_run_agent(prompt, *, schema, model, allowed_tools, cwd, tools=None, effort=None, timeout_s=600, trace_file=None, label="", redact=None):
         calls.append(prompt)
         if "Select which review lenses" in prompt:
             return backend.AgentResult(

@@ -16,7 +16,7 @@ def build_selector_prompt(scope: ReviewScope, roster: tuple[Lens, ...]) -> str:
     roster_lines = "\n".join(f"- {lens.slug}: {lens.runs_when}" for lens in roster)
 
     if scope.merge_base:
-        scope_commands = f"""Run these read-only git commands to understand the change:
+        scope_commands = f"""Run these read-only git commands to understand the change (exactly as written — run from the working directory, never with `git -C`):
 - `git diff --name-status {scope.merge_base}..HEAD` and `git diff --numstat {scope.merge_base}..HEAD` for the changed-file list and per-file churn
 - `git diff {scope.merge_base}..HEAD -- <path>` for patch content when a file's role is unclear"""
     else:

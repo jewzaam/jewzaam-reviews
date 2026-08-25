@@ -59,6 +59,8 @@ python ${CLAUDE_PLUGIN_ROOT}/orchestrator/cli.py --wait
 
 ### 5. Relay Results
 
+The run writes three files at the project root: `Findings-review[-<scope>].json` (structured findings), `.md` (critical/important detail), and `-supplementary.md` (suggestions, needs-review, decomposition, cross-cutting observations).
+
 Relay the final `--wait` output verbatim: severity counts, output filenames, and the measured per-stage cost table. If it reports a non-zero finish, show that output and stop — do not attempt to reconstruct findings yourself.
 
 ## Critical Rules

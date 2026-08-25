@@ -183,6 +183,8 @@ def stage_cli(script_name: str, *args: str, cwd: str) -> None:
     """
     argv = [sys.executable, str(REVIEW_SCRIPTS / script_name), *args]
     proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+    if proc.stdout.strip():
+        print(proc.stdout.strip(), file=sys.stderr)
     if proc.returncode != 0:
         raise PipelineError(
             f"{script_name} failed (exit {proc.returncode}):\n{proc.stderr.strip()}"
@@ -229,12 +231,26 @@ def _run_selector(state) -> dict | None:
             timeout_s=state.options.timeout_s,
             trace_file=state.tmp_dir / TRACE_FILENAME,
             label="lens-selector",
+            redact=state.scope.guidance or None,
         ),
     )
     if result.error is not None:
         _record_agent_failure(state, "lens-selector", result)
         return None
     return result.output
+
+
+def _fan_out(state, items, run_one, on_success) -> None:
+    """Run agent jobs concurrently; failures become issues, successes call back."""
+    with ThreadPoolExecutor(max_workers=state.options.parallel) as pool:
+        futures = {pool.submit(run_one, item): item for item in items}
+        for future, item in futures.items():
+            result = future.result()
+            label = item["label"]
+            if result.error is not None:
+                _record_agent_failure(state, label, result)
+                continue
+            on_success(item, result)
 
 
 def _dispatch_review_agents(state, selected, dimensions) -> None:
@@ -268,25 +284,24 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
                 timeout_s=state.options.timeout_s,
                 trace_file=state.tmp_dir / TRACE_FILENAME,
                 label=label,
+                redact=state.scope.guidance or None,
             ),
             schema=schema,
         )
 
-    jobs = [(lens, dim) for dim in dimensions for lens in selected]
-    with ThreadPoolExecutor(max_workers=state.options.parallel) as pool:
-        lens_futures = {
-            pool.submit(run_lens, lens, dim): (lens, dim) for lens, dim in jobs
-        }
-        for future, (lens, dim) in lens_futures.items():
-            result = future.result()
-            label = f"{lens.slug}/{dim['slug']}"
-            if result.error is not None:
-                _record_agent_failure(state, label, result)
-                continue
-            out_path = raw_dir / f"{lens.slug}-{dim['slug']}.json"
-            out_path.write_text(
-                json.dumps(result.output, indent=2), encoding="utf-8"
-            )
+    jobs = [
+        {"lens": lens, "dim": dim, "label": f"{lens.slug}/{dim['slug']}"}
+        for dim in dimensions
+        for lens in selected
+    ]
+    _fan_out(
+        state,
+        jobs,
+        lambda job: run_lens(job["lens"], job["dim"]),
+        lambda job, result: (raw_dir / f"{job['label'].replace('/', '-')}.json").write_text(
+            json.dumps(result.output, indent=2), encoding="utf-8"
+        ),
+    )
 
 
 def _revalidate_raw(state) -> None:
@@ -372,24 +387,27 @@ def run_validators(state) -> None:
                 timeout_s=state.options.timeout_s,
                 trace_file=state.tmp_dir / TRACE_FILENAME,
                 label=f"validator-batch-{batch['batch_number']}",
+                redact=state.scope.guidance or None,
             ),
             schema=schema,
         )
 
-    batches = [json.loads(p.read_text(encoding="utf-8")) for p in batch_files]
-    with ThreadPoolExecutor(max_workers=state.options.parallel) as pool:
-        futures = {pool.submit(run_batch, b): b for b in batches}
-        for future, batch in futures.items():
-            result = future.result()
-            number = batch["batch_number"]
-            if result.error is not None:
-                # Findings without a verdict pass through unchanged
-                # (apply-verdicts.py behavior) — record and continue.
-                _record_agent_failure(state, f"validator-batch-{number}", result)
-                continue
-            (validation_dir / f"batch-{number}-output.json").write_text(
-                json.dumps(result.output, indent=2), encoding="utf-8"
-            )
+    # Findings whose validator fails pass through unchanged
+    # (apply-verdicts.py behavior) — _fan_out records the failure issue.
+    jobs = [
+        {"batch": json.loads(path.read_text(encoding="utf-8"))}
+        for path in batch_files
+    ]
+    for job in jobs:
+        job["label"] = f"validator-batch-{job['batch']['batch_number']}"
+    _fan_out(
+        state,
+        jobs,
+        lambda job: run_batch(job["batch"]),
+        lambda job, result: (
+            validation_dir / f"batch-{job['batch']['batch_number']}-output.json"
+        ).write_text(json.dumps(result.output, indent=2), encoding="utf-8"),
+    )
 
 
 def _write_costs(state) -> dict:
@@ -435,7 +453,12 @@ def _print_summary(state, cost_report) -> None:
     """Print the terse end-of-run summary: counts, files, measured cost."""
     slug = f"-{state.scope.scope_slug}" if state.scope.scope_slug else ""
     findings_path = Path(state.options.project_root) / f"Findings-review{slug}.json"
-    envelope = json.loads(findings_path.read_text(encoding="utf-8"))
+    try:
+        envelope = json.loads(findings_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PipelineError(
+            f"rendered findings unreadable at {findings_path}: {exc}"
+        ) from exc
     counts = {"critical": 0, "important": 0, "suggestion": 0, "needs-review": 0}
     for finding in envelope.get("findings", []):
         counts[finding["severity"]] = counts.get(finding["severity"], 0) + 1

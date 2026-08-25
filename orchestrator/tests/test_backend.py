@@ -263,22 +263,20 @@ class TestAgentTrace:
 
 
 class TestRedactPrompt:
-    def test_guidance_block_redacted_until_next_section(self):
-        prompt = (
-            "PROJECT CONTEXT:\n- Language: Python\n\n"
-            "USER GUIDANCE:\nsecret focus area\nwith a second line\n\n"
-            "METHODOLOGY:\nPhase 1\n"
-        )
-        redacted = backend.redact_prompt(prompt)
+    def test_exact_guidance_text_replaced(self):
+        guidance = "secret focus area\nwith METHODOLOGY: inside it"
+        prompt = f"PROJECT CONTEXT:\n- Language: Python\n\nUSER GUIDANCE:\n{guidance}\n\nMETHODOLOGY:\nPhase 1\n"
+        redacted = backend.redact_prompt(prompt, guidance)
         assert "secret focus area" not in redacted
-        assert "second line" not in redacted
+        assert "inside it" not in redacted
         assert "[guidance redacted from trace]" in redacted
-        assert "METHODOLOGY:" in redacted
+        assert "METHODOLOGY:\nPhase 1" in redacted
         assert "- Language: Python" in redacted
 
-    def test_no_guidance_is_passthrough(self):
+    def test_no_redact_text_is_passthrough(self):
         prompt = "PROJECT CONTEXT:\nno guidance here\n"
-        assert backend.redact_prompt(prompt) == prompt
+        assert backend.redact_prompt(prompt, None) == prompt
+        assert backend.redact_prompt(prompt, "") == prompt
 
     def test_trace_stores_redacted_prompt(self, monkeypatch, tmp_path):
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())))
@@ -286,7 +284,7 @@ class TestRedactPrompt:
         backend.run_agent(
             "USER GUIDANCE:\ntopsecret\n\nMETHODOLOGY:\ngo",
             schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
-            trace_file=trace, label="x",
+            trace_file=trace, label="x", redact="topsecret",
         )
         content = trace.read_text()
         assert "topsecret" not in content
@@ -312,7 +310,7 @@ class TestErrorCategories:
         assert res.error_category == "agent"
 
 
-class TestRoundTwoFixes:
+class TestAllowedToolsJoinAndTraceRobustness:
     def test_allowed_tools_with_internal_space_survive_join(self, monkeypatch):
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
@@ -336,13 +334,12 @@ class TestRoundTwoFixes:
         assert res.error is None  # tracing failure never fails the run
         assert "trace write failed" in capsys.readouterr().err
 
-    def test_redaction_survives_allcaps_inside_guidance(self):
-        prompt = (
-            "USER GUIDANCE:\nfocus here\nNOTE:\nstill secret\n\n"
-            "METHODOLOGY:\nPhase 1\n"
-        )
-        redacted = backend.redact_prompt(prompt)
+    def test_redaction_survives_any_content_inside_guidance(self):
+        guidance = "focus here\nNOTE:\nstill secret\nOUTPUT:\nand this too"
+        prompt = f"USER GUIDANCE:\n{guidance}\n\nMETHODOLOGY:\nPhase 1\n"
+        redacted = backend.redact_prompt(prompt, guidance)
         assert "still secret" not in redacted
+        assert "and this too" not in redacted
         assert "focus here" not in redacted
         assert "METHODOLOGY:" in redacted
 
@@ -366,3 +363,11 @@ class TestMalformedResults:
         backend.run_agent("the secret prompt", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
         assert "the secret prompt" not in capture["argv"]
         assert capture["kwargs"]["stdin"] is not None
+
+
+class TestDenialsFallback:
+    def test_non_list_permission_denials_tolerated(self, monkeypatch):
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result(permission_denials="junk"))))
+        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        assert res.error is None
+        assert res.permission_denials == []

@@ -59,43 +59,18 @@ def load_resolved_schema(name: str) -> dict:
 
 _TRACE_LOCK = threading.Lock()
 
-# Delimiters for the user-guidance block inside prompts. Guidance is the
-# only user-authored free text in a prompt; it is redacted from traces.
-_GUIDANCE_HEADER = "USER GUIDANCE"
-# The fixed prompt sections that can follow a guidance block (prompts.py
-# controls this structure). Redaction ends only at one of these, so
-# ALL-CAPS text inside the user's own guidance cannot end it early.
-_SECTIONS_AFTER_GUIDANCE = (
-    "METHODOLOGY:",
-    "AVAILABLE LENSES:",
-    "SELECTION RULES:",
-    "OUTPUT:",
-)
 
+def redact_prompt(prompt: str, redact_text: str | None) -> str:
+    """Replace the literal user-authored text in a prompt before tracing.
 
-def redact_prompt(prompt: str) -> str:
-    """Redact the user-guidance block from a prompt before tracing.
-
-    Guidance is redacted from its header until the next known fixed prompt
-    section (or end of prompt). Everything else in a prompt is
-    project-derived (paths, diff stats, instructions) and is the debugging
-    value of the trace.
+    Exact-substring replacement of the guidance string the caller supplies —
+    no structural heuristics, so no prompt or guidance content can end the
+    redaction early or leak around it. Everything else in a prompt is
+    project-derived and is the debugging value of the trace.
     """
-    if _GUIDANCE_HEADER not in prompt:
+    if not redact_text:
         return prompt
-    out: list[str] = []
-    in_guidance = False
-    for line in prompt.splitlines():
-        if line.startswith(_GUIDANCE_HEADER):
-            in_guidance = True
-            out.append(line)
-            out.append("[guidance redacted from trace]")
-            continue
-        if in_guidance and line.startswith(_SECTIONS_AFTER_GUIDANCE):
-            in_guidance = False
-        if not in_guidance:
-            out.append(line)
-    return "\n".join(out)
+    return prompt.replace(redact_text, "[guidance redacted from trace]")
 
 
 def _write_trace(trace_file, record: dict) -> None:
@@ -160,6 +135,7 @@ def run_agent(
     timeout_s: int = 600,
     trace_file: str | Path | None = None,
     label: str = "",
+    redact: str | None = None,
 ) -> AgentResult:
     """Run one headless claude agent and parse its result JSON.
 
@@ -170,7 +146,8 @@ def run_agent(
     auto-allow list (git diff/log/...), but removing the tool can.
 
     When `trace_file` is set, every invocation appends one JSON line there:
-    the prompt, invocation parameters, outcome, and the raw CLI result.
+    the prompt (with the literal `redact` text replaced), invocation
+    parameters, outcome, and the raw CLI result.
     The child runs with --no-session-persistence, so this trace is the only
     record of what a sub-agent was asked and answered — the debugging trail.
     """
@@ -191,7 +168,7 @@ def run_agent(
                 "error": agent_result.error,
                 "cost_usd": agent_result.cost_usd,
                 "denials": agent_result.permission_denials,
-                "prompt": redact_prompt(prompt),
+                "prompt": redact_prompt(prompt, redact),
                 "result": raw_result,
             },
         )
