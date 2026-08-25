@@ -15,12 +15,14 @@ reporting is real spend, never an estimate.
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 ORCHESTRATOR_ROOT = Path(__file__).resolve().parent
 PLUGIN_ROOT = ORCHESTRATOR_ROOT.parent
@@ -61,19 +63,27 @@ _TRACE_LOCK = threading.Lock()
 # Delimiters for the user-guidance block inside prompts. Guidance is the
 # only user-authored free text in a prompt; it is redacted from traces.
 _GUIDANCE_HEADER = "USER GUIDANCE"
+# The fixed prompt sections that can follow a guidance block (prompts.py
+# controls this structure). Redaction ends only at one of these, so
+# ALL-CAPS text inside the user's own guidance cannot end it early.
+_SECTIONS_AFTER_GUIDANCE = (
+    "METHODOLOGY:",
+    "AVAILABLE LENSES:",
+    "SELECTION RULES:",
+    "OUTPUT:",
+)
 
 
 def redact_prompt(prompt: str) -> str:
     """Redact the user-guidance block from a prompt before tracing.
 
-    Guidance is redacted from its header until the next ALL-CAPS section
-    header (or end of prompt). Everything else in a prompt is
+    Guidance is redacted from its header until the next known fixed prompt
+    section (or end of prompt). Everything else in a prompt is
     project-derived (paths, diff stats, instructions) and is the debugging
     value of the trace.
     """
     if _GUIDANCE_HEADER not in prompt:
         return prompt
-    section_header = re.compile(r"^[A-Z][A-Z /&-]+:?\s*$")
     out: list[str] = []
     in_guidance = False
     for line in prompt.splitlines():
@@ -82,7 +92,7 @@ def redact_prompt(prompt: str) -> str:
             out.append(line)
             out.append("[guidance redacted from trace]")
             continue
-        if in_guidance and section_header.match(line):
+        if in_guidance and line.startswith(_SECTIONS_AFTER_GUIDANCE):
             in_guidance = False
         if not in_guidance:
             out.append(line)
@@ -209,21 +219,37 @@ def run_agent(
     if effort:
         argv += ["--effort", effort]
     if allowed_tools:
-        argv += ["--allowedTools", " ".join(allowed_tools)]
+        # Comma-separated: patterns like Bash(git diff:*) contain spaces,
+        # and the CLI splits a space-joined list inside them.
+        argv += ["--allowedTools", ",".join(allowed_tools)]
 
     try:
-        proc = subprocess.run(
+        # start_new_session so a timeout can reap the CLI's own children
+        # (the API worker processes it spawns) via the process group.
+        popen = subprocess.Popen(
             argv,
             cwd=cwd,
             env=_scrubbed_env(),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_s,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired:
-        return _finish(AgentResult(error=f"timeout after {timeout_s}s", error_category="timeout"))
     except OSError as exc:
         return _finish(AgentResult(error=f"failed to spawn claude: {exc}", error_category="spawn"))
+    try:
+        stdout, stderr = popen.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(popen.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        popen.wait()
+        return _finish(AgentResult(error=f"timeout after {timeout_s}s", error_category="timeout"))
+
+    proc = SimpleNamespace(
+        stdout=stdout, stderr=stderr, returncode=popen.returncode
+    )
 
     try:
         result = json.loads(proc.stdout)

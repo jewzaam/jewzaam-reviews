@@ -77,3 +77,15 @@ def test_dimensions_invalid_entries_dropped():
     out = {"dimensions": [{"name": "", "slug": "x"}, "junk", {"slug": "y"}]}
     dims = lenses.resolve_dimensions(out, lens_count=2, max_agents=16)
     assert dims[0]["slug"] == "full-scope"
+
+
+def test_duplicate_dimension_slugs_deduped():
+    out = {
+        "dimensions": [
+            {"name": "a", "slug": "same", "scope": {}},
+            {"name": "b", "slug": "same", "scope": {}},
+            {"name": "c", "slug": "other", "scope": {}},
+        ]
+    }
+    dims = lenses.resolve_dimensions(out, lens_count=2, max_agents=16)
+    assert [d["slug"] for d in dims] == ["same", "other"]

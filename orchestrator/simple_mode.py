@@ -16,6 +16,7 @@ PLUGIN_ROOT = ORCHESTRATOR_ROOT.parent
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
+from orchestrator import pipeline  # noqa: E402
 from scripts.envelope import (  # noqa: E402
     content_hash,
     load_stage_dir,
@@ -25,7 +26,7 @@ from scripts.envelope import (  # noqa: E402
 
 SEVERITY_ORDER = {"critical": 0, "important": 1, "suggestion": 2}
 CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2}
-BATCH_SIZE = 8
+BATCH_SIZE = 8  # keep in sync with MAX_BATCH_SIZE in skills/review/scripts/batch-findings.py
 
 
 def _primary_location(finding: dict) -> dict:
@@ -102,10 +103,15 @@ def collect_findings(raw_dir: Path) -> tuple[list[dict], list[dict], list[dict]]
                 SEVERITY_ORDER.get(entry["severity"], 9),
                 CONFIDENCE_ORDER.get(entry["confidence"], 9),
             )
-            if entry_rank < existing_rank:
-                findings[key] = _merge(entry, existing)
-            else:
-                findings[key] = _merge(existing, entry)
+            winner, loser = (
+                (entry, existing) if entry_rank < existing_rank else (existing, entry)
+            )
+            print(
+                f"simple-mode dedup: merged '{loser['title']}' into "
+                f"'{winner['title']}' at {key[1]}:{key[2]}",
+                file=sys.stderr,
+            )
+            findings[key] = _merge(winner, loser)
     ordered = sorted(findings.values(), key=lambda f: f["content_hash"])
     return ordered, list(decomposition.values()), observations
 
@@ -177,11 +183,11 @@ def apply_verdicts(validation_dir: Path, findings: list[dict]) -> tuple[list[dic
                 "severity": "warning",
                 "kind": "other",
                 "message": (
-                    f"validator_removed[{verdict['remove_reason']}]: "
-                    f"'{finding['title']}' ({finding['content_hash']}): "
+                    f"validator_removed[{verdict['remove_reason']}]: finding "
+                    f"'{finding['title']}' ({finding['content_hash']}) — "
                     f"{verdict['reasoning']}"
                 ),
-                "source_component": "validator",
+                "source_component": "apply-verdicts",
             }
         )
     return survivors, issues
@@ -189,17 +195,11 @@ def apply_verdicts(validation_dir: Path, findings: list[dict]) -> tuple[list[dic
 
 def run_simple_path(state) -> None:
     """Simple-mode stages after fan-out: dedup -> filter -> validate -> render."""
-    from orchestrator import pipeline  # local import to avoid a cycle
-
     tmp = state.tmp_dir
     cwd = state.options.project_root
     review_scope = state.scope
 
     findings, decomposition, observations = collect_findings(tmp / "00-raw")
-    if not decomposition:
-        decomposition = [
-            {"dimension_name": "full scope", "dimension_slug": "full-scope", "dimension_scope": {}}
-        ]
     project = {"name": review_scope.project_name}
     if review_scope.scope_slug:
         project["scope_slug"] = review_scope.scope_slug
@@ -210,7 +210,7 @@ def run_simple_path(state) -> None:
     )
 
     if review_scope.merge_base:
-        pipeline._stage_cli(
+        pipeline.stage_cli(
             "diff-scope-filter.py",
             "--stage-dir",
             f"./{pipeline.TMP_DIR_NAME}/10-merged/",
@@ -221,7 +221,7 @@ def run_simple_path(state) -> None:
 
     envelope, findings = load_stage(tmp / "10-merged")
     write_batches(tmp / "15-validation", findings)
-    pipeline._run_validators(state)
+    pipeline.run_validators(state)
 
     survivors, verdict_issues = apply_verdicts(tmp / "15-validation", findings)
     # envelope["issues"] already holds everything written before the filter
@@ -249,4 +249,4 @@ def run_simple_path(state) -> None:
     ]
     if review_scope.scope_slug:
         render_args += ["--scope-slug", review_scope.scope_slug]
-    pipeline._stage_cli("render-review.py", *render_args, cwd=cwd)
+    pipeline.stage_cli("render-review.py", *render_args, cwd=cwd)

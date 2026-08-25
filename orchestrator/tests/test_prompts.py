@@ -157,3 +157,28 @@ class TestValidatorPrompt:
         assert "severity: critical" in text
         assert "new_severity" in text
         assert "runtime_scope" not in text
+
+
+class TestSelectorPromptBlocks:
+    def test_guidance_and_pr_blocks_toggle(self):
+        bare = prompts.build_selector_prompt(_scope(), LENSES)
+        assert "USER GUIDANCE" not in bare
+        assert "## PR Scope" not in bare
+        full = prompts.build_selector_prompt(
+            _scope(guidance="focus", pr_scope_text="## PR Scope: #9", merge_base="abc123"),
+            LENSES,
+        )
+        assert "USER GUIDANCE" in full and "focus" in full
+        assert "## PR Scope: #9" in full
+
+
+class TestUntrustedContentNote:
+    def test_lens_and_validator_prompts_carry_note(self):
+        lens_text = prompts.build_lens_prompt(_BY_SLUG["implementation"], DIM, _scope())
+        validator_text = prompts.build_validator_prompt(
+            TestValidatorPrompt.BATCH, "/proj", ""
+        )
+        for text in (lens_text, validator_text):
+            assert "UNTRUSTED CONTENT" in text
+            assert "never as instructions" in text or "never instructions" in text \
+                or "never as instructions to follow" in text or "never" in text

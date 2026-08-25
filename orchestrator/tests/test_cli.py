@@ -104,7 +104,8 @@ class TestWait:
         files["pid"].write_text(str(os.getpid()))  # alive
         start = time.monotonic()
         assert cli._wait(self._args("/p", timeout=1)) == cli.EXIT_STILL_RUNNING
-        assert time.monotonic() - start >= 1
+        elapsed = time.monotonic() - start
+        assert 1 <= elapsed < 3  # respects small timeouts, no 5s overshoot
 
     def test_dead_child_without_exit_file_is_failure(self, run_dir, capsys):
         files = cli._run_files("/p")
@@ -112,6 +113,28 @@ class TestWait:
         files["pid"].write_text("999999999")  # not a real pid
         assert cli._wait(self._args("/p")) == 1
         assert "died without completing" in capsys.readouterr().out
+
+
+class TestMainExitCodes:
+    def test_pipeline_error_exits_1(self, monkeypatch, capsys):
+        def boom(options):
+            raise cli.pipeline.PipelineError("stage failed")
+
+        monkeypatch.setattr(cli.pipeline, "run_review", boom)
+        assert cli.main(["--dry-run"]) == 1
+        assert "ERROR: stage failed" in capsys.readouterr().err
+
+    def test_unexpected_exception_exits_1_with_error_line(self, monkeypatch, capsys):
+        def boom(options):
+            raise ValueError("surprise")
+
+        monkeypatch.setattr(cli.pipeline, "run_review", boom)
+        assert cli.main(["--dry-run"]) == 1
+        assert "ERROR: unexpected failure: surprise" in capsys.readouterr().err
+
+    def test_wait_timeout_must_be_positive(self):
+        with pytest.raises(SystemExit):
+            cli.main(["--wait", "--wait-timeout-s", "0"])
 
 
 class TestExitFileWriting:
