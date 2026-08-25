@@ -42,6 +42,7 @@ class AgentResult:
     # Machine-readable failure class for aggregation/alerting:
     # timeout | spawn | protocol | agent | schema (set by callers) | None
     error_category: str | None = None
+    session_id: str = ""  # child session id — joins the trace/ledger to telemetry
 
 
 def load_resolved_schema(name: str) -> dict:
@@ -105,6 +106,37 @@ _ENV_KEEP = {
     "CLAUDE_CODE_ENABLE_TELEMETRY",
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
 }
+# Env files consulted (first hit wins) when the inherited environment has no
+# OTLP endpoint — a long-running parent process can hold an env older than
+# the machine's telemetry config. Only telemetry keys are read from them.
+_OTEL_ENV_FILE_OVERRIDE = "REVIEW_ORCHESTRATOR_OTEL_ENV"
+_OTEL_ENV_FILES = ("/sandbox/.env", "~/.env")
+
+
+def _telemetry_env_from_file() -> dict:
+    """Telemetry keys (OTEL_*, telemetry toggles) from the first env file found.
+
+    Never a general env loader: credentials and unrelated vars in those
+    files must not leak into child processes.
+    """
+    candidates = [os.environ.get(_OTEL_ENV_FILE_OVERRIDE)] + [
+        str(Path(path).expanduser()) for path in _OTEL_ENV_FILES
+    ]
+    for candidate in candidates:
+        if not candidate or not Path(candidate).is_file():
+            continue
+        loaded: dict = {}
+        for line in Path(candidate).read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip().removeprefix("export ").strip()
+            if key.startswith("OTEL_") or key in _ENV_KEEP:
+                loaded[key] = value.strip().strip("'\"")
+        if loaded:
+            return loaded
+    return {}
 
 
 def _scrubbed_env() -> dict:
@@ -114,13 +146,25 @@ def _scrubbed_env() -> dict:
     CLAUDE* vars (CLAUDECODE, CLAUDE_CODE_SESSION_ID, ...) could make the
     nested CLI behave as a subagent of that session. Telemetry toggles are
     kept — verified empirically that a scrub of CLAUDE_CODE_ENABLE_TELEMETRY
-    kills the child's OTEL export.
+    kills the child's OTEL export. When the inherited env lacks an OTLP
+    endpoint, telemetry keys are filled in (never overridden) from a
+    well-known env file so child sessions still report.
     """
-    return {
+    env = {
         k: v
         for k, v in os.environ.items()
         if not k.startswith("CLAUDE") or k in _ENV_KEEP
     }
+    if "OTEL_EXPORTER_OTLP_ENDPOINT" not in env:
+        for key, value in _telemetry_env_from_file().items():
+            env.setdefault(key, value)
+    if "OTEL_EXPORTER_OTLP_ENDPOINT" in env:
+        # An endpoint states intent to export; without exporter selections
+        # the CLI sends nothing. Default them, never override.
+        env.setdefault("CLAUDE_CODE_ENABLE_TELEMETRY", "1")
+        env.setdefault("OTEL_METRICS_EXPORTER", "otlp")
+        env.setdefault("OTEL_LOGS_EXPORTER", "otlp")
+    return env
 
 
 def run_agent(
@@ -251,6 +295,7 @@ def run_agent(
     agent_result = AgentResult(
         cost_usd=cost_usd,
         permission_denials=denials if isinstance(denials, list) else [],
+        session_id=str(result.get("session_id") or ""),
     )
 
     if proc.returncode != 0 or result.get("is_error"):
