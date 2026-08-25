@@ -156,6 +156,29 @@ class TestMainExitCodes:
         with pytest.raises(SystemExit):
             cli.main(["--wait", "--wait-timeout-s", "0"])
 
+    def test_keyboard_interrupt_exits_130(self, monkeypatch, capsys):
+        def boom(options):
+            raise KeyboardInterrupt()
+
+        monkeypatch.setattr(cli.pipeline, "run_review", boom)
+        assert cli.main(["--dry-run"]) == 130
+        assert "ERROR: interrupted" in capsys.readouterr().err
+
+
+class TestForegroundClaim:
+    def test_second_foreground_run_refused(self, run_dir, monkeypatch, tmp_path):
+        files = cli._run_files(str(tmp_path))
+        files["pid"].write_text(str(os.getpid()))
+        files["log"].write_text("x")
+        monkeypatch.setattr(cli.pipeline, "run_review", lambda options: 0)
+        assert cli.main(["--project-root", str(tmp_path)]) == 2
+
+    def test_foreground_claim_released_after_run(self, run_dir, monkeypatch, tmp_path):
+        monkeypatch.setattr(cli.pipeline, "run_review", lambda options: 0)
+        assert cli.main(["--project-root", str(tmp_path)]) == 0
+        files = cli._run_files(str(tmp_path))
+        assert not files["pid"].exists()
+
 
 class TestExitFileWriting:
     def test_run_writes_exit_file_when_env_set(self, tmp_path, monkeypatch):

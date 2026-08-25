@@ -29,7 +29,7 @@ class TestValidateFindings:
 
     def test_explicit_schema_flag(self):
         result = _run(
-            ["--schema", "consolidated", str(FIXTURES / "consolidated.valid.json")]
+            ["--schema", "merged-finding", str(FIXTURES / "merged-finding.valid.json")]
         )
         assert result.returncode == 0, result.stderr
 
@@ -116,25 +116,14 @@ class TestSchemaAutoDetectionByDirectory:
 
     def test_10_merged_finding_implies_merged_finding(self, tmp_path):
         target = tmp_path / ".tmp-review" / "10-merged" / "a1b2c3d4e5f60718.json"
-        self._copy_fixture_as(FIXTURES / "consolidated.valid.json", target)
-        # Extract a single finding from the consolidated fixture
-        import json
-        with (FIXTURES / "consolidated.valid.json").open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        finding = data["findings"][0]
-        target.write_text(json.dumps(finding), encoding="utf-8")
+        self._copy_fixture_as(FIXTURES / "merged-finding.valid.json", target)
         result = _run([str(target)])
         assert result.returncode == 0, result.stderr
         assert "merged-finding" in result.stdout
 
     def test_20_findings_dir_implies_merged_finding(self, tmp_path):
         target = tmp_path / ".tmp-review" / "20-findings" / "a1b2c3d4e5f60718.json"
-        import json
-        with (FIXTURES / "consolidated.valid.json").open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        finding = data["findings"][0]
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(finding), encoding="utf-8")
+        self._copy_fixture_as(FIXTURES / "merged-finding.valid.json", target)
         result = _run([str(target)])
         assert result.returncode == 0, result.stderr
         assert "merged-finding" in result.stdout

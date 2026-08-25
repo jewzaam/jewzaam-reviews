@@ -41,20 +41,6 @@ class TestAgentOutputSchema:
             _validate(schema, instance)
 
 
-class TestConsolidatedSchema:
-    def test_valid_fixture_passes(self, schemas_dir, fixtures_dir):
-        schema = _load_json(schemas_dir / "consolidated.schema.json")
-        instance = _load_json(fixtures_dir / "consolidated.valid.json")
-        _validate(schema, instance)
-
-    def test_missing_content_hash_fails(self, schemas_dir, fixtures_dir):
-        schema = _load_json(schemas_dir / "consolidated.schema.json")
-        instance = _load_json(
-            fixtures_dir / "consolidated.invalid-missing-content-hash.json"
-        )
-        with pytest.raises(jsonschema.ValidationError):
-            _validate(schema, instance)
-
 
 class TestStageEnvelopeSchema:
     def test_valid_envelope_passes(self, schemas_dir):
@@ -78,14 +64,12 @@ class TestStageEnvelopeSchema:
 class TestMergedFindingSchema:
     def test_valid_finding_passes(self, schemas_dir, fixtures_dir):
         schema = _load_json(schemas_dir / "merged-finding.schema.json")
-        consolidated = _load_json(fixtures_dir / "consolidated.valid.json")
-        finding = consolidated["findings"][0]
+        finding = _load_json(fixtures_dir / "merged-finding.valid.json")
         _validate(schema, finding)
 
     def test_missing_content_hash_fails(self, schemas_dir, fixtures_dir):
         schema = _load_json(schemas_dir / "merged-finding.schema.json")
-        consolidated = _load_json(fixtures_dir / "consolidated.valid.json")
-        finding = dict(consolidated["findings"][0])
+        finding = _load_json(fixtures_dir / "merged-finding.valid.json")
         del finding["content_hash"]
         with pytest.raises(jsonschema.ValidationError):
             _validate(schema, finding)

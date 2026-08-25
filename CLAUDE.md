@@ -100,7 +100,7 @@ Render scripts per skill:
 
 ### Two-schema trap inside review
 
-`skills/review/schemas/` holds the **review-internal schemas** (agent-output, agent-output-simple, selector-output, consolidated, merged-finding, stage-envelope, validation-input, validation-output, validation-output-simple). These are NOT the cross-skill `schemas/findings.schema.json`. The orchestrator's lens agents return **agent-output**-shaped JSON (written by the orchestrator into `.tmp-review/00-raw/*.json`); the consolidator writes **stage-envelope** + **merged-finding** files into `10-merged/`; `apply-verdicts.py` writes `20-findings/`; the renderer aggregates those into the final envelope validated against the shared schema.
+`skills/review/schemas/` holds the **review-internal schemas** (agent-output, agent-output-simple, selector-output, merged-finding, stage-envelope, validation-input, validation-output, validation-output-simple). These are NOT the cross-skill `schemas/findings.schema.json`. The orchestrator's lens agents return **agent-output**-shaped JSON (written by the orchestrator into `.tmp-review/00-raw/*.json`); the consolidator writes **stage-envelope** + **merged-finding** files into `10-merged/`; `apply-verdicts.py` writes `20-findings/`; the renderer aggregates those into the final envelope validated against the shared schema.
 
 Historical bug to watch for: an agent that mistakes the shared envelope for its own output spec writes envelope-shape keys (`schema_version`, `source`, `project`, `decomposition`, `issues`, ...) instead of agent-output keys (`agent_id`, `concern_slug`, `dimension_slug`, ...). The file is silently dropped from consolidation. `consolidate-findings.py` detects this shape mismatch and records a targeted `schema_rejected_input` issue in the stage envelope's `issues[]` — worth knowing when debugging a low-finding-count review. The orchestrator's `--json-schema` enforcement makes this much less likely than it was under prompt-only enforcement.
 
@@ -137,7 +137,7 @@ The wrapper script exists because Claude Code's session-level `cat` permission b
   costs.json         # measured per-stage cost ledger
 ```
 
-Each numbered stage directory follows a **stage contract**: `_envelope.json` carries metadata (project, decomposition, issues) and individual `<content_hash>.json` files carry findings. The `content_hash` is the stable cross-stage key — findings are identified by hash, not array position.
+`10-merged/` and `20-findings/` follow the **stage contract**: `_envelope.json` carries metadata (project, decomposition, issues) and individual `<content_hash>.json` files carry findings — `content_hash` is the stable cross-stage key. `00-raw/` (per-agent output files) and `15-validation/` (batch I/O) are the two exceptions with their own shapes.
 
 ## Review orchestrator
 
