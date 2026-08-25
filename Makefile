@@ -1,27 +1,46 @@
-.PHONY: check test version-check check-resolved-schemas resolve-schemas version-bump-patch version-bump-minor version-bump-major help
+.PHONY: check test install-dev version-check check-resolved-schemas resolve-schemas version-bump-patch version-bump-minor version-bump-major help
+
+ifeq ($(OS),Windows_NT)
+    VENV_DIR ?= .venv
+    PYTHON ?= $(VENV_DIR)/Scripts/python.exe
+else
+    VENV_DIR ?= .venv
+    PYTHON ?= $(VENV_DIR)/bin/python
+endif
+
+# Interpreter used to bootstrap the venv. CI overrides to `python` so the
+# venv is pinned to the matrix Python installed by setup-python (see
+# ~/source/standards/build/makefile.md).
+PY_SYS ?= python3
 
 check: test version-check check-resolved-schemas  ## Run all checks
 
-test:  ## Run pytest across plugin + skills
-	python -m pytest
+$(PYTHON):
+	$(PY_SYS) -m venv $(VENV_DIR)
 
-version-check:  ## Validate semver: format, sources match, version bumped vs mainline
-	@python scripts/version-check.py
+install-dev: $(PYTHON)  ## Create venv and install test dependencies
+	@$(PYTHON) -m pip install -q -e ".[test]"
 
-resolve-schemas:  ## Regenerate resolved (LLM-friendly) schemas from source schemas
-	@python scripts/resolve_schema.py
+test: install-dev  ## Run pytest across plugin + skills + orchestrator
+	$(PYTHON) -m pytest
 
-check-resolved-schemas:  ## Verify resolved schemas are up-to-date
-	@python scripts/check-resolved-schemas.py
+version-check: install-dev  ## Validate semver: format, sources match, version bumped vs mainline
+	@$(PYTHON) scripts/version-check.py
 
-version-bump-patch:  ## Bump patch version (i.e. 0.2.8 → 0.2.9)
-	@python scripts/version-bump.py patch
+resolve-schemas: install-dev  ## Regenerate resolved (LLM-friendly) schemas from source schemas
+	@$(PYTHON) scripts/resolve_schema.py
 
-version-bump-minor:  ## Bump minor version (i.e. 0.2.8 → 0.3.0)
-	@python scripts/version-bump.py minor
+check-resolved-schemas: install-dev  ## Verify resolved schemas are up-to-date
+	@$(PYTHON) scripts/check-resolved-schemas.py
 
-version-bump-major:  ## Bump major version (i.e. 0.2.8 → 1.0.0)
-	@python scripts/version-bump.py major
+version-bump-patch: install-dev  ## Bump patch version (i.e. 0.2.8 → 0.2.9)
+	@$(PYTHON) scripts/version-bump.py patch
+
+version-bump-minor: install-dev  ## Bump minor version (i.e. 0.2.8 → 0.3.0)
+	@$(PYTHON) scripts/version-bump.py minor
+
+version-bump-major: install-dev  ## Bump major version (i.e. 0.2.8 → 1.0.0)
+	@$(PYTHON) scripts/version-bump.py major
 
 help:  ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'

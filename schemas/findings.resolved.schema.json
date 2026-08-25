@@ -3,6 +3,16 @@
   "allOf": [
     {
       "if": {
+        "not": {
+          "properties": {
+            "scoring": {
+              "const": "simple"
+            }
+          },
+          "required": [
+            "scoring"
+          ]
+        },
         "properties": {
           "source": {
             "const": "review"
@@ -226,6 +236,165 @@
                 "effort_to_fix",
                 "effort_to_fix_justification",
                 "source_dimensions"
+              ],
+              "unevaluatedProperties": false
+            }
+          }
+        },
+        "required": [
+          "decomposition"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "scoring": {
+            "const": "simple"
+          },
+          "source": {
+            "const": "review"
+          }
+        },
+        "required": [
+          "source",
+          "scoring"
+        ]
+      },
+      "then": {
+        "properties": {
+          "decomposition": {
+            "minItems": 1
+          },
+          "findings": {
+            "items": {
+              "allOf": [
+                {
+                  "properties": {
+                    "content_hash": {
+                      "pattern": "^[a-f0-9]{16,64}$",
+                      "type": "string"
+                    },
+                    "id": {
+                      "pattern": "^[CISN][0-9]+$",
+                      "type": "string"
+                    },
+                    "issue": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "locations": {
+                      "items": {
+                        "properties": {
+                          "line": {
+                            "pattern": "^[0-9]+(-[0-9]+)?$",
+                            "type": "string"
+                          },
+                          "path": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "role": {
+                            "enum": [
+                              "primary",
+                              "related",
+                              "callsite",
+                              "requirement"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "line"
+                        ],
+                        "type": "object",
+                        "unevaluatedProperties": false
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    },
+                    "severity": {
+                      "enum": [
+                        "critical",
+                        "important",
+                        "suggestion",
+                        "needs-review"
+                      ]
+                    },
+                    "suggested_fix": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "title": {
+                      "maxLength": 120,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "why_it_matters": {
+                      "minLength": 1,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "severity",
+                    "locations",
+                    "issue",
+                    "why_it_matters",
+                    "suggested_fix",
+                    "content_hash"
+                  ],
+                  "type": "object"
+                }
+              ],
+              "properties": {
+                "concern_slug": {
+                  "enum": [
+                    "architecture",
+                    "implementation",
+                    "test",
+                    "maintainability",
+                    "security",
+                    "documentation",
+                    "observability"
+                  ]
+                },
+                "confidence": {
+                  "description": "Reviewer confidence from the simple scoring mode. low-confidence findings carry severity needs-review.",
+                  "enum": [
+                    "high",
+                    "medium",
+                    "low"
+                  ]
+                },
+                "pr_comment": {
+                  "properties": {
+                    "author": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": [
+                        "string",
+                        "integer"
+                      ]
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "author",
+                    "id"
+                  ],
+                  "type": "object",
+                  "unevaluatedProperties": false
+                }
+              },
+              "required": [
+                "concern_slug",
+                "confidence"
               ],
               "unevaluatedProperties": false
             }
@@ -657,6 +826,13 @@
       "description": "SemVer string, aligned with the plugin version at the time the document was written (.claude-plugin/plugin.json version). Consumers read this to identify which plugin release produced the envelope.",
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\\+([0-9a-zA-Z-]+(\\.[0-9a-zA-Z-]+)*))?$",
       "type": "string"
+    },
+    "scoring": {
+      "description": "Scoring mode used by the producing review run. Absent means categorical (the five-dimension rubric). simple means findings carry direct severity + confidence and omit the categorical dimensions. Only meaningful for source: review.",
+      "enum": [
+        "categorical",
+        "simple"
+      ]
     },
     "source": {
       "description": "The producing skill, or the shape of the output for consumer skills. `update-pr` is absent deliberately \u2014 it emits review-shaped findings (with optional `pr_comment` fields) under `source: \"review\"`.",

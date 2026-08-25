@@ -910,9 +910,9 @@ class TestConsolidatePureFunction:
 class TestCrossCuttingObservations:
     """cross_cutting_observations is an optional agent-output field.
 
-    The consolidator intentionally drops it — observations are informational
-    notes for the main agent, not findings that flow into the envelope.
-    These tests document that contract.
+    The consolidator surfaces observations as envelope entries (rendered in
+    the supplementary markdown) but never as findings. These tests document
+    that contract.
     """
 
     def _call(self, agent_outputs):
@@ -942,6 +942,25 @@ class TestCrossCuttingObservations:
             "dimension_scope": {"paths": [f"src/{dimension_slug}/"]},
             "findings": findings,
         }
+
+    def test_observations_collected_into_envelope_entries(self):
+        ao = self._agent_output(
+            "architecture", "auth",
+            [_make_finding(title="X", path="src/a.py", line="10")],
+        )
+        ao["cross_cutting_observations"] = ["Pattern A", "Pattern A", ""]
+        result = self._call([ao])
+        assert result["cross_cutting_observations"] == [
+            {"agent": "architecture/auth", "text": "Pattern A"}
+        ]
+
+    def test_no_observations_key_when_none_present(self):
+        ao = self._agent_output(
+            "architecture", "auth",
+            [_make_finding(title="X", path="src/a.py", line="10")],
+        )
+        result = self._call([ao])
+        assert "cross_cutting_observations" not in result
 
     def test_observations_do_not_appear_in_consolidated_output(self):
         ao = self._agent_output(

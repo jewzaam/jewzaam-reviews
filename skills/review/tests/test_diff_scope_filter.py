@@ -155,7 +155,7 @@ class TestNoBaseRef:
 
 
 class TestFileLevelScope:
-    """The rule pr-scope.sh actually gives agents: report only on changed FILES."""
+    """The scope rule agents actually get: report only on changed FILES."""
 
     def test_keeps_finding_on_changed_line(self, tmp_path: Path):
         stage = tmp_path / "merged"

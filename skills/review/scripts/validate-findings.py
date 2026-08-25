@@ -25,11 +25,13 @@ from scripts.envelope import safe_load_json, schema_registry  # noqa: E402
 
 KNOWN_SCHEMAS = {
     "agent-output",
+    "agent-output-simple",
     "consolidated",
     "merged-finding",
     "stage-envelope",
     "validation-input",
     "validation-output",
+    "validation-output-simple",
     "render-config",
 }
 

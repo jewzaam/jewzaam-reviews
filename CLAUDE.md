@@ -17,6 +17,11 @@ schemas/
   examples/              # Valid + invalid fixtures per source
 resources/
   handoff-contract.md    # Injected into every producer SKILL.md via print-handoff-contract.sh
+orchestrator/
+  cli.py               # Review orchestrator entry point (see Orchestrator section)
+  backend.py           # Agent seam: run_agent() via headless `claude -p`
+  scope.py, lenses.py, prompts.py, pipeline.py, simple_mode.py
+  tests/               # pytest tree (no __init__.py)
 scripts/
   envelope.py            # Shared plumbing (plugin_version, validate_envelope,
                          #   build_envelope, content_hash, assign_ids_per_bucket,
@@ -95,9 +100,9 @@ Render scripts per skill:
 
 ### Two-schema trap inside review
 
-`skills/review/schemas/` holds **seven review-internal schemas** (agent-output, consolidated, merged-finding, stage-envelope, validation-input, validation-output, render-config). These are NOT the cross-skill `schemas/findings.schema.json`. The review skill's sub-agents write **agent-output**-shaped JSON into `.tmp-review/00-raw/*.json`; the consolidator writes **stage-envelope** + **merged-finding** files into `10-merged/`; the main agent copies/modifies findings into `20-findings/`; the renderer aggregates those into the final envelope validated against the shared schema.
+`skills/review/schemas/` holds the **review-internal schemas** (agent-output, agent-output-simple, selector-output, consolidated, merged-finding, stage-envelope, validation-input, validation-output, validation-output-simple). These are NOT the cross-skill `schemas/findings.schema.json`. The orchestrator's lens agents return **agent-output**-shaped JSON (written by the orchestrator into `.tmp-review/00-raw/*.json`); the consolidator writes **stage-envelope** + **merged-finding** files into `10-merged/`; `apply-verdicts.py` writes `20-findings/`; the renderer aggregates those into the final envelope validated against the shared schema.
 
-Historical bug to watch for: when a sub-agent sees the shared handoff contract (injected at skill-entry via `scripts/print-handoff-contract.sh`) and mistakes it for its own output spec, it writes envelope-shape keys (`schema_version`, `source`, `project`, `decomposition`, `issues`, ...) instead of agent-output keys (`agent_id`, `concern_slug`, `dimension_slug`, ...). The file is silently dropped from consolidation. `consolidate-findings.py` detects this shape mismatch and records a targeted `schema_rejected_input` issue in the stage envelope's `issues[]`, and the concern-agent prompt in `skills/review/SKILL.md` explicitly disambiguates — but the failure mode is worth knowing when debugging a low-finding-count review.
+Historical bug to watch for: an agent that mistakes the shared envelope for its own output spec writes envelope-shape keys (`schema_version`, `source`, `project`, `decomposition`, `issues`, ...) instead of agent-output keys (`agent_id`, `concern_slug`, `dimension_slug`, ...). The file is silently dropped from consolidation. `consolidate-findings.py` detects this shape mismatch and records a targeted `schema_rejected_input` issue in the stage envelope's `issues[]` — worth knowing when debugging a low-finding-count review. The orchestrator's `--json-schema` enforcement makes this much less likely than it was under prompt-only enforcement.
 
 ## Filename convention
 
@@ -116,7 +121,7 @@ The **skill name** identifies the producer in the filename; the user's **project
 
 **`scripts/envelope.py`** holds all cross-skill plumbing. Render scripts import from here — do NOT duplicate. Exported: `plugin_version()`, `load_shared_schema()`, `validate_envelope()`, `build_envelope()`, `load_issues_file()`, `format_validation_error()`, `content_hash()`, `assign_ids_per_bucket()`, `_line_start()`.
 
-**`resources/handoff-contract.md`** is injected into every producer SKILL.md's Pre-Fetch section via `!bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh`. Edit once, apply to all skills. It defines the validate-before-write invariant, the markdown-rendered-from-JSON invariant, the `issues[]` shape, and the sub-agent failure pattern. Heading level inside the file is `####` — the injecting SKILL.md wraps it under a `### Shared Handoff Contract (auto-injected)` heading, which itself sits inside `## Pre-Fetch`. Keep the wrapper level consistent across skills.
+**`resources/handoff-contract.md`** is injected into every producer SKILL.md's Pre-Fetch section via `!bash ${CLAUDE_PLUGIN_ROOT}/scripts/print-handoff-contract.sh` — except `review`, whose orchestrator enforces the contract in scripts rather than in the main agent's context. Edit once, apply to all skills. It defines the validate-before-write invariant, the markdown-rendered-from-JSON invariant, the `issues[]` shape, and the sub-agent failure pattern. Heading level inside the file is `####` — the injecting SKILL.md wraps it under a `### Shared Handoff Contract (auto-injected)` heading, which itself sits inside `## Pre-Fetch`. Keep the wrapper level consistent across skills.
 
 The wrapper script exists because Claude Code's session-level `cat` permission blocks reads of paths outside the consuming project's working dirs, and the plugin root is always outside. A script invocation is permission-checked by its own path (predictable, easy to allowlist) rather than by the path argument to `cat` (unpredictable across projects).
 
@@ -124,37 +129,36 @@ The wrapper script exists because Claude Code's session-level `cat` permission b
 
 ```
 .tmp-review/
-  00-raw/           # per-agent output (one file per concern×dimension cell)
-  10-merged/        # consolidation output: _envelope.json + per-finding <content_hash>.json
-  15-validation/    # ephemeral batch I/O for validator dispatch
-  20-findings/      # post-validation: _envelope.json + per-finding files (render input)
+  00-raw/            # per-agent output (one file per concern×dimension cell)
+  10-merged/         # consolidation output: _envelope.json + per-finding <content_hash>.json
+  15-validation/     # ephemeral batch I/O for validator dispatch
+  20-findings/       # post-validation: _envelope.json + per-finding files (render input)
+  agent-trace.jsonl  # one line per agent attempt: prompt, params, raw CLI result
+  costs.json         # measured per-stage cost ledger
 ```
 
 Each numbered stage directory follows a **stage contract**: `_envelope.json` carries metadata (project, decomposition, issues) and individual `<content_hash>.json` files carry findings. The `content_hash` is the stable cross-stage key — findings are identified by hash, not array position.
 
-## Sub-agent boundaries
+## Review orchestrator
 
-Sub-agents cannot request tool permissions the way the main agent can. If a tool call is denied inside a sub-agent, the sub-agent treats it as an unrecoverable error for that attempt. The main agent emits `kind: "permission_denied"` into `issues[]` on its behalf.
+The review skill is a thin wrapper; `orchestrator/cli.py` owns the pipeline. Modules:
 
-Sub-agents that self-detect a recoverable error (e.g., their own output fails schema validation) retry up to **3 attempts** (1 initial + 2 retries), then bail with a structured failure: `{"status": "failure", "reason": "..."}`. The main agent converts that to `kind: "subagent_failure"` in `issues[]`. The cap is final — no re-dispatch. Failed sub-agents do not block the run; survivors still flow into consolidation.
+- `backend.py` — **the agent seam**. `run_agent(prompt, *, schema, model, allowed_tools, cwd, effort, timeout_s) -> AgentResult` shells out to headless `claude -p --output-format json --json-schema ...`. Every model invocation goes through this one function; a future backend (e.g. codex) reimplements only this signature. `AgentResult` carries `output` (validated `structured_output`), the **measured** `cost_usd` (`total_cost_usd` from the CLI result), `model_usage`, `permission_denials`, and `error`. Child env is scrubbed of `CLAUDE*` vars so a nested session cannot leak in. `--bare` is never used (it refuses OAuth).
+- `scope.py` — deterministic git/project context: git guard, PR merge base + scope block, guidance, standards gathering, project probe.
+- `lenses.py` — the seven-lens roster (1:1 with the `concern_slug` enum) with `runs_when` selector guidance; selection fallback (all lenses) and dimension capping (`lenses × dimensions ≤ --max-agents`).
+- `prompts.py` — selector / lens / validator prompt builders. Conditional blocks (standards, PR scope, guidance) are omitted entirely when empty.
+- `pipeline.py` — stage sequencing. Deterministic stages are the existing tested stage CLIs run via subprocess; agents run in a ThreadPoolExecutor with per-agent timeout and **2 code-level retries** (retry on process error or local jsonschema failure). Cost from every attempt lands in the ledger; `.tmp-review/costs.json` plus a stdout table report real spend per stage. Every backend invocation also appends a line to `.tmp-review/agent-trace.jsonl` (prompt, invocation params, raw CLI result) — with `--no-session-persistence` this trace is the only record of what each sub-agent was asked and answered; it is the debugging trail after a review. Agent failures become `kind: "subagent_failure"` and denials `kind: "permission_denied"` in `issues[]`, merged into the stage envelope after consolidation.
+- `simple_mode.py` — the `--scoring simple` path: Python dedup/batch/verdict application instead of the categorical stage CLIs (whose ordinal aggregation IS the categorical rubric); reuses `diff-scope-filter.py` and `render-review.py --scoring simple`.
 
-### Workflow tool and schema-enforced dispatch
+Failed lens agents never block the run; a failed selector triggers the all-lenses fallback; a failed validator batch means its findings pass through unchanged (existing `apply-verdicts.py` semantics).
 
-The review skill dispatches concern agents and validators via the Workflow tool with `agent(schema:)` (not the Agent tool). Workflow scripts live at `skills/review/scripts/review-workflow.js` and `skills/review/scripts/validate-workflow.js`. The `agent(schema:)` option validates output at the harness level via Ajv StructuredOutput — the model must produce conformant output before the agent can complete. The Agent tool does NOT support schema enforcement.
+**Structured output constraint support** — Tested and confirmed working: `pattern`, `minLength`, `maxLength`, `minimum`, `maximum`, `minProperties`, `if/then/else`, `not`. The only constraint that fails is `allOf`/`anyOf`/`oneOf` at the **schema root level** (400 error). Nested inside properties or array items, all composition keywords work. `scripts/resolve_schema.py` enforces no root composition for agent-facing schemas; the backend strips only the `_generated` marker.
 
-**Workflow args** — The Workflow tool serializes `args` as a JSON string (not an object). Scripts use `const config = JSON.parse(args)` to recover the original data. All dynamic data (dimensions, schemas, project context, standards, PR scope) is passed via `args`. The SKILL.md instructs the main thread to read the resolved schemas and pass them as part of the args object.
-
-**StructuredOutput constraint support** — Tested and confirmed working: `pattern`, `minLength`, `maxLength`, `minimum`, `maximum`, `minProperties`, `if/then/else`, `not`. The only constraint that fails is `allOf`/`anyOf`/`oneOf` at the **schema root level** (400 error). Nested inside properties or array items, all composition keywords work. The resolved schemas preserve all original constraints — no stripping needed.
-
-**Concern enum values use "and" not "&"** — `Architecture and Design`, `Test Quality and Coverage`, `Maintainability and Standards`. Changed from `&` because HTML entity encoding (`&amp;`) caused serialization corruption across XML/HTML/JSON boundaries in the Workflow tool pipeline.
-
-### Build agent dependency install
-
-The build-checks agent is allowed to run `make install` or `make deps` as a prerequisite for checks (e.g., when `node_modules` or `.venv` is missing). This is the only install target permitted — it is a prerequisite for checks, not a deployment action.
+**Concern enum values use "and" not "&"** — `Architecture and Design`, `Test Quality and Coverage`, `Maintainability and Standards`. Changed from `&` because HTML entity encoding (`&amp;`) caused serialization corruption across XML/HTML/JSON boundaries.
 
 ## Test layout
 
-Pytest autodiscovers two test trees: `tests/` at the plugin root (cross-skill tests) and `skills/<name>/tests/` per skill (skill-internal tests). **No `__init__.py` in any test dir.** `pyproject.toml` sets `addopts = ["--import-mode=importlib"]` to avoid `conftest.py` module name collisions between the two trees — adding an `__init__.py` silently breaks collection by reintroducing the collision. Run with `make test` (routed through a wrapper that the user's hooks permit).
+Pytest autodiscovers three test trees: `tests/` at the plugin root (cross-skill tests), `skills/<name>/tests/` per skill (skill-internal tests), and `orchestrator/tests/`. **No `__init__.py` in any test dir.** `pyproject.toml` sets `addopts = ["--import-mode=importlib"]` to avoid `conftest.py` module name collisions between the two trees — adding an `__init__.py` silently breaks collection by reintroducing the collision. Run with `make test` (routed through a wrapper that the user's hooks permit).
 
 ## Adding a Skill
 

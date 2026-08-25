@@ -484,11 +484,32 @@ def consolidate(
     else:
         project["scope_slug"] = ""
 
-    return {
+    result = {
         "project": project,
         "decomposition": decomposition,
         "findings": final_findings,
     }
+    observations = _collect_observations(agent_outputs)
+    if observations:
+        result["cross_cutting_observations"] = observations
+    return result
+
+
+def _collect_observations(agent_outputs: list[dict]) -> list[dict]:
+    """Gather cross_cutting_observations into envelope entries, deduplicated
+    by (agent, text). Observations are informational notes surfaced in the
+    supplementary markdown — they never become findings.
+    """
+    seen: set[tuple[str, str]] = set()
+    observations: list[dict] = []
+    for ao in agent_outputs:
+        agent = f"{ao['concern_slug']}/{ao['dimension_slug']}"
+        for text in ao.get("cross_cutting_observations", []):
+            if not text or (agent, text) in seen:
+                continue
+            seen.add((agent, text))
+            observations.append({"agent": agent, "text": text})
+    return observations
 
 
 def _build_issues(warnings: list[str]) -> list[dict]:
@@ -670,6 +691,10 @@ def main(argv: list[str]) -> int:
         "decomposition": consolidated["decomposition"],
         "issues": issues,
     }
+    if consolidated.get("cross_cutting_observations"):
+        envelope["cross_cutting_observations"] = consolidated[
+            "cross_cutting_observations"
+        ]
     findings = consolidated["findings"] + synthetic_findings
 
     envelope_errors = _validate(envelope, stage_envelope_schema)

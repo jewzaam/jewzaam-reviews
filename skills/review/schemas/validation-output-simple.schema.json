@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jewzaam/jewzaam-reviews/skills/review/schemas/validation-output-simple.schema.json",
+  "title": "Validation Output (simple scoring)",
+  "description": "Verdicts from one validator agent for one batch of simple-scored findings. Rescore updates severity/confidence directly instead of the categorical dimensions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["batch_number", "verdicts"],
+  "properties": {
+    "batch_number": {"type": "integer", "minimum": 1},
+    "verdicts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/verdict"}
+    }
+  },
+  "$defs": {
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_ref", "action", "reasoning"],
+      "properties": {
+        "finding_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["content_hash"],
+          "properties": {
+            "content_hash": {"type": "string", "pattern": "^[a-f0-9]{16,64}$"}
+          }
+        },
+        "action": {"type": "string", "enum": ["confirm", "rescore", "remove"]},
+        "remove_reason": {
+          "type": "string",
+          "enum": ["not_real", "pre_existing", "positive_observation"],
+          "description": "Why the finding was removed. Required when action is 'remove', forbidden otherwise. Same semantics as validation-output.schema.json."
+        },
+        "new_severity": {
+          "type": "string",
+          "enum": ["critical", "important", "suggestion"],
+          "description": "Corrected severity. At least one of new_severity/new_confidence required when action is 'rescore'."
+        },
+        "new_confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Corrected confidence."
+        },
+        "reasoning": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"action": {"const": "rescore"}}},
+          "then": {"anyOf": [{"required": ["new_severity"]}, {"required": ["new_confidence"]}]}
+        },
+        {
+          "if": {"properties": {"action": {"enum": ["confirm", "remove"]}}},
+          "then": {"not": {"anyOf": [{"required": ["new_severity"]}, {"required": ["new_confidence"]}]}}
+        },
+        {
+          "if": {"properties": {"action": {"const": "remove"}}},
+          "then": {"required": ["remove_reason"]}
+        },
+        {
+          "if": {"properties": {"action": {"enum": ["confirm", "rescore"]}}},
+          "then": {"not": {"required": ["remove_reason"]}}
+        }
+      ]
+    }
+  }
+}
