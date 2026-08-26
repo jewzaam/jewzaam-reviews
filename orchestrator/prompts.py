@@ -30,6 +30,11 @@ def build_selector_prompt(scope: ReviewScope, roster: tuple[Lens, ...]) -> str:
         else ""
     )
     pr_block = f"\n{scope.pr_scope_text}\n" if scope.pr_scope_text else ""
+    always_run_rule = (
+        "\n- implementation (general correctness) always runs — always include it."
+        if any(lens.slug == "implementation" for lens in roster)
+        else ""
+    )
 
     return f"""Select which review lenses should run for this review scope.
 
@@ -43,7 +48,7 @@ AVAILABLE LENSES:
 
 SELECTION RULES:
 - Be liberal: when in doubt, include the lens.
-- implementation (general correctness) always runs — always include it.
+- Select only from the lenses listed above.{always_run_rule}
 - Give a one-line rationale per selected lens, grounded in what the scope actually touches.
 - Only propose `dimensions` (max 3) when the scope is large enough that a single agent per lens cannot cover it — e.g. a large multi-subsystem diff or a full-repo review of a big codebase. For small scopes, omit dimensions entirely.
 - When a proposed dimension covers shared infrastructure files (e.g. core/, lib/, shared utils) changed alongside feature files, set `"shared_infrastructure": true` in that dimension's scope object so its agents only report issues introduced or exposed by the change.

@@ -89,3 +89,22 @@ def test_duplicate_dimension_slugs_deduped():
     }
     dims = lenses.resolve_dimensions(out, lens_count=2, max_agents=16)
     assert [d["slug"] for d in dims] == ["same", "other"]
+
+
+def test_roster_restriction_drops_out_of_roster_picks():
+    roster = tuple(l for l in lenses.LENSES if l.slug not in ("security", "implementation"))
+    out = {"lenses": [
+        {"name": "security", "rationale": "x"},   # skipped by user
+        {"name": "test", "rationale": "y"},
+    ]}
+    selected, source, _ = lenses.resolve_selection(out, roster)
+    slugs = [l.slug for l in selected]
+    assert source == "selector"
+    assert slugs == ["test"]  # security dropped; implementation NOT re-added
+
+
+def test_fallback_respects_roster():
+    roster = tuple(l for l in lenses.LENSES if l.slug in ("test", "documentation"))
+    selected, source, _ = lenses.resolve_selection(None, roster)
+    assert source == "all-lenses-fallback"
+    assert {l.slug for l in selected} == {"test", "documentation"}

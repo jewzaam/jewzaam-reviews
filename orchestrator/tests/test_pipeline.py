@@ -358,3 +358,56 @@ class TestDenialAggregation:
         pipeline._run_with_retry(state, "select", "x", "haiku", lambda: result)
         report = pipeline._write_costs(state)
         assert report["denials_by_tool"] == {"Bash": 2}
+
+
+class TestSelectOnly:
+    def test_select_only_saves_and_run_consumes(self, git_repo, monkeypatch, tmp_path, capsys):
+        calls = []
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
+        selection_file = tmp_path / "sel.json"
+        rc = pipeline.run_select_only(_options(git_repo), selection_file)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "lens: implementation:" in out
+        assert selection_file.is_file()
+        selector_calls = [c for c in calls if "Select which review lenses" in c["prompt"]]
+        assert len(selector_calls) == 1
+
+        rc = pipeline.run_review(_options(git_repo), selection_file=selection_file)
+        assert rc == 0
+        selector_calls = [c for c in calls if "Select which review lenses" in c["prompt"]]
+        assert len(selector_calls) == 1  # NOT re-run
+        assert not selection_file.exists()  # consumed
+        costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
+        assert any(e["stage"] == "select" for e in costs["entries"])  # cost replayed
+
+    def test_stale_selection_ignored(self, git_repo, monkeypatch, tmp_path):
+        calls = []
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
+        selection_file = tmp_path / "sel.json"
+        selection_file.write_text(json.dumps({
+            "head": "0" * 40, "selector_output": {"lenses": []}, "costs": [],
+        }))
+        rc = pipeline.run_review(_options(git_repo), selection_file=selection_file)
+        assert rc == 0
+        selector_calls = [c for c in calls if "Select which review lenses" in c["prompt"]]
+        assert len(selector_calls) == 1  # re-ran due to stale head
+        assert not selection_file.exists()
+
+
+    def test_malformed_selection_file_tolerated(self, git_repo, monkeypatch, tmp_path):
+        calls = []
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
+        selection_file = tmp_path / "sel.json"
+        head = pipeline._head_sha(str(git_repo))
+        selection_file.write_text(json.dumps({
+            "head": head,
+            "selector_output": ["not", "a", "dict"],
+            "costs": [{"stage": "select", "label": "x", "model": "haiku",
+                       "cost_usd": 0.01, "bogus_key": True}, "junk"],
+        }))
+        rc = pipeline.run_review(_options(git_repo), selection_file=selection_file)
+        assert rc == 0  # non-dict selector_output -> selector re-ran; no crash
+        costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
+        replayed = [e for e in costs["entries"] if e["label"] == "x"]
+        assert len(replayed) == 1  # valid keys replayed, bogus dropped
