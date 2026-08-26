@@ -41,7 +41,7 @@ class AgentResult:
     permission_denials: list = field(default_factory=list)
     error: str | None = None
     # Machine-readable failure class for aggregation/alerting:
-    # timeout | spawn | protocol | agent | schema (set by callers) | None
+    # timeout | spawn | protocol | agent | budget | schema (set by callers) | None
     error_category: str | None = None
     session_id: str = ""  # child session id — joins the trace/ledger to telemetry
 
@@ -167,7 +167,22 @@ def _scrubbed_env() -> dict:
         env.setdefault("CLAUDE_CODE_ENABLE_TELEMETRY", "1")
         env.setdefault("OTEL_METRICS_EXPORTER", "otlp")
         env.setdefault("OTEL_LOGS_EXPORTER", "otlp")
+        env.setdefault("OTEL_TRACES_EXPORTER", "otlp")
     return env
+
+
+def _is_budget_stop(result: dict) -> bool:
+    """True when the CLI stopped itself on --max-budget-usd.
+
+    Both markers are checked because they come from different layers of the
+    result and either alone could be renamed; verified present together on
+    an actual budget stop (subtype error_max_budget_usd / terminal_reason
+    budget_exhausted).
+    """
+    return (
+        result.get("subtype") == "error_max_budget_usd"
+        or result.get("terminal_reason") == "budget_exhausted"
+    )
 
 
 def run_agent(
@@ -179,7 +194,12 @@ def run_agent(
     cwd: str,
     tools: str | None = None,
     effort: str | None = None,
-    timeout_s: int = 600,
+    timeout_s: int = 3600,
+    max_budget_usd: float | None = None,
+    session_id: str | None = None,
+    resume_session_id: str | None = None,
+    persist_session: bool = False,
+    debug_file: str | Path | None = None,
     trace_file: str | Path | None = None,
     label: str = "",
     redact: str | None = None,
@@ -197,11 +217,27 @@ def run_agent(
     (values sanitized for the comma/equals list format) so its telemetry
     carries run-level correlation labels.
 
+    `max_budget_usd` is the real runaway control; `timeout_s` is only a
+    latency backstop. The distinction matters because the two failure paths
+    are not comparable: a budget stop is the CLI exiting on its own, so it
+    still writes its result JSON and its `total_cost_usd` and `session_id`
+    are reported. A timeout is SIGKILL, which destroys that JSON — cost and
+    session id are then unknowable, and the ledger shows 0.0 for spend that
+    was real. Verified against the CLI: budget exhaustion returns exit 1
+    with `subtype: "error_max_budget_usd"`, `terminal_reason:
+    "budget_exhausted"`, and an accurate cost. The cap is enforced *between
+    turns*, so actual spend overshoots it by up to one turn.
+
+    `session_id` is chosen by the caller rather than read back from the
+    result, so a killed attempt is still identifiable. `persist_session`
+    keeps the session on disk so `resume_session_id` can reopen it — used
+    to harvest partial findings from a budget-stopped agent.
+
     When `trace_file` is set, every invocation appends one JSON line there:
     the prompt (with the literal `redact` text replaced), invocation
-    parameters, outcome, and the raw CLI result.
-    The child runs with --no-session-persistence, so this trace is the only
-    record of what a sub-agent was asked and answered — the debugging trail.
+    parameters, outcome, and the raw CLI result. `debug_file` additionally
+    streams the CLI's own debug log, which — unlike the trace, written only
+    after an agent returns — is readable while the agent is still running.
     """
     started = time.monotonic()
 
@@ -235,12 +271,22 @@ def run_agent(
         "json",
         "--model",
         model,
-        "--no-session-persistence",
         # Deny non-allowlisted tool calls instead of prompting; denials are
         # recorded in permission_denials on the result.
         "--permission-mode",
         "dontAsk",
     ]
+    if not persist_session:
+        argv.append("--no-session-persistence")
+    if resume_session_id:
+        argv += ["--resume", resume_session_id]
+    elif session_id:
+        argv += ["--session-id", session_id]
+    if max_budget_usd is not None:
+        argv += ["--max-budget-usd", str(max_budget_usd)]
+    if debug_file is not None:
+        Path(debug_file).parent.mkdir(parents=True, exist_ok=True)
+        argv += ["--debug-file", str(debug_file)]
     if schema is not None:
         argv += ["--json-schema", json.dumps(schema)]
     if tools is not None:
@@ -284,7 +330,16 @@ def run_agent(
         except OSError:
             pass
         popen.wait()
-        return _finish(AgentResult(error=f"timeout after {timeout_s}s", error_category="timeout"))
+        # SIGKILL destroyed the result JSON, so cost is unknowable here and
+        # stays 0.0 — real spend the ledger cannot see. The caller-chosen
+        # session id is the one thing still recoverable.
+        return _finish(
+            AgentResult(
+                error=f"timeout after {timeout_s}s",
+                error_category="timeout",
+                session_id=resume_session_id or session_id or "",
+            )
+        )
 
     proc = SimpleNamespace(
         stdout=stdout, stderr=stderr, returncode=popen.returncode
@@ -312,14 +367,24 @@ def run_agent(
     agent_result = AgentResult(
         cost_usd=cost_usd,
         permission_denials=denials if isinstance(denials, list) else [],
-        session_id=str(result.get("session_id") or ""),
+        session_id=str(result.get("session_id") or "")
+        or (resume_session_id or session_id or ""),
     )
 
     if proc.returncode != 0 or result.get("is_error"):
-        agent_result.error = f"agent error (exit {proc.returncode}): " + str(
-            result.get("result", "")
-        )[:500]
-        agent_result.error_category = "agent"
+        if _is_budget_stop(result):
+            # Distinct from "agent": the work was cut short by our own cap,
+            # not by anything wrong with the agent. `result` is empty on this
+            # path, so the message has to come from `errors`.
+            errors = result.get("errors")
+            detail = "; ".join(str(e) for e in errors) if isinstance(errors, list) else ""
+            agent_result.error = f"budget exhausted: {detail or 'max budget reached'}"
+            agent_result.error_category = "budget"
+        else:
+            agent_result.error = f"agent error (exit {proc.returncode}): " + str(
+                result.get("result", "")
+            )[:500]
+            agent_result.error_category = "agent"
         return _finish(agent_result, raw_result=result)
 
     if schema is not None:

@@ -45,8 +45,14 @@ def _lens_output(concern, concern_slug, dimension_slug="full-scope"):
 def _fake_run_agent_factory(calls, selector_response="default", fail_labels=(), fail_validators=False):
     """Route fake responses by prompt content; record every call."""
 
-    def fake_run_agent(prompt, *, schema, model, allowed_tools, cwd, tools=None, effort=None, timeout_s=600, trace_file=None, label="", redact=None, otel_attributes=None):
-        calls.append({"prompt": prompt, "model": model, "allowed": allowed_tools, "tools": tools})
+    def fake_run_agent(prompt, *, schema, model, allowed_tools, cwd, tools=None, effort=None, timeout_s=3600, trace_file=None, label="", redact=None, otel_attributes=None, **kwargs):
+        calls.append({
+            "prompt": prompt,
+            "model": model,
+            "allowed": allowed_tools,
+            "tools": tools,
+            **kwargs,
+        })
 
         if "Select which review lenses" in prompt:
             if selector_response == "fail":
@@ -116,9 +122,16 @@ def _options(git_repo, **overrides):
 class TestCategoricalEndToEnd:
     def test_full_run(self, git_repo, monkeypatch):
         calls = []
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-e2e")
         monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
         rc = pipeline.run_review(_options(git_repo))
         assert rc == 0
+        # Run identity reaches both durable artifacts, and the two agree.
+        costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        assert costs["orchestrating_session_id"] == "sess-e2e"
+        assert findings["orchestrating_session_id"] == "sess-e2e"
+        assert findings["run_id"] == costs["run_id"]
 
         findings = json.loads((git_repo / "Findings-review.json").read_text())
         assert findings["source"] == "review"
@@ -129,7 +142,16 @@ class TestCategoricalEndToEnd:
 
         costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
         assert costs["total_cost_usd"] > 0
-        assert set(costs["by_stage"]) >= {"select", "review", "validate"}
+        # Rolled up per stage/model, so the table shows where the spend went.
+        assert all("/" in key for key in costs["by_stage"])
+        assert {key.split("/", 1)[0] for key in costs["by_stage"]} >= {
+            "select",
+            "review",
+            "validate",
+        }
+        assert "select/haiku" in costs["by_stage"]
+        assert "validate/sonnet" in costs["by_stage"]
+        assert set(costs["seconds_by_stage"]) == set(costs["by_stage"])
         # Only the selected lens ran (selector picked implementation only).
         lens_calls = [c for c in calls if "axis within the dimension" in c["prompt"]]
         assert len(lens_calls) == 1
@@ -453,3 +475,202 @@ class TestValidationBuckets:
 
     def test_unreadable_stage_dir_keeps_default(self, tmp_path):
         assert pipeline._validation_buckets(tmp_path / "absent") == "critical,important"
+
+
+class TestOrchestratingSession:
+    """The launching session is linked, never costed (pipeline.RunState)."""
+
+    def _state(self, monkeypatch, session_id):
+        if session_id is None:
+            monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        else:
+            monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", session_id)
+        return pipeline.RunState(options=_options("/tmp"), scope=None)
+
+    def test_session_id_stamped_on_agents(self, monkeypatch):
+        state = self._state(monkeypatch, "sess-abc")
+        attrs = state.agent_attributes("lens", "security/full-scope")
+        assert attrs["review.orchestrating_session_id"] == "sess-abc"
+        assert attrs["review.run_id"] == state.run_id
+
+    def test_absent_session_omits_attribute(self, monkeypatch):
+        state = self._state(monkeypatch, None)
+        assert "review.orchestrating_session_id" not in state.agent_attributes("lens", "x")
+
+    def test_ledger_records_session_and_excludes_its_cost(self, monkeypatch, tmp_path):
+        state = self._state(monkeypatch, "sess-abc")
+        state.options.project_root = str(tmp_path)
+        (tmp_path / ".tmp-review").mkdir()
+        state.costs.append(
+            pipeline.CostEntry(stage="lens", label="a", model="haiku", cost_usd=0.25)
+        )
+        report = pipeline._write_costs(state)
+        assert report["orchestrating_session_id"] == "sess-abc"
+        # Only agent spend is summed; the session's own cost is unknowable here.
+        assert report["total_cost_usd"] == 0.25
+
+    def test_ledger_null_when_not_launched_by_a_session(self, monkeypatch, tmp_path):
+        state = self._state(monkeypatch, None)
+        state.options.project_root = str(tmp_path)
+        (tmp_path / ".tmp-review").mkdir()
+        report = pipeline._write_costs(state)
+        assert report["orchestrating_session_id"] is None
+
+
+class TestBudgetHarvest:
+    """A budget stop is never retried — retrying a runaway runs it away
+    again at full price. Its session is reopened once instead, to take
+    whatever it had already established."""
+
+    def _state(self, git_repo):
+        return pipeline.RunState(
+            options=_options(git_repo),
+            scope=pipeline.scope_mod.ReviewScope(
+                project_root=str(git_repo),
+                project_name="p",
+                default_branch="origin/main",
+                language="python",
+                build_system="make",
+                test_framework="pytest",
+            ),
+        )
+
+    def _budget_stop(self, session_id="sess-budget"):
+        return backend.AgentResult(
+            error="budget exhausted: Reached maximum budget ($6)",
+            error_category="budget",
+            cost_usd=6.07,
+            session_id=session_id,
+        )
+
+    def test_budget_stop_is_not_retried(self, git_repo):
+        state = self._state(git_repo)
+        attempts = []
+
+        def fn():
+            attempts.append(1)
+            return self._budget_stop()
+
+        pipeline._run_with_retry(state, "review", "impl/full-scope", "sonnet", fn)
+        assert len(attempts) == 1, "a runaway must not be re-run at full price"
+
+    def test_harvest_reopens_the_stopped_session(self, git_repo):
+        state = self._state(git_repo)
+        resumed = []
+
+        def harvest(session_id):
+            resumed.append(session_id)
+            return backend.AgentResult(
+                output={"findings": []}, cost_usd=0.4, session_id=session_id
+            )
+
+        result = pipeline._run_with_retry(
+            state,
+            "review",
+            "impl/full-scope",
+            "sonnet",
+            lambda: self._budget_stop("sess-abc"),
+            harvest=harvest,
+        )
+        assert resumed == ["sess-abc"]
+        assert result.output == {"findings": []}, "salvaged output is returned"
+
+    def test_harvest_cost_is_ledgered_separately(self, git_repo):
+        state = self._state(git_repo)
+        pipeline._run_with_retry(
+            state,
+            "review",
+            "impl/full-scope",
+            "sonnet",
+            lambda: self._budget_stop(),
+            harvest=lambda sid: backend.AgentResult(output={"ok": 1}, cost_usd=0.4),
+        )
+        labels = [c.label for c in state.costs]
+        assert labels == ["impl/full-scope", "impl/full-scope (harvest)"]
+        # The stopped run's spend is real and reported, unlike a SIGKILL.
+        assert [c.cost_usd for c in state.costs] == [6.07, 0.4]
+        assert state.costs[0].error_category == "budget"
+
+    def test_harvest_records_an_issue_so_partial_output_is_disclosed(self, git_repo):
+        state = self._state(git_repo)
+        pipeline._run_with_retry(
+            state,
+            "review",
+            "impl/full-scope",
+            "sonnet",
+            lambda: self._budget_stop(),
+            harvest=lambda sid: backend.AgentResult(output={"ok": 1}, cost_usd=0.4),
+        )
+        assert any(
+            i["kind"] == "subagent_failure" and "harvested" in i["message"]
+            for i in state.issues
+        ), "silently shipping partial findings as complete would be worse"
+
+    def test_failed_harvest_falls_back_to_the_budget_stop(self, git_repo):
+        state = self._state(git_repo)
+        result = pipeline._run_with_retry(
+            state,
+            "review",
+            "impl/full-scope",
+            "sonnet",
+            lambda: self._budget_stop(),
+            harvest=lambda sid: backend.AgentResult(
+                error="resume failed", error_category="agent"
+            ),
+        )
+        assert result.error is not None
+        assert result.output is None
+        assert not state.issues, "no harvest claim when nothing was harvested"
+
+    def test_no_session_id_means_no_harvest_attempt(self, git_repo):
+        state = self._state(git_repo)
+        called = []
+        result = pipeline._run_with_retry(
+            state,
+            "review",
+            "impl/full-scope",
+            "sonnet",
+            lambda: self._budget_stop(session_id=""),
+            harvest=lambda sid: called.append(sid),
+        )
+        assert called == [], "cannot resume a session with no id"
+        assert result.error is not None
+
+    def test_other_categories_still_retry(self, git_repo):
+        state = self._state(git_repo)
+        attempts = []
+
+        def fn():
+            attempts.append(1)
+            return backend.AgentResult(error="bad json", error_category="protocol")
+
+        pipeline._run_with_retry(state, "review", "impl/full-scope", "sonnet", fn)
+        assert len(attempts) == 3, "schema/protocol flukes are worth an identical retry"
+
+
+class TestBudgetByModel:
+    def test_sonnet_and_haiku_differ(self):
+        assert pipeline.budget_for("sonnet") == 6.0
+        assert pipeline.budget_for("haiku") == 2.0
+
+    def test_unknown_model_gets_the_default(self):
+        assert pipeline.budget_for("some-future-model") == pipeline.DEFAULT_BUDGET_USD
+
+
+class TestAgentLogsExist:
+    def test_lens_agents_get_budget_session_and_debug_file(self, git_repo, monkeypatch):
+        calls = []
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
+        assert pipeline.run_review(_options(git_repo)) == 0
+        lens_calls = [c for c in calls if "axis within the dimension" in c["prompt"]]
+        assert lens_calls
+        for call in lens_calls:
+            assert call["max_budget_usd"] == pipeline.budget_for(call["model"])
+            assert call["session_id"], "chosen up front, not read back"
+            assert call["persist_session"] is True, "required for harvest"
+            assert str(call["debug_file"]).endswith(".log")
+
+    def test_log_dir_is_created_by_bootstrap(self, git_repo, monkeypatch):
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_review(_options(git_repo)) == 0
+        assert (git_repo / ".tmp-review" / pipeline.LOG_DIRNAME).is_dir()

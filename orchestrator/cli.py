@@ -107,7 +107,7 @@ def _detach(args, passthrough: list[str]) -> int:
     )
     log_fh.close()
     files["pid"].write_text(str(proc.pid), encoding="utf-8")
-    print(f"review started (pid {proc.pid}); poll with: --wait")
+    print(f"review started (pid {proc.pid}); wait for it with: --wait")
     return 0
 
 

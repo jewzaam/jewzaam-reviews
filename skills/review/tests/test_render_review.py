@@ -169,6 +169,124 @@ class TestRenderReviewMarkdown:
         assert "Maybe we should log here" in body
 
 
+class TestSupplementaryCategorization:
+    """Concern sections carry severity subsections, so a reader can tell a
+    critical from a suggestion without decoding the ID prefix."""
+
+    def _render(self, tmp_path):
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        out_dir = tmp_path / "out"
+        result = _run(
+            [
+                "--input-dir",
+                str(stage),
+                "--out-dir",
+                str(out_dir),
+                "--project-name",
+                "myapp",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        return (
+            (out_dir / "Findings-review.md").read_text(encoding="utf-8"),
+            (out_dir / "Findings-review-supplementary.md").read_text(encoding="utf-8"),
+            _load(out_dir / "Findings-review.json"),
+        )
+
+    def test_severity_subsections_under_each_concern(self, tmp_path):
+        _main, supp, rendered = self._render(tmp_path)
+        buckets_present = {f["severity"] for f in rendered["findings"]}
+        for bucket in buckets_present:
+            heading = f"#### {bucket.replace('-', ' ').title()}"
+            assert heading in supp, f"missing {heading!r} in supplementary"
+        # Concern stays the outer grouping; findings drop one level to make room.
+        assert "### Security" in supp
+        assert "##### C0:" in supp or "##### N0:" in supp
+
+    def test_high_severity_findings_appear_in_both_files(self, tmp_path):
+        main, supp, rendered = self._render(tmp_path)
+        top = [
+            f for f in rendered["findings"] if f["severity"] in ("critical", "important")
+        ]
+        assert top, "fixture must contain a critical or important finding"
+        for f in top:
+            assert f["title"] in main
+            assert f["title"] in supp, "supplementary is the full per-concern view"
+
+    def test_main_breaks_deferred_findings_out_by_concern(self, tmp_path):
+        main, _supp, rendered = self._render(tmp_path)
+        deferred = [
+            f
+            for f in rendered["findings"]
+            if f["severity"] in ("suggestion", "needs-review")
+        ]
+        assert deferred, "fixture must contain a suggestion or needs-review finding"
+        assert "| Concern | Suggestion | Needs review |" in main
+        for concern in {f["concern_slug"] for f in deferred}:
+            # Linked to its supplementary section, not just counted.
+            assert (
+                f"[{concern.title()}](Findings-review-supplementary.md#{concern})"
+                in main
+            )
+        counts = {"suggestion": 0, "needs-review": 0}
+        for f in deferred:
+            counts[f["severity"]] += 1
+        assert f"| **Total** | **{counts['suggestion']}** | **{counts['needs-review']}** |" in main
+
+    def test_concern_links_resolve_to_supplementary_headings(self, tmp_path):
+        main, supp, rendered = self._render(tmp_path)
+        # An anchor that does not match a heading is a dead link in the
+        # deliverable, and nothing else in the pipeline would catch it.
+        for concern in {f["concern_slug"] for f in rendered["findings"]}:
+            if f"#{concern})" in main:
+                assert f"### {concern.title()}" in supp
+
+    def test_empty_deferred_buckets_state_it(self, tmp_path):
+        stage = tmp_path / "20-findings"
+        stage.mkdir(parents=True)
+        (stage / "_envelope.json").write_text(
+            json.dumps(
+                {
+                    "project": {"name": "myapp"},
+                    "decomposition": [
+                        {"dimension_name": "full scope", "dimension_slug": "full-scope"}
+                    ],
+                    "issues": [],
+                }
+            )
+        )
+        finding = {
+            "title": "Crash on empty input",
+            "severity": "critical",
+            "confidence": "high",
+            "concern_slug": "implementation",
+            "content_hash": "aaaaaaaaaaaaaaaa",
+            "locations": [{"path": "app.py", "line": "3", "role": "primary"}],
+            "issue": "x",
+            "why_it_matters": "y",
+            "suggested_fix": "z",
+        }
+        (stage / "aaaaaaaaaaaaaaaa.json").write_text(json.dumps(finding))
+        out_dir = tmp_path / "out"
+        result = _run(
+            [
+                "--input-dir",
+                str(stage),
+                "--out-dir",
+                str(out_dir),
+                "--project-name",
+                "myapp",
+                "--scoring",
+                "simple",
+            ]
+        )
+        assert result.returncode == 0, result.stderr
+        main = (out_dir / "Findings-review.md").read_text(encoding="utf-8")
+        assert "No suggestions or low-confidence findings." in main
+        assert "| Concern |" not in main
+
+
 class TestSharedSchemaCompliance:
     def _render(self, tmp_path, extra_args=None, stage_dir=None):
         if stage_dir is None:
@@ -533,3 +651,42 @@ class TestCrossCuttingObservationsRender:
         # Shared-schema validation still passes with the supplementary field.
         schema = _load(SHARED_SCHEMA)
         jsonschema.validate(instance=rendered, schema=schema)
+
+
+class TestRunIdentity:
+    """Findings trace back to their run after .tmp-review/ is wiped."""
+
+    def _render(self, tmp_path, extra_args=None):
+        stage_dir = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage_dir, FIXTURES / "post-validation.sample.json")
+        args = [
+            "--input-dir",
+            str(stage_dir),
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--project-name",
+            "myapp",
+        ]
+        if extra_args:
+            args.extend(extra_args)
+        return _run(args)
+
+    def test_ids_recorded_and_valid(self, tmp_path):
+        result = self._render(
+            tmp_path,
+            ["--run-id", "abc123def456", "--orchestrating-session-id", "sess-xyz"],
+        )
+        assert result.returncode == 0, result.stderr
+        rendered = _load(tmp_path / "out" / "Findings-review.json")
+        assert rendered["run_id"] == "abc123def456"
+        assert rendered["orchestrating_session_id"] == "sess-xyz"
+        with SHARED_SCHEMA.open("r", encoding="utf-8") as fh:
+            schema = json.load(fh)
+        jsonschema.Draft202012Validator(schema).validate(rendered)
+
+    def test_keys_absent_when_not_supplied(self, tmp_path):
+        result = self._render(tmp_path)
+        assert result.returncode == 0, result.stderr
+        rendered = _load(tmp_path / "out" / "Findings-review.json")
+        assert "run_id" not in rendered
+        assert "orchestrating_session_id" not in rendered

@@ -92,7 +92,7 @@ The roster lives in `orchestrator/lenses.py`; the selector picks the subset whos
 
 The `compatibility` lens classifies the deliverable first (batch tool / library vs long-running vs HA service) from repo evidence and assesses only the facets that can exist there: interface contracts (API, CLI including parsed stdout, schemas, behavioral semantics), persisted-state safety in both directions (upgrade and rollback), mixed-version coexistence and in-flight work during rolling updates (deployed services only), operational contracts (metric/log names, config keys), and whether the version signal matches any breakage found.
 - **Deterministic everything else.** Consolidation, diff-scope filtering, batching, verdict application, severity mapping, and rendering are tested Python scripts. The orchestrator sequences them; no model reasoning is involved.
-- **Measured cost.** Every headless agent result carries `total_cost_usd`. The orchestrator writes a per-stage ledger to `.tmp-review/costs.json` and prints a cost table after each run — real spend, never estimates.
+- **Measured cost.** Every headless agent result carries `total_cost_usd`. The orchestrator writes a per-stage/model ledger to `.tmp-review/costs.json` and prints a cost table after each run — real spend, never estimates.
 - **Validator pass.** Critical and important findings get an adversarial validator agent (premise check, dimensional/severity check, and PR-attribution check against the merge base for PR reviews). Verdicts are confirm / rescore / remove with an auditable removal trail in `issues[]`.
 
 ### Scoring modes
@@ -142,7 +142,7 @@ The orchestrator also runs standalone (useful outside Claude Code or from other 
 python <plugin-root>/orchestrator/cli.py --pr 42 --scoring simple
 python <plugin-root>/orchestrator/cli.py --dry-run     # scope + selector prompt, no agents
 python <plugin-root>/orchestrator/cli.py --detach ...  # long runs: start detached, survives the caller
-python <plugin-root>/orchestrator/cli.py --wait        # poll it: exit 3 = still running, rerun until done
+python <plugin-root>/orchestrator/cli.py --wait --wait-timeout-s 3600  # block until done; exit 3 = timed out, rerun
 ```
 
 The orchestrator needs only a `claude` CLI on PATH with working auth — any shell, CI job, or non-Claude agent frontend can drive it.
