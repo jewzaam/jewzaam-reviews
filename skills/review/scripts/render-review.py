@@ -74,7 +74,7 @@ def assign_buckets_and_ids(findings: list[dict], scoring: str = "categorical") -
     )
 
 
-def _format_finding_block(f: dict) -> str:
+def _format_finding_block(f: dict, level: int = 4) -> str:
     locations = format_locations_block(f["locations"])
     if "runtime_scope" in f:
         ratings = (
@@ -87,13 +87,51 @@ def _format_finding_block(f: dict) -> str:
     else:
         ratings = f"**Confidence:** {f['confidence']}"
     return (
-        f"#### {f['id']}: {f['title']}\n\n"
+        f"{'#' * level} {f['id']}: {f['title']}\n\n"
         f"**Locations:**\n{locations}\n\n"
         f"{ratings}\n\n"
         f"**Issue:** {f['issue']}\n\n"
         f"**Why it matters:** {f['why_it_matters']}\n\n"
         f"**Suggested fix:** {f['suggested_fix']}\n"
     )
+
+
+def _bucket_title(bucket: str) -> str:
+    """'needs-review' -> 'Needs Review'. Also the supplementary heading text."""
+    return bucket.replace("-", " ").title()
+
+
+def _concern_anchor(concern_slug: str) -> str:
+    """Anchor of the supplementary `### <Concern>` heading for this slug.
+
+    Concern slugs are single lowercase words (the concern_slug enum), so the
+    GitHub-style anchor of the title-cased heading is the slug itself.
+    """
+    return concern_slug
+
+
+def _concern_breakdown_table(findings: list[dict], supp_path: str) -> str:
+    """Concern x severity counts for the findings the main file does not inline.
+
+    Replaces a bare total, which said nothing about where the work is. Each
+    concern links to its section in the supplementary file.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for f in findings:
+        row = counts.setdefault(f["concern_slug"], {"suggestion": 0, "needs-review": 0})
+        row[f["severity"]] += 1
+
+    lines = ["| Concern | Suggestion | Needs review |", "|---|---|---|"]
+    for concern in sorted(counts):
+        row = counts[concern]
+        link = f"[{concern.title()}]({supp_path}#{_concern_anchor(concern)})"
+        lines.append(f"| {link} | {row['suggestion']} | {row['needs-review']} |")
+    totals = (
+        sum(r["suggestion"] for r in counts.values()),
+        sum(r["needs-review"] for r in counts.values()),
+    )
+    lines.append(f"| **Total** | **{totals[0]}** | **{totals[1]}** |")
+    return "\n".join(lines) + "\n"
 
 
 def render_main_markdown(rendered: dict, project_name: str, scope_slug: str) -> str:
@@ -129,23 +167,16 @@ def render_main_markdown(rendered: dict, project_name: str, scope_slug: str) -> 
     else:
         parts.append("No important issues identified.\n")
 
-    parts.append("### Suggestions\n")
-    if by_bucket["suggestion"]:
+    parts.append("### Suggestions and Needs Review\n")
+    deferred = by_bucket["suggestion"] + by_bucket["needs-review"]
+    if deferred:
         parts.append(
-            f"{len(by_bucket['suggestion'])} suggestions documented in the "
-            f"[supplementary review]({supp_path}#detailed-analysis).\n"
+            f"Detailed in the [supplementary review]({supp_path}#detailed-analysis), "
+            "grouped by concern:\n"
         )
+        parts.append(_concern_breakdown_table(deferred, supp_path))
     else:
-        parts.append("No suggestions.\n")
-
-    parts.append("### Needs Review\n")
-    if by_bucket["needs-review"]:
-        parts.append(
-            f"{len(by_bucket['needs-review'])} low-confidence findings in the "
-            f"[supplementary review]({supp_path}#detailed-analysis).\n"
-        )
-    else:
-        parts.append("No low-confidence findings.\n")
+        parts.append("No suggestions or low-confidence findings.\n")
 
     return "\n".join(parts)
 
@@ -176,10 +207,18 @@ def render_supplementary_markdown(
     for f in findings:
         by_concern.setdefault(f["concern_slug"], []).append(f)
     if by_concern:
+        # Concern first, severity second. Critical/important are repeated here
+        # from the main file on purpose: reading one concern end to end is the
+        # point of this section, and it breaks if its top findings are missing.
         for concern in sorted(by_concern):
             parts.append(f"### {concern.title()}\n")
-            for f in by_concern[concern]:
-                parts.append(_format_finding_block(f))
+            for bucket in BUCKET_ORDER:
+                in_bucket = [f for f in by_concern[concern] if f["severity"] == bucket]
+                if not in_bucket:
+                    continue
+                parts.append(f"#### {_bucket_title(bucket)}\n")
+                for f in in_bucket:
+                    parts.append(_format_finding_block(f, level=5))
     else:
         parts.append("(no findings to detail)\n")
 
@@ -238,6 +277,22 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="suppress the success summary line on stdout",
     )
+    parser.add_argument(
+        "--run-id",
+        default="",
+        help=(
+            "orchestrator run id, recorded in the envelope so a findings file "
+            "traces back to its agents after .tmp-review/ is wiped"
+        ),
+    )
+    parser.add_argument(
+        "--orchestrating-session-id",
+        default="",
+        help=(
+            "Claude Code session that launched the run; a join key for "
+            "telemetry, not a cost (that session's spend is not in costs.json)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.scope_slug and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", args.scope_slug):
@@ -276,6 +331,8 @@ def main(argv: list[str]) -> int:
         findings=rendered_findings,
         issues=envelope.get("issues", []),
         scoring="simple" if args.scoring == "simple" else None,
+        run_id=args.run_id or None,
+        orchestrating_session_id=args.orchestrating_session_id or None,
         supplementary={"cross_cutting_observations": observations}
         if observations
         else None,

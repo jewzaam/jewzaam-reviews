@@ -463,3 +463,157 @@ class TestOtelAttributes:
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
         assert "OTEL_RESOURCE_ATTRIBUTES" not in capture["kwargs"]["env"]
+
+
+class TestBudgetStop:
+    """A budget stop is the CLI exiting on its own, so unlike a SIGKILL
+    timeout it still reports cost and session id. Verified against the real
+    CLI: exit 1, subtype error_max_budget_usd, terminal_reason
+    budget_exhausted, empty result, accurate total_cost_usd."""
+
+    def _budget_result(self, **overrides):
+        return _cli_result(
+            is_error=True,
+            subtype="error_max_budget_usd",
+            terminal_reason="budget_exhausted",
+            errors=["Reached maximum budget ($6)"],
+            result="",
+            structured_output=None,
+            total_cost_usd=6.0705224,
+            **overrides,
+        )
+
+    def test_budget_stop_is_its_own_category(self, monkeypatch):
+        _patch_run(
+            monkeypatch, _FakeProc(json.dumps(self._budget_result()), returncode=1)
+        )
+        res = backend.run_agent(
+            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+        )
+        assert res.error_category == "budget", "must not be lumped in with 'agent'"
+        assert res.error is not None
+
+    def test_budget_stop_reports_real_cost_and_session(self, monkeypatch):
+        """The whole point of budget-over-timeout: spend stays measurable."""
+        _patch_run(
+            monkeypatch, _FakeProc(json.dumps(self._budget_result()), returncode=1)
+        )
+        res = backend.run_agent(
+            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+        )
+        assert res.cost_usd == 6.0705224
+        assert res.session_id == "sess-1234"
+
+    def test_budget_message_comes_from_errors_not_empty_result(self, monkeypatch):
+        """`result` is empty on this path, so building the message from it
+        yields a useless string."""
+        _patch_run(
+            monkeypatch, _FakeProc(json.dumps(self._budget_result()), returncode=1)
+        )
+        res = backend.run_agent(
+            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+        )
+        assert "Reached maximum budget ($6)" in res.error
+
+    def test_terminal_reason_alone_is_enough(self, monkeypatch):
+        result = self._budget_result()
+        del result["subtype"]
+        _patch_run(monkeypatch, _FakeProc(json.dumps(result), returncode=1))
+        res = backend.run_agent(
+            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+        )
+        assert res.error_category == "budget"
+
+    def test_ordinary_agent_error_is_still_agent(self, monkeypatch):
+        _patch_run(
+            monkeypatch,
+            _FakeProc(
+                json.dumps(_cli_result(is_error=True, result="boom")), returncode=1
+            ),
+        )
+        res = backend.run_agent(
+            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+        )
+        assert res.error_category == "agent"
+
+
+class TestSessionAndBudgetArgv:
+    def test_budget_session_and_debug_flags(self, monkeypatch, tmp_path):
+        capture = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        log = tmp_path / "logs" / "lens.log"
+        backend.run_agent(
+            "p",
+            schema=None,
+            model="sonnet",
+            allowed_tools=[],
+            cwd="/tmp",
+            max_budget_usd=6.0,
+            session_id="11111111-2222-3333-4444-555555555555",
+            debug_file=log,
+        )
+        argv = capture["argv"]
+        assert "--max-budget-usd" in argv
+        assert argv[argv.index("--max-budget-usd") + 1] == "6.0"
+        assert argv[argv.index("--session-id") + 1] == (
+            "11111111-2222-3333-4444-555555555555"
+        )
+        assert argv[argv.index("--debug-file") + 1] == str(log)
+        assert log.parent.is_dir(), "debug-file parent must be created"
+
+    def test_persist_session_controls_the_flag(self, monkeypatch):
+        capture = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        backend.run_agent(
+            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+        )
+        assert "--no-session-persistence" in capture["argv"]
+
+        capture2 = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture2)
+        backend.run_agent(
+            "p",
+            schema=None,
+            model="sonnet",
+            allowed_tools=[],
+            cwd="/tmp",
+            persist_session=True,
+        )
+        assert "--no-session-persistence" not in capture2["argv"], (
+            "resume is impossible when the session is not persisted"
+        )
+
+    def test_resume_replaces_session_id(self, monkeypatch):
+        capture = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        backend.run_agent(
+            "p",
+            schema=None,
+            model="sonnet",
+            allowed_tools=[],
+            cwd="/tmp",
+            session_id="aaaaaaaa-2222-3333-4444-555555555555",
+            resume_session_id="bbbbbbbb-2222-3333-4444-555555555555",
+            persist_session=True,
+        )
+        argv = capture["argv"]
+        assert argv[argv.index("--resume") + 1] == (
+            "bbbbbbbb-2222-3333-4444-555555555555"
+        )
+        assert "--session-id" not in argv, "--session-id would collide with --resume"
+
+    def test_timeout_keeps_the_chosen_session_id(self, monkeypatch):
+        """SIGKILL destroys the result JSON, so the caller-chosen id is the
+        only way a killed attempt stays identifiable."""
+        _patch_run(monkeypatch, subprocess.TimeoutExpired(cmd="claude", timeout=1))
+        res = backend.run_agent(
+            "p",
+            schema=None,
+            model="sonnet",
+            allowed_tools=[],
+            cwd="/tmp",
+            session_id="cccccccc-2222-3333-4444-555555555555",
+        )
+        assert res.error_category == "timeout"
+        assert res.session_id == "cccccccc-2222-3333-4444-555555555555"
+        assert res.cost_usd == 0.0, "cost is genuinely unknowable after SIGKILL"

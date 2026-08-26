@@ -808,6 +808,10 @@
       },
       "type": "array"
     },
+    "orchestrating_session_id": {
+      "description": "Claude Code session that launched the run. Its own spend is NOT in costs.json \u2014 the orchestrator issues no model calls and the session outlives the run \u2014 so this is a join key, not a cost. Matches the `review.orchestrating_session_id` OTEL resource attribute.",
+      "type": "string"
+    },
     "project": {
       "properties": {
         "name": {
@@ -823,6 +827,10 @@
       ],
       "type": "object",
       "unevaluatedProperties": false
+    },
+    "run_id": {
+      "description": "Identifier of the orchestrator run that produced this envelope, matching costs.json `run_id` and the `review.run_id` OTEL resource attribute on every sub-agent. Present only for orchestrated runs (source: review); the local run ledger under .tmp-review/ is wiped by the next run, so this is the durable link from findings back to the agents that produced them.",
+      "type": "string"
     },
     "schema_version": {
       "description": "SemVer string, aligned with the plugin version at the time the document was written (.claude-plugin/plugin.json version). Consumers read this to identify which plugin release produced the envelope.",

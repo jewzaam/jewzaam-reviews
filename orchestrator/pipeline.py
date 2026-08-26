@@ -8,6 +8,7 @@ subprocess, or plain Python.
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -29,6 +30,38 @@ from scripts.envelope import assign_bucket, load_stage_dir, review_file_basename
 REVIEW_SCRIPTS = PLUGIN_ROOT / "skills" / "review" / "scripts"
 TMP_DIR_NAME = ".tmp-review"
 TRACE_FILENAME = "agent-trace.jsonl"
+LOG_DIRNAME = "agent-logs"
+
+# Per-agent spend cap — the actual runaway control (Options.timeout_s is only
+# a latency backstop). Keyed by model because the floors differ by an order of
+# magnitude: measured haiku lenses run $0.25-$0.40 and sonnet lenses
+# $2.07-$3.53, so one flat cap is either no cap for haiku or too tight for
+# sonnet. The CLI enforces this between turns, so real spend overshoots by up
+# to one turn's cost.
+BUDGET_USD_BY_MODEL = {"sonnet": 6.0, "haiku": 2.0}
+DEFAULT_BUDGET_USD = 6.0
+
+# Second pass over a budget-stopped agent: reopen its session and ask only for
+# what it already worked out. Cheap because it does no new investigation, and
+# it salvages a run that otherwise cost full price for nothing.
+HARVEST_BUDGET_USD = 0.5
+HARVEST_PROMPT = (
+    "STOP investigating. Your previous run was cut short when it hit its "
+    "spend cap, and its work is otherwise lost.\n\n"
+    "Do NOT read any more files, run any more searches, or start any new "
+    "analysis. Using ONLY what you already established in this session, emit "
+    "your structured output now.\n\n"
+    "Include every finding you had already confirmed. Omit anything you were "
+    "still in the middle of verifying — a partial set of solid findings is "
+    "the goal, not a padded one. If you had not confirmed any findings yet, "
+    "return an empty findings list rather than inventing any."
+)
+
+
+def budget_for(model: str) -> float:
+    """Spend cap for one agent invocation on this model."""
+    return BUDGET_USD_BY_MODEL.get(model, DEFAULT_BUDGET_USD)
+
 
 @dataclass(frozen=True)
 class ToolConfig:
@@ -68,7 +101,9 @@ class Options:
     skip_lenses: tuple = ()  # lens slugs excluded before selection
     max_agents: int = 16
     parallel: int = 4
-    timeout_s: int = 600
+    # Latency backstop only. Spend is capped per agent by BUDGET_USD_BY_MODEL,
+    # which stops a runaway without SIGKILL and so keeps its cost reportable.
+    timeout_s: int = 3600
     dry_run: bool = False
 
 
@@ -95,6 +130,15 @@ class RunState:
     options: Options
     scope: scope_mod.ReviewScope
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    # The Claude Code session that launched this run. The orchestrator makes no
+    # model calls of its own, so this session's spend — reading the skill,
+    # choosing arguments, polling --wait, relaying results — is real review cost
+    # that no ledger entry here can capture: it belongs to a process this one
+    # cannot see and never ends when the run does. Recording the id is what
+    # makes it joinable. Empty when the CLI is run from a plain shell.
+    orchestrating_session_id: str = field(
+        default_factory=lambda: os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    )
     saved_selection: dict | None = None  # selector output from --select-only
     costs: list[CostEntry] = field(default_factory=list)
     issues: list[dict] = field(default_factory=list)
@@ -102,12 +146,30 @@ class RunState:
 
     def agent_attributes(self, stage: str, label: str) -> dict:
         """OTEL resource attributes stamping a child with run correlation."""
-        return {
+        attributes = {
             "review.run_id": self.run_id,
             "review.stage": stage,
             "review.agent": label,
             "review.scoring": self.options.scoring,
         }
+        if self.orchestrating_session_id:
+            attributes["review.orchestrating_session_id"] = (
+                self.orchestrating_session_id
+            )
+        return attributes
+
+    @property
+    def log_dir(self) -> Path:
+        """Per-agent CLI debug logs, written while the agents are still running.
+
+        The trace file is only appended after an agent returns, so during a
+        long run there is nothing to look at. These exist purely to answer
+        "what is it doing right now" on request — nothing reads them
+        programmatically, and no decision is made from them. A quiet log is
+        ambiguous (a stalled agent and one inside a long tool call look the
+        same), which is exactly why acting on it automatically is a trap.
+        """
+        return self.tmp_dir / LOG_DIRNAME
 
     @property
     def tmp_dir(self) -> Path:
@@ -134,12 +196,18 @@ def _attempt_error(attempt_result, schema) -> str | None:
     return None
 
 
-def _run_with_retry(state, stage, label, model, fn, schema=None, retries=2):
+def _run_with_retry(state, stage, label, model, fn, schema=None, retries=2, harvest=None):
     """Call fn() -> AgentResult up to 1 + retries times.
 
     Cost of every attempt is recorded — the ledger reports real spend.
     Returns the first successful AgentResult, or the last attempt with
     `error` set when all attempts failed.
+
+    A budget stop is never retried. Hitting the cap is evidence the agent
+    was running away, and an identical retry runs away again at full price;
+    the old behaviour spent three full budgets to learn nothing. Instead,
+    when `harvest` is supplied, its session is reopened once to collect
+    whatever it had already established.
     """
     last_attempt = None
     for attempt_number in range(retries + 1):
@@ -168,7 +236,52 @@ def _run_with_retry(state, stage, label, model, fn, schema=None, retries=2):
         attempt.error = failure_reason
         attempt.output = None
         last_attempt = attempt
+        if category == "budget":
+            if harvest is None or not attempt.session_id:
+                break
+            harvested = _harvest(state, stage, label, model, harvest, attempt, schema)
+            return harvested if harvested is not None else attempt
     return last_attempt
+
+
+def _harvest(state, stage, label, model, harvest, stopped, schema):
+    """Reopen a budget-stopped session and take whatever it already had.
+
+    Returns the salvaged AgentResult, or None when nothing usable came back
+    (the caller then reports the original budget stop). Its cost is recorded
+    like any other attempt — this is real spend, not free.
+    """
+    started = time.monotonic()
+    attempt = harvest(stopped.session_id)
+    failure_reason = _attempt_error(attempt, schema)
+    state.costs.append(
+        CostEntry(
+            stage=stage,
+            label=f"{label} (harvest)",
+            model=model,
+            cost_usd=attempt.cost_usd,
+            elapsed_s=round(time.monotonic() - started, 3),
+            retries=0,
+            error=failure_reason,
+            error_category=attempt.error_category or ("schema" if failure_reason else None),
+            session_id=attempt.session_id or stopped.session_id,
+            denials=list(attempt.permission_denials),
+        )
+    )
+    if failure_reason is not None:
+        return None
+    state.issues.append(
+        {
+            "severity": "warning",
+            "kind": "subagent_failure",
+            "message": (
+                f"{label}: stopped at its spend cap; findings below were "
+                f"harvested from the partial run and may be incomplete"
+            ),
+            "source_component": label,
+        }
+    )
+    return attempt
 
 
 def _record_agent_failure(state, component: str, result) -> None:
@@ -232,6 +345,7 @@ def _bootstrap(state) -> None:
             "10-merged",
             "15-validation",
             "20-findings",
+            LOG_DIRNAME,
         ],
         cwd=state.options.project_root,
         capture_output=True,
@@ -266,6 +380,9 @@ def _run_selector(state) -> dict | None:
             cwd=state.options.project_root,
             effort="low",
             timeout_s=state.options.timeout_s,
+            max_budget_usd=budget_for("haiku"),
+            session_id=str(uuid.uuid4()),
+            debug_file=state.log_dir / "lens-selector.log",
             trace_file=state.tmp_dir / TRACE_FILENAME,
             label="lens-selector",
             redact=state.scope.guidance or None,
@@ -308,6 +425,10 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
             lens, dimension, state.scope, scoring=state.options.scoring
         )
         label = f"{lens.slug}/{dimension['slug']}"
+        log_stem = label.replace("/", "-")
+        # Chosen up front, not read back, so a SIGKILLed attempt is still
+        # identifiable and a budget-stopped one is still reopenable.
+        lens_session_id = str(uuid.uuid4())
         return _run_with_retry(
             state,
             "review",
@@ -321,12 +442,33 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
                 tools=LENS_TOOLS.tools,
                 cwd=state.options.project_root,
                 timeout_s=state.options.timeout_s,
+                max_budget_usd=budget_for(lens.model),
+                session_id=lens_session_id,
+                persist_session=True,
+                debug_file=state.log_dir / f"{log_stem}.log",
                 trace_file=state.tmp_dir / TRACE_FILENAME,
                 label=label,
                 redact=state.scope.guidance or None,
                 otel_attributes=state.agent_attributes("review", label),
             ),
             schema=schema,
+            harvest=lambda sid: backend.run_agent(
+                HARVEST_PROMPT,
+                schema=schema,
+                model=lens.model,
+                allowed_tools=[],
+                tools="",
+                cwd=state.options.project_root,
+                timeout_s=state.options.timeout_s,
+                max_budget_usd=HARVEST_BUDGET_USD,
+                resume_session_id=sid,
+                persist_session=True,
+                debug_file=state.log_dir / f"{log_stem}-harvest.log",
+                trace_file=state.tmp_dir / TRACE_FILENAME,
+                label=f"{label} (harvest)",
+                redact=state.scope.guidance or None,
+                otel_attributes=state.agent_attributes("review", f"{label}-harvest"),
+            ),
         )
 
     jobs = [
@@ -425,6 +567,10 @@ def run_validators(state) -> None:
                 tools=VALIDATOR_TOOLS.tools,
                 cwd=state.options.project_root,
                 timeout_s=state.options.timeout_s,
+                max_budget_usd=budget_for("sonnet"),
+                session_id=str(uuid.uuid4()),
+                debug_file=state.log_dir
+                / f"validator-batch-{batch['batch_number']}.log",
                 trace_file=state.tmp_dir / TRACE_FILENAME,
                 label=f"validator-batch-{batch['batch_number']}",
                 redact=state.scope.guidance or None,
@@ -457,6 +603,10 @@ def _write_costs(state) -> dict:
     """Persist the run ledger (cost, latency, denials) to .tmp-review/costs.json."""
     report = {
         "run_id": state.run_id,
+        # The session that drove this run. Its own spend is not in `entries` and
+        # cannot be: the orchestrator issues no model calls, and the session
+        # outlives the run. Recorded so the run joins back to it in telemetry.
+        "orchestrating_session_id": state.orchestrating_session_id or None,
         "scoring": state.options.scoring,
         "total_cost_usd": round(sum(c.cost_usd for c in state.costs), 6),
         "by_stage": {},
@@ -479,11 +629,14 @@ def _write_costs(state) -> dict:
         ],
     }
     for entry in state.costs:
-        report["by_stage"][entry.stage] = round(
-            report["by_stage"].get(entry.stage, 0.0) + entry.cost_usd, 6
+        # Keyed by stage/model, not stage: a stage spans models (review runs
+        # per-lens models), so a stage-only rollup hides where the spend went.
+        key = f"{entry.stage}/{entry.model}"
+        report["by_stage"][key] = round(
+            report["by_stage"].get(key, 0.0) + entry.cost_usd, 6
         )
-        report["seconds_by_stage"][entry.stage] = round(
-            report["seconds_by_stage"].get(entry.stage, 0.0) + entry.elapsed_s, 1
+        report["seconds_by_stage"][key] = round(
+            report["seconds_by_stage"].get(key, 0.0) + entry.elapsed_s, 1
         )
         for denial in entry.denials:
             tool = denial.get("tool_name", "unknown")
@@ -548,11 +701,17 @@ def _print_summary(state, cost_report) -> None:
         print(f"- {base}{suffix}")
 
     print(f"\nRun ID: {state.run_id} (telemetry label review_run_id)")
+    if state.orchestrating_session_id:
+        print(
+            f"Orchestrating session: {state.orchestrating_session_id} "
+            "(its spend is NOT in the table below)"
+        )
     print(f"\nCost (measured, scoring={cost_report['scoring']}):")
-    for stage, cost in cost_report["by_stage"].items():
-        seconds = cost_report["seconds_by_stage"].get(stage, 0.0)
-        print(f"  {stage:<10} ${cost:.4f}  ({seconds:.0f}s agent time)")
-    print(f"  {'total':<10} ${cost_report['total_cost_usd']:.4f}")
+    width = max([len(k) for k in cost_report["by_stage"]] + [len("total")])
+    for stage_model, cost in cost_report["by_stage"].items():
+        seconds = cost_report["seconds_by_stage"].get(stage_model, 0.0)
+        print(f"  {stage_model:<{width}} ${cost:.4f}  ({seconds:.0f}s agent time)")
+    print(f"  {'total':<{width}} ${cost_report['total_cost_usd']:.4f}")
     if cost_report["denials_by_tool"]:
         denial_text = ", ".join(
             f"{tool} ({count})"
@@ -785,7 +944,14 @@ def _run_stages(state: RunState) -> int:
             ".",
             "--project-name",
             review_scope.project_name,
+            "--run-id",
+            state.run_id,
         ]
+        if state.orchestrating_session_id:
+            render_args += [
+                "--orchestrating-session-id",
+                state.orchestrating_session_id,
+            ]
         if review_scope.scope_slug:
             render_args += ["--scope-slug", review_scope.scope_slug]
         stage_cli("render-review.py", *render_args, cwd=cwd)

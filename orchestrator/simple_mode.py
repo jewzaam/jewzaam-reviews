@@ -240,7 +240,14 @@ def run_simple_path(state) -> None:
         review_scope.project_name,
         "--scoring",
         "simple",
+        "--run-id",
+        state.run_id,
     ]
+    if state.orchestrating_session_id:
+        render_args += [
+            "--orchestrating-session-id",
+            state.orchestrating_session_id,
+        ]
     if review_scope.scope_slug:
         render_args += ["--scope-slug", review_scope.scope_slug]
     pipeline.stage_cli("render-review.py", *render_args, cwd=cwd)

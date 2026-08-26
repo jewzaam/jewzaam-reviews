@@ -103,15 +103,19 @@ def build_envelope(
     applied: list[dict] | None = None,
     supplementary: dict | None = None,
     scoring: str | None = None,
+    run_id: str | None = None,
+    orchestrating_session_id: str | None = None,
 ) -> dict:
     """Construct the shared-schema envelope.
 
     `schema_version`, `source`, `project`, `findings`, and `issues` are
     always present (findings and issues default to empty lists).
-    `decomposition`, `applied`, `supplementary`, `scoring` are included only
-    when passed (i.e., the key is absent from the envelope when the argument
-    is None). `scoring` is only meaningful for `source: review` — absent
-    means categorical.
+    `decomposition`, `applied`, `supplementary`, `scoring`, `run_id` and
+    `orchestrating_session_id` are included only when passed (i.e., the key is
+    absent from the envelope when the argument is None). `scoring` is only
+    meaningful for `source: review` — absent means categorical. The two id
+    fields are the durable link from a findings file back to the run that
+    produced it: the local ledger under .tmp-review/ is wiped by the next run.
     """
     envelope: dict[str, Any] = {
         "schema_version": plugin_version(),
@@ -122,6 +126,10 @@ def build_envelope(
     }
     if scoring is not None:
         envelope["scoring"] = scoring
+    if run_id is not None:
+        envelope["run_id"] = run_id
+    if orchestrating_session_id is not None:
+        envelope["orchestrating_session_id"] = orchestrating_session_id
     if decomposition is not None:
         envelope["decomposition"] = list(decomposition)
     if applied is not None:
