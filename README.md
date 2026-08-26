@@ -73,7 +73,24 @@ graph TD
 
 Key properties:
 
-- **Scope-aware sizing.** A cheap selector agent reads the diff (or repo shape) and picks applicable lenses from a roster with `runs_when` descriptions. The `implementation` lens always runs; a broken selector falls back to all seven lenses rather than silently narrowing the review. A small PR typically runs 1 selector + 2–4 lens agents + a validator, instead of a fixed matrix.
+- **Scope-aware sizing.** A cheap selector agent reads the diff (or repo shape) and picks applicable lenses from a roster with `runs_when` descriptions. The `implementation` lens always runs; a broken selector falls back to all lenses rather than silently narrowing the review. A small PR typically runs 1 selector + 2–4 lens agents + a validator, instead of a fixed matrix.
+
+### Lenses
+
+The roster lives in `orchestrator/lenses.py`; the selector picks the subset whose `runs_when` matches the scope.
+
+| Lens (`concern_slug`) | Model | Selector picks it when |
+|---|---|---|
+| `implementation` | sonnet | Always — general correctness runs on every review |
+| `architecture` | sonnet | Module structure, interfaces, configuration, or new files/packages change |
+| `test` | sonnet | Functional code changed that should have tests, or test files changed |
+| `maintainability` | sonnet | More than a trivial fix; build files; duplicated/complex logic |
+| `security` | sonnet | Auth, crypto, secrets, input parsing, subprocess/network/file I/O, dependencies |
+| `compatibility` | sonnet | Public interfaces (API/CLI/exports), schemas or wire/file formats, DB migrations, config keys, metric/log names, deployment manifests |
+| `documentation` | haiku | Docs files, public API surfaces, or user-facing behavior described in the README |
+| `observability` | haiku | Logging, error paths, metrics, long-running/operational code |
+
+The `compatibility` lens classifies the deliverable first (batch tool / library vs long-running vs HA service) from repo evidence and assesses only the facets that can exist there: interface contracts (API, CLI including parsed stdout, schemas, behavioral semantics), persisted-state safety in both directions (upgrade and rollback), mixed-version coexistence and in-flight work during rolling updates (deployed services only), operational contracts (metric/log names, config keys), and whether the version signal matches any breakage found.
 - **Deterministic everything else.** Consolidation, diff-scope filtering, batching, verdict application, severity mapping, and rendering are tested Python scripts. The orchestrator sequences them; no model reasoning is involved.
 - **Measured cost.** Every headless agent result carries `total_cost_usd`. The orchestrator writes a per-stage ledger to `.tmp-review/costs.json` and prints a cost table after each run — real spend, never estimates.
 - **Validator pass.** Critical and important findings get an adversarial validator agent (premise check, dimensional/severity check, and PR-attribution check against the merge base for PR reviews). Verdicts are confirm / rescore / remove with an auditable removal trail in `issues[]`.

@@ -72,6 +72,26 @@ LENSES: tuple[Lens, ...] = (
         "network/file I/O at trust boundaries, or dependencies.",
     ),
     Lens(
+        "Backwards Compatibility",
+        "compatibility",
+        "sonnet",
+        "Contract changes toward existing clients: API/CLI/schema/behavioral "
+        "breaks, persisted-state and migration safety (both directions), and — "
+        "only when the project is a deployed service — mixed-version "
+        "coexistence, in-flight work across upgrades, and rollback. FIRST "
+        "classify the deliverable (batch tool / library vs long-running vs HA "
+        "service) from repo evidence (Dockerfile, k8s/helm manifests, queue "
+        "clients, migration dirs) and mark inapplicable facets N/A; never "
+        "report runtime-upgrade findings against a batch tool or library. "
+        "Operational contracts count: metric/log renames break dashboards and "
+        "alerts like API renames break apps; config keys and defaults are "
+        "contracts. A breaking change without a matching version signal "
+        "(major bump, deprecation notice) is itself a finding.",
+        "Change touches public interfaces (API/CLI/exported symbols), schemas "
+        "or wire/file formats, DB migrations, config keys, metric/log names, "
+        "or deployment manifests.",
+    ),
+    Lens(
         "Documentation",
         "documentation",
         "haiku",
