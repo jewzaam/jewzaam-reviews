@@ -146,7 +146,7 @@ class TestCategoricalEndToEnd:
         rc = pipeline.run_review(_options(git_repo))
         assert rc == 0
         lens_calls = [c for c in calls if "axis within the dimension" in c["prompt"]]
-        assert len(lens_calls) == 7  # all lenses ran
+        assert len(lens_calls) == len(pipeline.lenses.LENSES)  # all lenses ran
         # Selector failure recorded as an issue in the envelope.
         findings = json.loads((git_repo / "Findings-review.json").read_text())
         kinds = [issue["kind"] for issue in findings["issues"]]

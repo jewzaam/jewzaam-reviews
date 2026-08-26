@@ -4,7 +4,13 @@
   "title": "Findings (cross-skill handoff)",
   "description": "Shared JSON shape emitted by producer skills (review, standards, c4-reverse-engineer) and consumer skill reports (apply-review). The document-level 'source' field discriminates which finding subtype is used and which top-level fields are required.",
   "type": "object",
-  "required": ["schema_version", "source", "project", "findings", "issues"],
+  "required": [
+    "schema_version",
+    "source",
+    "project",
+    "findings",
+    "issues"
+  ],
   "properties": {
     "schema_version": {
       "type": "string",
@@ -12,26 +18,44 @@
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\\+([0-9a-zA-Z-]+(\\.[0-9a-zA-Z-]+)*))?$"
     },
     "source": {
-      "description": "The producing skill, or the shape of the output for consumer skills. `update-pr` is absent deliberately — it emits review-shaped findings (with optional `pr_comment` fields) under `source: \"review\"`.",
-      "enum": ["review", "standards", "c4-reverse-engineer", "apply-review"]
+      "description": "The producing skill, or the shape of the output for consumer skills. `update-pr` is absent deliberately \u2014 it emits review-shaped findings (with optional `pr_comment` fields) under `source: \"review\"`.",
+      "enum": [
+        "review",
+        "standards",
+        "c4-reverse-engineer",
+        "apply-review"
+      ]
     },
-    "project": {"$ref": "#/$defs/project"},
+    "project": {
+      "$ref": "#/$defs/project"
+    },
     "scoring": {
-      "enum": ["categorical", "simple"],
+      "enum": [
+        "categorical",
+        "simple"
+      ],
       "description": "Scoring mode used by the producing review run. Absent means categorical (the five-dimension rubric). simple means findings carry direct severity + confidence and omit the categorical dimensions. Only meaningful for source: review."
     },
     "decomposition": {
       "type": "array",
-      "items": {"$ref": "#/$defs/dimension"}
+      "items": {
+        "$ref": "#/$defs/dimension"
+      }
     },
-    "findings": {"type": "array"},
+    "findings": {
+      "type": "array"
+    },
     "issues": {
       "type": "array",
-      "items": {"$ref": "#/$defs/issue"}
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
     },
     "applied": {
       "type": "array",
-      "items": {"$ref": "#/$defs/applied_item"}
+      "items": {
+        "$ref": "#/$defs/applied_item"
+      }
     },
     "supplementary": {
       "type": "object",
@@ -42,53 +66,133 @@
   "allOf": [
     {
       "if": {
-        "properties": {"source": {"const": "review"}},
-        "required": ["source"],
-        "not": {"properties": {"scoring": {"const": "simple"}}, "required": ["scoring"]}
+        "properties": {
+          "source": {
+            "const": "review"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "not": {
+          "properties": {
+            "scoring": {
+              "const": "simple"
+            }
+          },
+          "required": [
+            "scoring"
+          ]
+        }
       },
       "then": {
-        "required": ["decomposition"],
+        "required": [
+          "decomposition"
+        ],
         "properties": {
-          "decomposition": {"minItems": 1},
-          "findings": {"items": {"$ref": "#/$defs/review_finding"}}
+          "decomposition": {
+            "minItems": 1
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/$defs/review_finding"
+            }
+          }
         }
       }
     },
     {
       "if": {
-        "properties": {"source": {"const": "review"}, "scoring": {"const": "simple"}},
-        "required": ["source", "scoring"]
+        "properties": {
+          "source": {
+            "const": "review"
+          },
+          "scoring": {
+            "const": "simple"
+          }
+        },
+        "required": [
+          "source",
+          "scoring"
+        ]
       },
       "then": {
-        "required": ["decomposition"],
+        "required": [
+          "decomposition"
+        ],
         "properties": {
-          "decomposition": {"minItems": 1},
-          "findings": {"items": {"$ref": "#/$defs/simple_review_finding"}}
+          "decomposition": {
+            "minItems": 1
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/$defs/simple_review_finding"
+            }
+          }
         }
       }
     },
     {
-      "if": {"properties": {"source": {"const": "standards"}}, "required": ["source"]},
+      "if": {
+        "properties": {
+          "source": {
+            "const": "standards"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
       "then": {
         "properties": {
-          "findings": {"items": {"$ref": "#/$defs/standards_finding"}}
+          "findings": {
+            "items": {
+              "$ref": "#/$defs/standards_finding"
+            }
+          }
         }
       }
     },
     {
-      "if": {"properties": {"source": {"const": "c4-reverse-engineer"}}, "required": ["source"]},
+      "if": {
+        "properties": {
+          "source": {
+            "const": "c4-reverse-engineer"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
       "then": {
         "properties": {
-          "findings": {"items": {"$ref": "#/$defs/c4_finding"}}
+          "findings": {
+            "items": {
+              "$ref": "#/$defs/c4_finding"
+            }
+          }
         }
       }
     },
     {
-      "if": {"properties": {"source": {"const": "apply-review"}}, "required": ["source"]},
-      "then": {
-        "required": ["applied"],
+      "if": {
         "properties": {
-          "findings": {"maxItems": 0}
+          "source": {
+            "const": "apply-review"
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "then": {
+        "required": [
+          "applied"
+        ],
+        "properties": {
+          "findings": {
+            "maxItems": 0
+          }
         }
       }
     }
@@ -96,71 +200,136 @@
   "$defs": {
     "project": {
       "type": "object",
-      "required": ["name"],
+      "required": [
+        "name"
+      ],
       "properties": {
-        "name": {"type": "string", "minLength": 1},
-        "scope_slug": {"type": "string"}
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_slug": {
+          "type": "string"
+        }
       },
       "unevaluatedProperties": false
     },
     "dimension": {
       "type": "object",
-      "required": ["dimension_name", "dimension_slug"],
+      "required": [
+        "dimension_name",
+        "dimension_slug"
+      ],
       "properties": {
-        "dimension_name": {"type": "string", "minLength": 1},
-        "dimension_slug": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"},
-        "dimension_scope": {"type": "object"}
+        "dimension_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dimension_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,30}$"
+        },
+        "dimension_scope": {
+          "type": "object"
+        }
       },
       "unevaluatedProperties": false
     },
     "location": {
       "type": "object",
-      "required": ["path", "line"],
+      "required": [
+        "path",
+        "line"
+      ],
       "properties": {
-        "path": {"type": "string", "minLength": 1},
-        "line": {"type": "string", "pattern": "^[0-9]+(-[0-9]+)?$"},
-        "role": {"enum": ["primary", "related", "callsite", "requirement"]}
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "string",
+          "pattern": "^[0-9]+(-[0-9]+)?$"
+        },
+        "role": {
+          "enum": [
+            "primary",
+            "related",
+            "callsite",
+            "requirement"
+          ]
+        }
       },
       "unevaluatedProperties": false
     },
     "runtime_scope": {
-      "enum": ["documentation", "tooling", "ci", "service-internal", "service-external"],
-      "description": "Where the affected code executes in the deployment lifecycle. Values listed from least to most severe: documentation — non-executable content (e.g., markdown, comments, READMEs). tooling — developer tooling and local scripts that never execute in CI or production. ci — CI/CD pipelines and build infrastructure; executes during integration but not at production runtime. Findings about missing or incomplete tests use ci because tests execute in CI, not in production. Use service-internal or service-external only for findings about defects in production runtime code, not for test coverage gaps. service-internal — production runtime code not directly exposed to untrusted input. service-external — production runtime code directly exposed to external users or untrusted input. When a finding identifies both a production defect and a test gap, report them as separate findings: the defect uses service-internal or service-external; the test gap uses ci."
+      "enum": [
+        "documentation",
+        "tooling",
+        "ci",
+        "service-internal",
+        "service-external"
+      ],
+      "description": "Where the affected code executes in the deployment lifecycle. Values listed from least to most severe: documentation \u2014 non-executable content (e.g., markdown, comments, READMEs). tooling \u2014 developer tooling and local scripts that never execute in CI or production. ci \u2014 CI/CD pipelines and build infrastructure; executes during integration but not at production runtime. Findings about missing or incomplete tests use ci because tests execute in CI, not in production. Use service-internal or service-external only for findings about defects in production runtime code, not for test coverage gaps. service-internal \u2014 production runtime code not directly exposed to untrusted input. service-external \u2014 production runtime code directly exposed to external users or untrusted input. When a finding identifies both a production defect and a test gap, report them as separate findings: the defect uses service-internal or service-external; the test gap uses ci."
     },
     "runtime_scope_justification": {
-      "type": "string", "minLength": 1,
+      "type": "string",
+      "minLength": 1,
       "description": "Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test."
     },
     "failure_mode": {
-      "enum": ["unclear", "confusion", "build-break", "degraded-behavior", "crash-or-outage", "data-loss-or-security"],
-      "description": "The category of consequence if the issue manifests. The failure must be current — 'if a future regression occurs' is not a failure mode; use unclear when the system currently works correctly and the finding is about a coverage or observability gap. Values listed from least to most severe: unclear — no specific failure scenario can be identified; the issue is stylistic, structural, or speculative. confusion — misleads developers or users (e.g., incorrect docs, misleading names, unclear APIs) without causing runtime misbehavior. build-break — prevents successful build, lint, or test execution; blocks CI but does not affect running systems. degraded-behavior — the system produces incorrect results, loses functionality, or behaves unexpectedly under specific conditions, but remains available. crash-or-outage — the system becomes unavailable (e.g., process crash, unhandled exception, resource exhaustion, denial of service). data-loss-or-security — the system's data integrity, confidentiality, or security posture is compromised (e.g., data corruption, exfiltration, unauthorized access, privilege escalation, injection, information disclosure)."
+      "enum": [
+        "unclear",
+        "confusion",
+        "build-break",
+        "degraded-behavior",
+        "crash-or-outage",
+        "data-loss-or-security"
+      ],
+      "description": "The category of consequence if the issue manifests. The failure must be current \u2014 'if a future regression occurs' is not a failure mode; use unclear when the system currently works correctly and the finding is about a coverage or observability gap. Values listed from least to most severe: unclear \u2014 no specific failure scenario can be identified; the issue is stylistic, structural, or speculative. confusion \u2014 misleads developers or users (e.g., incorrect docs, misleading names, unclear APIs) without causing runtime misbehavior. build-break \u2014 prevents successful build, lint, or test execution; blocks CI but does not affect running systems. degraded-behavior \u2014 the system produces incorrect results, loses functionality, or behaves unexpectedly under specific conditions, but remains available. crash-or-outage \u2014 the system becomes unavailable (e.g., process crash, unhandled exception, resource exhaustion, denial of service). data-loss-or-security \u2014 the system's data integrity, confidentiality, or security posture is compromised (e.g., data corruption, exfiltration, unauthorized access, privilege escalation, injection, information disclosure)."
     },
     "failure_mode_justification": {
-      "type": "string", "minLength": 1,
-      "description": "Describe the specific failure scenario — what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified."
+      "type": "string",
+      "minLength": 1,
+      "description": "Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified."
     },
     "evidence_quality": {
-      "enum": ["speculative", "inferred", "demonstrated"],
-      "description": "How strongly the finding is grounded in observable code evidence. 'demonstrated' requires demonstrating a failure in the code, not demonstrating the absence of a test. Proving that a test does not exist is not demonstrated evidence of a defect — use inferred if you can identify a plausible failure scenario the test would catch, or speculative if you cannot. Values listed from least to most severe: speculative — suspected based on patterns or general best practices; no concrete code path identified. inferred — a plausible scenario is visible in the code structure, but the conclusion requires assumptions about runtime state, configuration, or input that are not verified. demonstrated — a specific code path is traced from input to problematic outcome, citing concrete lines; the issue is visible from the code alone without runtime assumptions."
+      "enum": [
+        "speculative",
+        "inferred",
+        "demonstrated"
+      ],
+      "description": "How strongly the finding is grounded in observable code evidence. 'demonstrated' requires demonstrating a failure in the code, not demonstrating the absence of a test. Proving that a test does not exist is not demonstrated evidence of a defect \u2014 use inferred if you can identify a plausible failure scenario the test would catch, or speculative if you cannot. Values listed from least to most severe: speculative \u2014 suspected based on patterns or general best practices; no concrete code path identified. inferred \u2014 a plausible scenario is visible in the code structure, but the conclusion requires assumptions about runtime state, configuration, or input that are not verified. demonstrated \u2014 a specific code path is traced from input to problematic outcome, citing concrete lines; the issue is visible from the code alone without runtime assumptions."
     },
     "evidence_quality_justification": {
-      "type": "string", "minLength": 1,
-      "description": "Summarize the evidence chain — what was traced, what was verified, and what (if anything) remains assumed."
+      "type": "string",
+      "minLength": 1,
+      "description": "Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed."
     },
     "trace_origin": {
-      "enum": ["local", "component", "entry-point"],
-      "description": "How far back the agent traced to establish reachability. The trace must lead to a problematic outcome — tracing to working code and noting 'but there is no test' is not an entry-point trace. For test coverage gaps, use local because the finding observes a single code site (the missing test) without tracing a failure through callers. Values listed from least to most severe: local — observed at a single code site without tracing callers or callees. component — traced within a module or package boundary (e.g., function A calls function B which exhibits the issue); external reachability is not established. entry-point — traced from an identified external entry point (e.g., API handler, CLI command, CI trigger, user action) through the call chain to the problematic code."
+      "enum": [
+        "local",
+        "component",
+        "entry-point"
+      ],
+      "description": "How far back the agent traced to establish reachability. The trace must lead to a problematic outcome \u2014 tracing to working code and noting 'but there is no test' is not an entry-point trace. For test coverage gaps, use local because the finding observes a single code site (the missing test) without tracing a failure through callers. Values listed from least to most severe: local \u2014 observed at a single code site without tracing callers or callees. component \u2014 traced within a module or package boundary (e.g., function A calls function B which exhibits the issue); external reachability is not established. entry-point \u2014 traced from an identified external entry point (e.g., API handler, CLI command, CI trigger, user action) through the call chain to the problematic code."
     },
     "trace_origin_justification": {
-      "type": "string", "minLength": 1,
+      "type": "string",
+      "minLength": 1,
       "description": "For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed."
     },
     "effort_to_fix": {
-      "enum": ["trivial", "small", "moderate", "large"],
-      "description": "Estimated remediation cost. Not used in criticality assessment; used for prioritization. Values: trivial — a one-line change, rename, or config tweak with no design decisions. small — a localized fix within one file or function. moderate — changes spanning multiple files or functions, potentially requiring test updates. large — requires architectural changes, new abstractions, or significant refactoring."
+      "enum": [
+        "trivial",
+        "small",
+        "moderate",
+        "large"
+      ],
+      "description": "Estimated remediation cost. Not used in criticality assessment; used for prioritization. Values: trivial \u2014 a one-line change, rename, or config tweak with no design decisions. small \u2014 a localized fix within one file or function. moderate \u2014 changes spanning multiple files or functions, potentially requiring test updates. large \u2014 requires architectural changes, new abstractions, or significant refactoring."
     },
     "effort_to_fix_justification": {
-      "type": "string", "minLength": 1,
+      "type": "string",
+      "minLength": 1,
       "description": "Describe the fix approach and why it requires the stated level of effort."
     },
     "base_finding": {
@@ -176,22 +345,54 @@
         "content_hash"
       ],
       "properties": {
-        "id": {"type": "string", "pattern": "^[CISN][0-9]+$"},
-        "title": {"type": "string", "minLength": 1, "maxLength": 120},
-        "severity": {"enum": ["critical", "important", "suggestion", "needs-review"]},
+        "id": {
+          "type": "string",
+          "pattern": "^[CISN][0-9]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "severity": {
+          "enum": [
+            "critical",
+            "important",
+            "suggestion",
+            "needs-review"
+          ]
+        },
         "locations": {
           "type": "array",
           "minItems": 1,
-          "items": {"$ref": "#/$defs/location"}
+          "items": {
+            "$ref": "#/$defs/location"
+          }
         },
-        "issue": {"type": "string", "minLength": 1},
-        "why_it_matters": {"type": "string", "minLength": 1},
-        "suggested_fix": {"type": "string", "minLength": 1},
-        "content_hash": {"type": "string", "pattern": "^[a-f0-9]{16,64}$"}
+        "issue": {
+          "type": "string",
+          "minLength": 1
+        },
+        "why_it_matters": {
+          "type": "string",
+          "minLength": 1
+        },
+        "suggested_fix": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{16,64}$"
+        }
       }
     },
     "review_finding": {
-      "allOf": [{"$ref": "#/$defs/base_finding"}],
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_finding"
+        }
+      ],
       "required": [
         "concern_slug",
         "runtime_scope",
@@ -214,32 +415,64 @@
             "test",
             "maintainability",
             "security",
+            "compatibility",
             "documentation",
             "observability"
           ]
         },
-        "runtime_scope": {"$ref": "#/$defs/runtime_scope"},
-        "runtime_scope_justification": {"$ref": "#/$defs/runtime_scope_justification"},
-        "failure_mode": {"$ref": "#/$defs/failure_mode"},
-        "failure_mode_justification": {"$ref": "#/$defs/failure_mode_justification"},
-        "evidence_quality": {"$ref": "#/$defs/evidence_quality"},
-        "evidence_quality_justification": {"$ref": "#/$defs/evidence_quality_justification"},
-        "trace_origin": {"$ref": "#/$defs/trace_origin"},
-        "trace_origin_justification": {"$ref": "#/$defs/trace_origin_justification"},
-        "effort_to_fix": {"$ref": "#/$defs/effort_to_fix"},
-        "effort_to_fix_justification": {"$ref": "#/$defs/effort_to_fix_justification"},
+        "runtime_scope": {
+          "$ref": "#/$defs/runtime_scope"
+        },
+        "runtime_scope_justification": {
+          "$ref": "#/$defs/runtime_scope_justification"
+        },
+        "failure_mode": {
+          "$ref": "#/$defs/failure_mode"
+        },
+        "failure_mode_justification": {
+          "$ref": "#/$defs/failure_mode_justification"
+        },
+        "evidence_quality": {
+          "$ref": "#/$defs/evidence_quality"
+        },
+        "evidence_quality_justification": {
+          "$ref": "#/$defs/evidence_quality_justification"
+        },
+        "trace_origin": {
+          "$ref": "#/$defs/trace_origin"
+        },
+        "trace_origin_justification": {
+          "$ref": "#/$defs/trace_origin_justification"
+        },
+        "effort_to_fix": {
+          "$ref": "#/$defs/effort_to_fix"
+        },
+        "effort_to_fix_justification": {
+          "$ref": "#/$defs/effort_to_fix_justification"
+        },
         "source_dimensions": {
           "type": "array",
           "minItems": 1,
-          "items": {"type": "string"}
+          "items": {
+            "type": "string"
+          }
         },
-        "pr_comment": {"$ref": "#/$defs/pr_comment"}
+        "pr_comment": {
+          "$ref": "#/$defs/pr_comment"
+        }
       },
       "unevaluatedProperties": false
     },
     "simple_review_finding": {
-      "allOf": [{"$ref": "#/$defs/base_finding"}],
-      "required": ["concern_slug", "confidence"],
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_finding"
+        }
+      ],
+      "required": [
+        "concern_slug",
+        "confidence"
+      ],
       "properties": {
         "concern_slug": {
           "enum": [
@@ -248,43 +481,95 @@
             "test",
             "maintainability",
             "security",
+            "compatibility",
             "documentation",
             "observability"
           ]
         },
         "confidence": {
-          "enum": ["high", "medium", "low"],
+          "enum": [
+            "high",
+            "medium",
+            "low"
+          ],
           "description": "Reviewer confidence from the simple scoring mode. low-confidence findings carry severity needs-review."
         },
-        "pr_comment": {"$ref": "#/$defs/pr_comment"}
+        "pr_comment": {
+          "$ref": "#/$defs/pr_comment"
+        }
       },
       "unevaluatedProperties": false
     },
     "standards_finding": {
-      "allOf": [{"$ref": "#/$defs/base_finding"}],
-      "required": ["subdomain"],
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_finding"
+        }
+      ],
+      "required": [
+        "subdomain"
+      ],
       "properties": {
-        "subdomain": {"type": "string", "minLength": 1}
+        "subdomain": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "unevaluatedProperties": false
     },
     "c4_finding": {
-      "allOf": [{"$ref": "#/$defs/base_finding"}],
-      "required": ["artifact", "verdict", "spec_says", "code_says", "evidence"],
+      "allOf": [
+        {
+          "$ref": "#/$defs/base_finding"
+        }
+      ],
+      "required": [
+        "artifact",
+        "verdict",
+        "spec_says",
+        "code_says",
+        "evidence"
+      ],
       "properties": {
-        "artifact": {"type": "string", "minLength": 1},
-        "verdict": {"enum": ["DISCREPANCY", "MISSING"]},
-        "spec_says": {"type": "string", "minLength": 1},
-        "code_says": {"type": "string", "minLength": 1},
-        "evidence": {"type": "string", "minLength": 1}
+        "artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "verdict": {
+          "enum": [
+            "DISCREPANCY",
+            "MISSING"
+          ]
+        },
+        "spec_says": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code_says": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "unevaluatedProperties": false
     },
     "issue": {
       "type": "object",
-      "required": ["severity", "kind", "message"],
+      "required": [
+        "severity",
+        "kind",
+        "message"
+      ],
       "properties": {
-        "severity": {"enum": ["error", "warning"]},
+        "severity": {
+          "enum": [
+            "error",
+            "warning"
+          ]
+        },
         "kind": {
           "enum": [
             "permission_denied",
@@ -295,15 +580,26 @@
             "other"
           ]
         },
-        "message": {"type": "string", "minLength": 1},
-        "source_component": {"type": "string", "minLength": 1},
-        "context": {"type": "object"}
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_component": {
+          "type": "string",
+          "minLength": 1
+        },
+        "context": {
+          "type": "object"
+        }
       },
       "unevaluatedProperties": false
     },
     "applied_item": {
       "type": "object",
-      "required": ["finding_id", "outcome"],
+      "required": [
+        "finding_id",
+        "outcome"
+      ],
       "properties": {
         "finding_id": {
           "type": "string",
@@ -311,7 +607,12 @@
           "description": "Finding ID from the consumed Findings-*.json, e.g. C0, I3, S1."
         },
         "outcome": {
-          "enum": ["applied", "skipped", "failed", "pending-commit"],
+          "enum": [
+            "applied",
+            "skipped",
+            "failed",
+            "pending-commit"
+          ],
           "description": "applied = committed; skipped = no changes made; failed = attempted but errored; pending-commit = implemented in the working tree but left uncommitted (batch mode)."
         },
         "detail": {
@@ -337,19 +638,45 @@
       },
       "allOf": [
         {
-          "if": {"properties": {"outcome": {"const": "failed"}}, "required": ["outcome"]},
-          "then": {"required": ["error_kind"]}
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "failed"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "error_kind"
+            ]
+          }
         }
       ],
       "unevaluatedProperties": false
     },
     "pr_comment": {
       "type": "object",
-      "required": ["author", "id"],
+      "required": [
+        "author",
+        "id"
+      ],
       "properties": {
-        "author": {"type": "string", "minLength": 1},
-        "id": {"type": ["string", "integer"]},
-        "url": {"type": "string"}
+        "author": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "url": {
+          "type": "string"
+        }
       },
       "unevaluatedProperties": false
     }

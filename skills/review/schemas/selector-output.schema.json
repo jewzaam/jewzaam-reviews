@@ -28,6 +28,7 @@
               "test",
               "maintainability",
               "security",
+              "compatibility",
               "documentation",
               "observability"
             ],

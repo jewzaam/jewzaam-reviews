@@ -16,6 +16,7 @@
         "Test Quality and Coverage",
         "Maintainability and Standards",
         "Security",
+        "Backwards Compatibility",
         "Documentation",
         "Observability"
       ],
@@ -29,6 +30,7 @@
         "test",
         "maintainability",
         "security",
+        "compatibility",
         "documentation",
         "observability"
       ],
