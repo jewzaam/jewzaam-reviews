@@ -563,6 +563,7 @@ def run_select_only(options: Options, selection_file: Path) -> int:
         json.dumps(
             {
                 "head": _head_sha(options.project_root),
+                "run_id": state.run_id,
                 "selector_output": selector_output,
                 "costs": [
                     {
@@ -607,6 +608,11 @@ def _load_saved_selection(state, selection_file: Path | None):
     if saved.get("head") != _head_sha(state.options.project_root):
         print("saved lens selection is stale (HEAD moved); re-running selector", file=sys.stderr)
         return None
+    saved_run_id = saved.get("run_id")
+    if isinstance(saved_run_id, str) and saved_run_id:
+        # One logical review, one run_id: the review run continues the
+        # select-only phase's identity so telemetry is not split.
+        state.run_id = saved_run_id
     known_fields = {f.name for f in fields(CostEntry)}
     costs = saved.get("costs")
     for entry in costs if isinstance(costs, list) else []:

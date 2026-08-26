@@ -373,6 +373,7 @@ class TestSelectOnly:
         selector_calls = [c for c in calls if "Select which review lenses" in c["prompt"]]
         assert len(selector_calls) == 1
 
+        saved_run_id = json.loads(selection_file.read_text())["run_id"]
         rc = pipeline.run_review(_options(git_repo), selection_file=selection_file)
         assert rc == 0
         selector_calls = [c for c in calls if "Select which review lenses" in c["prompt"]]
@@ -380,6 +381,7 @@ class TestSelectOnly:
         assert not selection_file.exists()  # consumed
         costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
         assert any(e["stage"] == "select" for e in costs["entries"])  # cost replayed
+        assert costs["run_id"] == saved_run_id  # one run_id across both phases
 
     def test_stale_selection_ignored(self, git_repo, monkeypatch, tmp_path):
         calls = []
