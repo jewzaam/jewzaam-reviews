@@ -66,6 +66,8 @@ def build_lens_prompt(
     """
     if scoring == "categorical":
         rating_lines = """- Each finding has five categorical dimensions (runtime_scope, failure_mode, evidence_quality, trace_origin, effort_to_fix) — each requires a value AND a _justification string. Read the enum descriptions in the schema for classification guidance.
+- Before assigning trace_origin on any finding you scored service-internal or service-external, actively search for an external entry point that reaches the cited code — an HTTP route, CLI command, event handler, scheduled job. Grep the repo for the calling function's name and follow the chain outward. Cite the entry point (file:line) in trace_origin_justification when you find one; use component only when the search fails or stops at a module boundary, and say in the justification what you searched.
+- Before rating effort_to_fix above small, check whether the enum member, helper, field, or branch the fix needs already exists in the codebase. Cite what you found in effort_to_fix_justification.
 - Split test coverage gaps from production defects as separate findings with different dimensions.
 - Do NOT drop speculative findings."""
     else:

@@ -334,13 +334,27 @@ class TestAllowedToolsJoinAndTraceRobustness:
 
     def test_trace_write_failure_warns(self, monkeypatch, tmp_path, capsys):
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())))
-        unwritable = tmp_path / "nodir" / "trace.jsonl"  # parent missing
+        blocker = tmp_path / "notadir"
+        blocker.write_text("")  # parent path exists as a file
+        unwritable = blocker / "trace.jsonl"
         res = backend.run_agent(
             "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
             trace_file=unwritable, label="x",
         )
         assert res.error is None  # tracing failure never fails the run
         assert "trace write failed" in capsys.readouterr().err
+
+    def test_trace_creates_missing_parent(self, monkeypatch, tmp_path, capsys):
+        """--select-only runs the selector before the stage dir exists."""
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())))
+        trace = tmp_path / "nodir" / "trace.jsonl"
+        res = backend.run_agent(
+            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            trace_file=trace, label="lens-selector",
+        )
+        assert res.error is None
+        assert "trace write failed" not in capsys.readouterr().err
+        assert json.loads(trace.read_text())["label"] == "lens-selector"
 
     def test_redaction_survives_any_content_inside_guidance(self):
         guidance = "focus here\nNOTE:\nstill secret\nOUTPUT:\nand this too"
