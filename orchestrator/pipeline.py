@@ -24,7 +24,7 @@ if str(PLUGIN_ROOT) not in sys.path:
 import jsonschema  # noqa: E402
 
 from orchestrator import backend, lenses, prompts, scope as scope_mod  # noqa: E402
-from scripts.envelope import review_file_basename  # noqa: E402
+from scripts.envelope import assign_bucket, load_stage_dir, review_file_basename  # noqa: E402
 
 REVIEW_SCRIPTS = PLUGIN_ROOT / "skills" / "review" / "scripts"
 TMP_DIR_NAME = ".tmp-review"
@@ -494,6 +494,30 @@ def _write_costs(state) -> dict:
     return report
 
 
+DEFAULT_VALIDATION_BUCKETS = "critical,important"
+
+
+def _validation_buckets(merged_dir: Path) -> str:
+    """Which severity buckets go to the validators.
+
+    Bucketing happens before validation, so a finding scored too low never
+    reaches the only stage that challenges its dimensions. When a run puts
+    nothing in critical or important, validate the suggestions instead of
+    running no validators at all — the spend was budgeted for this run
+    either way, and an all-suggestion result is the shape systematic
+    under-scoring produces.
+    """
+    try:
+        _envelope, findings = load_stage_dir(merged_dir)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return DEFAULT_VALIDATION_BUCKETS
+    if not findings:
+        return DEFAULT_VALIDATION_BUCKETS
+    if any(assign_bucket(f) in ("critical", "important") for f in findings):
+        return DEFAULT_VALIDATION_BUCKETS
+    return "suggestion"
+
+
 def _print_summary(state, cost_report) -> None:
     """Print the terse end-of-run summary: counts, files, measured cost."""
     base = review_file_basename(state.scope.scope_slug)
@@ -512,6 +536,13 @@ def _print_summary(state, cost_report) -> None:
         f"{counts['critical']} critical, {counts['important']} important, "
         f"{counts['suggestion']} suggestion, {counts['needs-review']} needs-review."
     )
+    if counts["critical"] == 0 and counts["important"] == 0 and envelope.get("findings"):
+        print(
+            "No high-severity findings — the main report is empty and every "
+            "finding is in the supplementary file. This is also what "
+            "systematic under-scoring looks like; the suggestion bucket was "
+            "sent to the validators for that reason."
+        )
     print("\nFiles:")
     for suffix in (".json", ".md", "-supplementary.md"):
         print(f"- {base}{suffix}")
@@ -722,6 +753,7 @@ def _run_stages(state: RunState) -> int:
 
         maybe_diff_scope_filter(state, cwd)
 
+        buckets = _validation_buckets(state.tmp_dir / "10-merged")
         stage_cli(
             "batch-findings.py",
             "--input-dir",
@@ -729,7 +761,7 @@ def _run_stages(state: RunState) -> int:
             "--output-dir",
             f"./{TMP_DIR_NAME}/15-validation/",
             "--only-buckets",
-            "critical,important",
+            buckets,
             cwd=cwd,
         )
         run_validators(state)

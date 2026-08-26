@@ -86,6 +86,8 @@ def _write_trace(trace_file, record: dict) -> None:
         return
     try:
         line = json.dumps(record) + "\n"
+        # --select-only runs the selector before any stage dir exists.
+        os.makedirs(os.path.dirname(str(trace_file)) or ".", exist_ok=True)
         with _TRACE_LOCK:
             fd = os.open(
                 str(trace_file), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600

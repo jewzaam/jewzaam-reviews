@@ -128,9 +128,18 @@ def load_stage(stage_dir: Path) -> tuple[dict, list[dict]]:
 
 
 def write_batches(validation_dir: Path, findings: list[dict]) -> int:
-    """Slice critical/important findings into validator batch input files."""
+    """Slice critical/important findings into validator batch input files.
+
+    When nothing is critical or important, validate suggestions instead —
+    same rationale as `pipeline._validation_buckets`: severity is assigned
+    before validation, so an under-scored finding otherwise never reaches
+    the stage that would challenge its rating.
+    """
+    wanted = ("critical", "important")
+    if not any(f["severity"] in wanted for f in findings):
+        wanted = ("suggestion",)
     to_validate = sorted(
-        (f for f in findings if f["severity"] in ("critical", "important")),
+        (f for f in findings if f["severity"] in wanted),
         key=lambda f: (SEVERITY_ORDER[f["severity"]], f["content_hash"]),
     )
     batches = [

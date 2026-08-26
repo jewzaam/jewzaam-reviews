@@ -413,3 +413,43 @@ class TestSelectOnly:
         costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
         replayed = [e for e in costs["entries"] if e["label"] == "x"]
         assert len(replayed) == 1  # valid keys replayed, bogus dropped
+
+
+class TestValidationBuckets:
+    """Which buckets reach the validators (pipeline._validation_buckets)."""
+
+    def _stage(self, tmp_path, findings):
+        stage = tmp_path / "10-merged"
+        stage.mkdir()
+        (stage / "_envelope.json").write_text(json.dumps({"issues": []}))
+        for i, finding in enumerate(findings):
+            (stage / f"hash{i}.json").write_text(json.dumps(finding))
+        return stage
+
+    def _finding(self, **overrides):
+        base = {
+            "content_hash": "abc123",
+            "runtime_scope": "service-internal",
+            "failure_mode": "degraded-behavior",
+            "evidence_quality": "demonstrated",
+            "trace_origin": "component",
+        }
+        base.update(overrides)
+        return base
+
+    def test_all_suggestions_promotes_suggestion_bucket(self, tmp_path):
+        stage = self._stage(tmp_path, [self._finding(), self._finding()])
+        assert pipeline._validation_buckets(stage) == "suggestion"
+
+    def test_one_important_keeps_default(self, tmp_path):
+        stage = self._stage(
+            tmp_path,
+            [self._finding(), self._finding(trace_origin="entry-point")],
+        )
+        assert pipeline._validation_buckets(stage) == "critical,important"
+
+    def test_no_findings_keeps_default(self, tmp_path):
+        assert pipeline._validation_buckets(self._stage(tmp_path, [])) == "critical,important"
+
+    def test_unreadable_stage_dir_keeps_default(self, tmp_path):
+        assert pipeline._validation_buckets(tmp_path / "absent") == "critical,important"
