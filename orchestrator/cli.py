@@ -50,6 +50,7 @@ def _run_files(project_root: str) -> dict[str, Path]:
         "log": base.with_suffix(".log"),
         "exit": base.with_suffix(".exit"),
         "pid": base.with_suffix(".pid"),
+        "selection": base.with_suffix(".selection.json"),
     }
 
 
@@ -169,16 +170,30 @@ def main(argv: list[str] | None = None) -> int:
         help="per-agent timeout in seconds",
     )
     parser.add_argument(
+        "--skip-lenses",
+        default="",
+        help="comma-separated lens slugs to exclude before selection "
+        "(an explicit skip beats the implementation lens's always-run)",
+    )
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
         "--dry-run",
         action="store_true",
         help="compute scope and print the selector prompt without dispatching agents",
     )
-    parser.add_argument(
+    modes.add_argument(
+        "--select-only",
+        action="store_true",
+        help="run scope + lens selector only, print matched lenses "
+        "(lens: <slug>: <rationale> lines), and save the selection for the "
+        "next run against the same HEAD to reuse",
+    )
+    modes.add_argument(
         "--detach",
         action="store_true",
         help="start the run as a detached process and return immediately",
     )
-    parser.add_argument(
+    modes.add_argument(
         "--wait",
         action="store_true",
         help="poll a detached run; exit 0/1 when done, "
@@ -195,24 +210,39 @@ def main(argv: list[str] | None = None) -> int:
     if args.wait:
         return _wait(args)
     if args.detach:
-        if args.dry_run:
-            print("error: --detach and --dry-run are mutually exclusive", file=sys.stderr)
-            return 2
         passthrough = [a for a in (argv if argv is not None else sys.argv[1:]) if a != "--detach"]
         return _detach(args, passthrough)
+
+    from orchestrator.lenses import LENSES
+
+    skip_lenses = tuple(
+        slug.strip() for slug in args.skip_lenses.split(",") if slug.strip()
+    )
+    known = {lens.slug for lens in LENSES}
+    unknown = [slug for slug in skip_lenses if slug not in known]
+    if unknown:
+        print(
+            f"error: unknown lens slug(s) in --skip-lenses: {', '.join(unknown)}; "
+            f"known: {', '.join(sorted(known))}",
+            file=sys.stderr,
+        )
+        return 2
 
     options = pipeline.Options(
         project_root=str(Path(args.project_root).resolve()),
         pr_number=args.pr,
         guidance=args.guidance,
         scoring=args.scoring,
+        skip_lenses=skip_lenses,
         max_agents=args.max_agents,
         parallel=args.parallel,
         timeout_s=args.timeout,
         dry_run=args.dry_run,
     )
-    exit_file = os.environ.get(_EXIT_FILE_ENV)
     files = _run_files(options.project_root)
+    if args.select_only:
+        return pipeline.run_select_only(options, files["selection"])
+    exit_file = os.environ.get(_EXIT_FILE_ENV)
     claimed = False
     if exit_file is None and not args.dry_run:
         # Foreground runs share .tmp-review with detached ones — same slot.
@@ -226,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         files["pid"].write_text(str(os.getpid()), encoding="utf-8")
         claimed = True
     try:
-        code = pipeline.run_review(options)
+        code = pipeline.run_review(options, selection_file=files["selection"])
     except pipeline.PipelineError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         code = 1

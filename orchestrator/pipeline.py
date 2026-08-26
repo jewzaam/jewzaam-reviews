@@ -13,7 +13,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 ORCHESTRATOR_ROOT = Path(__file__).resolve().parent
@@ -65,6 +65,7 @@ class Options:
     pr_number: int | None = None
     guidance: str = ""
     scoring: str = "categorical"  # or "simple"
+    skip_lenses: tuple = ()  # lens slugs excluded before selection
     max_agents: int = 16
     parallel: int = 4
     timeout_s: int = 600
@@ -94,6 +95,7 @@ class RunState:
     options: Options
     scope: scope_mod.ReviewScope
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
+    saved_selection: dict | None = None  # selector output from --select-only
     costs: list[CostEntry] = field(default_factory=list)
     issues: list[dict] = field(default_factory=list)
     issues_merged: int = 0  # how many of `issues` already reached an envelope
@@ -239,10 +241,17 @@ def _bootstrap(state) -> None:
         raise PipelineError(f"bootstrap-tmp.sh failed: {proc.stderr.strip()}")
 
 
+def _active_roster(state) -> tuple:
+    """The lens roster minus user-skipped slugs."""
+    return tuple(
+        lens for lens in lenses.LENSES if lens.slug not in state.options.skip_lenses
+    )
+
+
 def _run_selector(state) -> dict | None:
     """Run the lens-selector agent; None on failure (callers fall back)."""
     schema = backend.load_resolved_schema("selector-output")
-    prompt = prompts.build_selector_prompt(state.scope, lenses.LENSES)
+    prompt = prompts.build_selector_prompt(state.scope, _active_roster(state))
     result = _run_with_retry(
         state,
         "select",
@@ -523,7 +532,93 @@ def _print_summary(state, cost_report) -> None:
         print(f"\n{len(state.issues)} issue(s) recorded in the findings envelope.")
 
 
-def run_review(options: Options) -> int:
+def _head_sha(project_root: str) -> str:
+    try:
+        return scope_mod._git(project_root, "rev-parse", "HEAD")
+    except (subprocess.CalledProcessError, OSError):
+        return ""
+
+
+def run_select_only(options: Options, selection_file: Path) -> int:
+    """Phase 1 for interactive lens choice: scope + selector, no review.
+
+    Prints the matched lenses (slug: rationale, one per line, machine
+    readable) and saves the full selector output — keyed to HEAD and with
+    its cost entries — for the subsequent run to consume without re-paying
+    the selector.
+    """
+    try:
+        review_scope = scope_mod.compute_scope(
+            options.project_root, options.pr_number, options.guidance
+        )
+    except scope_mod.ScopeError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    state = RunState(options=options, scope=review_scope)
+    selector_output = _run_selector(state)
+    roster = _active_roster(state)
+    selected, source, rationales = lenses.resolve_selection(selector_output, roster)
+
+    selection_file.write_text(
+        json.dumps(
+            {
+                "head": _head_sha(options.project_root),
+                "selector_output": selector_output,
+                "costs": [
+                    {
+                        "stage": c.stage,
+                        "label": c.label,
+                        "model": c.model,
+                        "cost_usd": c.cost_usd,
+                        "elapsed_s": c.elapsed_s,
+                        "retries": c.retries,
+                        "error": c.error,
+                        "error_category": c.error_category,
+                        "session_id": c.session_id,
+                        "denials": c.denials,
+                    }
+                    for c in state.costs
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    print(f"selection source: {source}")
+    for lens in selected:
+        print(f"lens: {lens.slug}: {rationales.get(lens.slug, '')}")
+    return 0
+
+
+def _load_saved_selection(state, selection_file: Path | None):
+    """Selector output saved by --select-only, if present and HEAD matches.
+
+    Consumed (deleted) on read either way; its cost entries are replayed
+    into this run's ledger so the selector's spend is never lost.
+    """
+    if selection_file is None or not selection_file.is_file():
+        return None
+    try:
+        saved = json.loads(selection_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        selection_file.unlink(missing_ok=True)
+        return None
+    selection_file.unlink(missing_ok=True)
+    if saved.get("head") != _head_sha(state.options.project_root):
+        print("saved lens selection is stale (HEAD moved); re-running selector", file=sys.stderr)
+        return None
+    known_fields = {f.name for f in fields(CostEntry)}
+    costs = saved.get("costs")
+    for entry in costs if isinstance(costs, list) else []:
+        if isinstance(entry, dict):
+            state.costs.append(
+                CostEntry(**{k: v for k, v in entry.items() if k in known_fields})
+            )
+    output = saved.get("selector_output")
+    return output if isinstance(output, dict) else None
+
+
+def run_review(options: Options, selection_file: Path | None = None) -> int:
     """Run the full review pipeline; returns a process exit code."""
     try:
         review_scope = scope_mod.compute_scope(
@@ -540,11 +635,12 @@ def run_review(options: Options) -> int:
         print(f"Scope slug: {review_scope.scope_slug or '(full repo)'}")
         print(f"Merge base: {review_scope.merge_base or '(none)'}")
         print("\n--- selector prompt ---\n")
-        print(prompts.build_selector_prompt(review_scope, lenses.LENSES))
+        print(prompts.build_selector_prompt(review_scope, _active_roster(state)))
         return 0
 
     _bootstrap(state)
 
+    state.saved_selection = _load_saved_selection(state, selection_file)
     try:
         return _run_stages(state)
     except BaseException:
@@ -558,8 +654,21 @@ def _run_stages(state: RunState) -> int:
     options = state.options
     review_scope = state.scope
 
-    selector_output = _run_selector(state)
-    selected, source, rationales = lenses.resolve_selection(selector_output)
+    roster = _active_roster(state)
+    if not roster:
+        print("ERROR: every lens was skipped; nothing to review.", file=sys.stderr)
+        return 2
+    if state.options.skip_lenses:
+        print(
+            f"Skipping lenses (user): {', '.join(state.options.skip_lenses)}",
+            file=sys.stderr,
+        )
+    selector_output = state.saved_selection
+    if selector_output is None:
+        selector_output = _run_selector(state)
+    else:
+        print("using saved lens selection from --select-only", file=sys.stderr)
+    selected, source, rationales = lenses.resolve_selection(selector_output, roster)
     if len(selected) > options.max_agents:
         dropped = [lens.slug for lens in selected[options.max_agents :]]
         selected = selected[: options.max_agents]

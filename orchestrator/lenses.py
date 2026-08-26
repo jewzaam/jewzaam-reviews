@@ -116,29 +116,34 @@ _BY_SLUG = {lens.slug: lens for lens in LENSES}
 ALWAYS_RUN_SLUG = "implementation"
 
 
-def resolve_selection(selector_output: dict | None) -> tuple[list[Lens], str, dict]:
-    """Map selector agent output to lenses.
+def resolve_selection(
+    selector_output: dict | None, roster: tuple[Lens, ...] = LENSES
+) -> tuple[list[Lens], str, dict]:
+    """Map selector agent output to lenses within `roster`.
 
     Returns (lenses, source, rationales). source is "selector" or
-    "all-lenses-fallback". Unknown lens names are dropped; empty/invalid
-    selection falls back to the full roster; the always-run lens is
-    force-included.
+    "all-lenses-fallback". Unknown or out-of-roster lens names are dropped;
+    empty/invalid selection falls back to the whole roster; the always-run
+    lens is force-included only when the roster still contains it (a user
+    skip beats always-run).
     """
+    roster_by_slug = {lens.slug: lens for lens in roster}
     selected: list[Lens] = []
     rationales: dict[str, str] = {}
     entries = (selector_output or {}).get("lenses") or []
     for entry in entries:
-        lens = _BY_SLUG.get((entry or {}).get("name", ""))
+        lens = roster_by_slug.get((entry or {}).get("name", ""))
         if lens is None or lens in selected:
             continue
         selected.append(lens)
         rationales[lens.slug] = entry.get("rationale", "")
 
     if not selected:
-        return list(LENSES), "all-lenses-fallback", {}
+        return list(roster), "all-lenses-fallback", {}
 
-    if _BY_SLUG[ALWAYS_RUN_SLUG] not in selected:
-        selected.insert(0, _BY_SLUG[ALWAYS_RUN_SLUG])
+    always = roster_by_slug.get(ALWAYS_RUN_SLUG)
+    if always is not None and always not in selected:
+        selected.insert(0, always)
         rationales[ALWAYS_RUN_SLUG] = "General correctness always runs."
     return selected, "selector", rationales
 

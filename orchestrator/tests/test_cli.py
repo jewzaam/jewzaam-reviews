@@ -29,7 +29,7 @@ class TestRunFiles:
         c = cli._run_files("/other/project")
         assert a == b
         assert a["log"] != c["log"]
-        assert set(a) == {"log", "exit", "pid"}
+        assert set(a) == {"log", "exit", "pid", "selection"}
 
     def test_run_dir_is_owner_only(self, run_dir):
         files = cli._run_files("/some/project")
@@ -42,8 +42,15 @@ class TestArgValidation:
         with pytest.raises(SystemExit):
             cli.main(["--parallel", "0", "--dry-run"])
 
-    def test_detach_dry_run_conflict(self):
-        assert cli.main(["--detach", "--dry-run"]) == 2
+    def test_mode_flags_mutually_exclusive(self):
+        for combo in (
+            ["--detach", "--dry-run"],
+            ["--wait", "--select-only"],
+            ["--wait", "--detach"],
+            ["--select-only", "--dry-run"],
+        ):
+            with pytest.raises(SystemExit):
+                cli.main(combo)
 
 
 class TestDetach:
@@ -137,7 +144,7 @@ class TestWait:
 
 class TestMainExitCodes:
     def test_pipeline_error_exits_1(self, monkeypatch, capsys):
-        def boom(options):
+        def boom(options, **kw):
             raise cli.pipeline.PipelineError("stage failed")
 
         monkeypatch.setattr(cli.pipeline, "run_review", boom)
@@ -145,7 +152,7 @@ class TestMainExitCodes:
         assert "ERROR: stage failed" in capsys.readouterr().err
 
     def test_unexpected_exception_exits_1_with_error_line(self, monkeypatch, capsys):
-        def boom(options):
+        def boom(options, **kw):
             raise ValueError("surprise")
 
         monkeypatch.setattr(cli.pipeline, "run_review", boom)
@@ -157,7 +164,7 @@ class TestMainExitCodes:
             cli.main(["--wait", "--wait-timeout-s", "0"])
 
     def test_keyboard_interrupt_exits_130(self, monkeypatch, capsys):
-        def boom(options):
+        def boom(options, **kw):
             raise KeyboardInterrupt()
 
         monkeypatch.setattr(cli.pipeline, "run_review", boom)
@@ -170,11 +177,11 @@ class TestForegroundClaim:
         files = cli._run_files(str(tmp_path))
         files["pid"].write_text(str(os.getpid()))
         files["log"].write_text("x")
-        monkeypatch.setattr(cli.pipeline, "run_review", lambda options: 0)
+        monkeypatch.setattr(cli.pipeline, "run_review", lambda options, **kw: 0)
         assert cli.main(["--project-root", str(tmp_path)]) == 2
 
     def test_foreground_claim_released_after_run(self, run_dir, monkeypatch, tmp_path):
-        monkeypatch.setattr(cli.pipeline, "run_review", lambda options: 0)
+        monkeypatch.setattr(cli.pipeline, "run_review", lambda options, **kw: 0)
         assert cli.main(["--project-root", str(tmp_path)]) == 0
         files = cli._run_files(str(tmp_path))
         assert not files["pid"].exists()
@@ -185,8 +192,23 @@ class TestExitFileWriting:
         exit_file = tmp_path / "run.exit"
         monkeypatch.setenv(cli._EXIT_FILE_ENV, str(exit_file))
         monkeypatch.setattr(
-            cli.pipeline, "run_review", lambda options: 0
+            cli.pipeline, "run_review", lambda options, **kw: 0
         )
         rc = cli.main(["--dry-run", "--project-root", str(tmp_path)])
         assert rc == 0
         assert exit_file.read_text() == "0"
+
+
+class TestSkipLenses:
+    def test_unknown_slug_rejected(self, capsys):
+        assert cli.main(["--skip-lenses", "nope,security", "--dry-run"]) == 2
+        assert "unknown lens slug" in capsys.readouterr().err
+
+    def test_valid_slugs_reach_options(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(
+            cli.pipeline, "run_review",
+            lambda options, **kw: seen.setdefault("skips", options.skip_lenses) and 0 or 0,
+        )
+        assert cli.main(["--skip-lenses", "security, documentation", "--dry-run"]) == 0
+        assert seen["skips"] == ("security", "documentation")
