@@ -3,9 +3,6 @@ name: review
 description: Perform a scope-aware multi-agent codebase review via the script orchestrator. A selector agent picks applicable review lenses from the diff or repo shape, lens agents review in parallel, validators adversarially check critical/important findings, and deterministic scripts handle everything else. Use when the user asks to review, assess, audit, or evaluate a codebase or project. Accepts an optional PR number, a --scoring flag, and free-form guidance text.
 disable-model-invocation: true
 argument-hint: "[PR-number] [--scoring categorical|simple] [guidance text...]"
-allowed-tools:
-  - Bash(python ${CLAUDE_PLUGIN_ROOT}/orchestrator/**)
-  - Bash(python3 ${CLAUDE_PLUGIN_ROOT}/orchestrator/**)
 ---
 
 # Review Skill
@@ -14,11 +11,21 @@ allowed-tools:
 
 Run the review orchestrator: a Python CLI that owns the whole review pipeline. Models are used only for reasoning (lens selection, lens review agents, validators) via headless agent invocations; everything deterministic is script. The main agent's job here is just to launch the CLI and relay its output.
 
+This skill runs under both Claude Code and Codex. Where a step needs a host capability only one of them has, the fallback is given inline — take it rather than inventing a substitute.
+
+## Orchestrator path
+
+Every step below runs the same CLI, written here as `<ORCH>`. Resolve it ONCE, before Step 1, and reuse that exact string:
+
+`<ORCH>` is `orchestrator/cli.py`, two directories above this `SKILL.md` — this file is at `<plugin-root>/skills/review/SKILL.md`, so the CLI is at `<plugin-root>/orchestrator/cli.py`.
+
+Under Claude Code that resolves via `${CLAUDE_PLUGIN_ROOT}/orchestrator/cli.py`. Under Codex that variable is not set for skill bodies — use the absolute path built from this file's own location, which the host tells you when it lists the skill. Either way `<ORCH>` must be absolute before Step 2; a bare `python orchestrator/cli.py` runs from the project root and will not find it.
+
 ## Process
 
 ### 1. Parse Arguments
 
-From `$ARGUMENTS`:
+From the arguments the skill was invoked with (`$ARGUMENTS` where the host substitutes it; otherwise the text the user typed after the skill name):
 
 - A leading all-digits token is the PR number → `--pr <N>`.
 - A `--scoring categorical` or `--scoring simple` token passes through unchanged.
@@ -30,7 +37,7 @@ From `$ARGUMENTS`:
 If `--skip-lenses` was given in the arguments, skip this step. Otherwise run via foreground Bash:
 
 ```
-python ${CLAUDE_PLUGIN_ROOT}/orchestrator/cli.py --select-only [--pr N] [--guidance "..."]
+python <ORCH> --select-only [--pr N] [--guidance "..."]
 ```
 
 It prints the lenses the selector matched for this scope, one per line as `lens: <slug>: <rationale>`, and saves the selection so the review run does not re-run the selector.
@@ -40,6 +47,8 @@ The selector does not depend on the scoring mode. Ask the user NOTHING here — 
 ### 3. Ask Everything At Once
 
 Exactly ONE AskUserQuestion call, carrying every decision still unanswered after Step 1's parse. Never two calls — the user answers one prompt per review, not one per decision. If neither question below applies, ask nothing and go to Step 4.
+
+On a host with no AskUserQuestion tool (Codex has none), ask the same content as ONE plain message and wait for the reply. The "exactly one prompt" rule is the point, not the tool.
 
 **Scoring question** — include only when `--scoring` was not in `$ARGUMENTS`. Header "Scoring", two options:
 
@@ -58,13 +67,13 @@ Selected slugs become `--skip-lenses <comma-separated>`. Nothing selected → om
 
 ### 4. Start the Review (detached)
 
-Run this via foreground Bash from the project root, EXACTLY ONCE. The path below is pre-substituted with the plugin root and matches this skill's allowed-tools; never rewrite it into another form:
+Run this via foreground Bash from the project root, EXACTLY ONCE:
 
 ```
-python ${CLAUDE_PLUGIN_ROOT}/orchestrator/cli.py --detach [--pr N] [--scoring MODE] [--skip-lenses slugs] [--guidance "..."]
+python <ORCH> --detach [--pr N] [--scoring MODE] [--skip-lenses slugs] [--guidance "..."]
 ```
 
-The bracketed flags come from Step 1's parse of `$ARGUMENTS`: include `--pr` only when a leading PR number was given, `--scoring` and `--skip-lenses` from the argument or Step 3's answers (omit `--skip-lenses` when none), `--guidance` only when non-empty. A relative `python orchestrator/cli.py ...` will be permission-denied — the absolute form above is the only allowed one.
+The bracketed flags come from Step 1's parse: include `--pr` only when a leading PR number was given, `--scoring` and `--skip-lenses` from the argument or Step 3's answers (omit `--skip-lenses` when none), `--guidance` only when non-empty. `<ORCH>` is the absolute path resolved above; a relative `python orchestrator/cli.py ...` runs from the project root and will not find the CLI.
 
 It returns immediately; the review runs as a detached process that survives this session.
 
@@ -73,12 +82,14 @@ It returns immediately; the review runs as a detached process that survives this
 Run this EXACTLY ONCE, via **background** Bash (`run_in_background: true`) — never foreground, never repeatedly:
 
 ```
-python ${CLAUDE_PLUGIN_ROOT}/orchestrator/cli.py --wait --wait-timeout-s 3600
+python <ORCH> --wait --wait-timeout-s 3600
 ```
 
 A backgrounded command issues no model requests while it runs; the harness re-invokes this session when it exits. So the entire 10-30 minute review costs the orchestrating session nothing.
 
 **Do not poll.** Repeating `--wait` on its ~100 s default timeout spends a main-session request every couple of minutes for the whole run, and each one re-sends a conversation that grew by the previous poll — the cost climbs the longer the review takes. That loop is the single largest orchestration expense there is, and it buys nothing the wake-up does not.
+
+On a host that cannot both background a command and wake the session when it exits, run the same command in the **foreground** with the full `--wait-timeout-s 3600`, and re-run it on exit code 3. One long foreground call is the cheap shape there; it is the short default timeout that makes polling expensive, not the waiting.
 
 - The command prints the run's final output when it wakes you.
 - Exit code 3 means the run is still going after a full hour. Re-run the same background command; do not fall back to foreground polling.

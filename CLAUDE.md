@@ -2,12 +2,21 @@
 
 Claude Code plugin bundling the review pipeline skills. Distributed as a marketplace plugin; not symlinked from `~/.claude/skills/`.
 
+The `review` skill also runs under Codex; the other five do not yet, because
+they depend on Claude Code's `` !`command` `` injection, which has no Codex
+equivalent. See
+[knowledgebase: codex skills and plugins](https://github.com/jewzaam/knowledgebase/blob/main/codex-code/skills-and-plugins.md).
+
 ## Structure
 
 ```
 .claude-plugin/
   plugin.json        # Plugin metadata (name, version, license)
   marketplace.json   # Marketplace listing
+.codex-plugin/
+  plugin.json        # Codex manifest — same metadata plus "skills": "./skills/"
+.agents/plugins/
+  marketplace.json   # Codex marketplace listing (no version field; see Versioning)
 LICENSE              # Apache-2.0
 README.md            # User-facing docs
 Makefile             # `make test` and `make check`
@@ -37,6 +46,7 @@ tests/
 skills/
   <skill-name>/
     SKILL.md         # Required entry point
+    agents/openai.yaml  # Optional, Codex-only: UI metadata + invocation policy
     scripts/         # Render scripts, helper scripts
     schemas/         # Skill-internal JSON schemas (NOT the shared handoff)
     references/, docs/  # Optional supporting files
@@ -51,6 +61,14 @@ skills/
 - Right: `python ${CLAUDE_PLUGIN_ROOT}/skills/review/scripts/validate-findings.py`
 
 When editing any `SKILL.md`, grep for `~/.claude/skills/` references and convert them.
+
+**Codex does not set `${CLAUDE_PLUGIN_ROOT}` for a `SKILL.md` body** — it sets
+it only in the environment of plugin *hook* commands. A skill that must run
+under both hosts therefore cannot bake the variable into its commands. `review`
+resolves the orchestrator once from its own file location instead, and carries
+no `allowed-tools`; the two are linked, because `allowed-tools` is what forced
+the absolute `${CLAUDE_PLUGIN_ROOT}` form in the first place. Restoring
+`allowed-tools` to `review` re-breaks it under Codex.
 
 ## Script Execution Environment
 
@@ -177,19 +195,19 @@ Pytest autodiscovers three test trees: `tests/` at the plugin root (cross-skill 
 
 ## Versioning
 
-SemVer per `~/source/standards/common/versioning.md`. The two `version` fields in `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` must stay in sync.
+SemVer per `~/source/standards/common/versioning.md`. Three `version` fields must stay in sync: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`plugins[0].version`), and `.codex-plugin/plugin.json`. `.agents/plugins/marketplace.json` has none — a Codex marketplace entry identifies a plugin and lets the plugin's own manifest carry the version.
 
 Enforcement: `make version-check` validates that
 
 1. `plugin.json` version matches official semver
-2. `plugin.json` and `marketplace.json` versions match
+2. `plugin.json`, `marketplace.json`, and `.codex-plugin/plugin.json` versions match
 3. When files in `schemas/` or `skills/` have changed vs mainline, the plugin version has been bumped
 
 The check runs on every PR via `.github/workflows/version-check.yml`. On push to main, the workflow also creates a `vX.Y.Z` git tag if one doesn't exist.
 
 Docs-only changes (CLAUDE.md, README.md, `.claude-plugin/` metadata other than `version`) do not require a bump — the script only looks at `schemas/` and `skills/` for bump-required detection.
 
-Bump targets: `make version-bump-patch`, `make version-bump-minor`, `make version-bump-major`. These update `plugin.json`, `marketplace.json`, and all fixture `schema_version` fields atomically. Run `make help` for the full target list.
+Bump targets: `make version-bump-patch`, `make version-bump-minor`, `make version-bump-major`. These update `plugin.json`, `marketplace.json`, `.codex-plugin/plugin.json`, and all fixture `schema_version` fields atomically. Run `make help` for the full target list.
 
 ## License
 

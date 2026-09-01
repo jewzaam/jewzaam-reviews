@@ -135,6 +135,41 @@ class TestVersionMismatch:
         exit_code = mod.main([])
         assert exit_code == 1
 
+    def test_detects_plugin_vs_codex_plugin_mismatch(self, monkeypatch, tmp_path):
+        """The Codex manifest carries its own copy of the version. Nothing
+        reads both at runtime, so drift between them is invisible until an
+        install ships the wrong number."""
+        src = REPO_ROOT / ".claude-plugin"
+        dst = tmp_path / ".claude-plugin"
+        dst.mkdir()
+        for name in ("plugin.json", "marketplace.json"):
+            (dst / name).write_text((src / name).read_text(encoding="utf-8"), encoding="utf-8")
+
+        # Leave plugin.json and marketplace.json agreeing, so only the Codex
+        # manifest is out of step and check 3 is the one that must fire.
+        codex_dst = tmp_path / ".codex-plugin"
+        codex_dst.mkdir()
+        codex = json.loads(
+            (REPO_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        codex["version"] = "9.9.9"
+        (codex_dst / "plugin.json").write_text(json.dumps(codex, indent=2), encoding="utf-8")
+
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("vcheck", SCRIPT)
+        assert spec and spec.loader
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        monkeypatch.setattr(mod, "PLUGIN_JSON", dst / "plugin.json")
+        monkeypatch.setattr(mod, "MARKETPLACE_JSON", dst / "marketplace.json")
+        monkeypatch.setattr(mod, "CODEX_PLUGIN_JSON", codex_dst / "plugin.json")
+        monkeypatch.setattr(mod, "REPO_ROOT", tmp_path)
+
+        exit_code = mod.main([])
+        assert exit_code == 1
+
 
 class TestInvalidSemver:
     def test_detects_invalid_semver(self, monkeypatch, tmp_path):
