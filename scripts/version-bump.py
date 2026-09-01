@@ -5,7 +5,11 @@
 Updates:
   - .claude-plugin/plugin.json       (version)
   - .claude-plugin/marketplace.json  (plugins[0].version)
+  - .codex-plugin/plugin.json        (version)
   - schemas/examples/*.json          (schema_version)
+
+.agents/plugins/marketplace.json carries no version — Codex marketplace
+entries identify a plugin and let its own manifest hold the version.
 
 Usage:
     python scripts/version-bump.py <new-version>
@@ -23,6 +27,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_JSON = REPO_ROOT / ".claude-plugin" / "plugin.json"
 MARKETPLACE_JSON = REPO_ROOT / ".claude-plugin" / "marketplace.json"
+CODEX_PLUGIN_JSON = REPO_ROOT / ".codex-plugin" / "plugin.json"
 SCHEMA_EXAMPLES_DIR = REPO_ROOT / "schemas" / "examples"
 
 SEMVER_RE = re.compile(
@@ -82,6 +87,8 @@ def main(argv: list[str]) -> int:
 
     update_json_file(MARKETPLACE_JSON, lambda d: d["plugins"].__getitem__(0).__setitem__("version", new_ver))
 
+    update_json_file(CODEX_PLUGIN_JSON, lambda d: d.__setitem__("version", new_ver))
+
     fixtures_updated = 0
     for path in sorted(SCHEMA_EXAMPLES_DIR.glob("*.json")):
         with path.open("r", encoding="utf-8") as fh:
@@ -94,7 +101,10 @@ def main(argv: list[str]) -> int:
             fixtures_updated += 1
 
     print(f"{current} → {new_ver}")
-    print(f"  updated: plugin.json, marketplace.json, {fixtures_updated} fixture(s)")
+    print(
+        f"  updated: plugin.json, marketplace.json, .codex-plugin/plugin.json, "
+        f"{fixtures_updated} fixture(s)"
+    )
     return 0
 
 

@@ -1,0 +1,21 @@
+{
+  "name": "jewzaam-reviews-marketplace",
+  "interface": {
+    "displayName": "jewzaam reviews"
+  },
+  "plugins": [
+    {
+      "name": "jewzaam-reviews",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/jewzaam/jewzaam-reviews.git",
+        "ref": "main"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

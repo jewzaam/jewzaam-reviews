@@ -1,0 +1,13 @@
+interface:
+  display_name: "Review"
+  short_description: "Scope-aware multi-agent codebase review via the orchestrator CLI"
+  # Plugin-bundled skills are namespaced by the plugin's manifest name, so this
+  # is $jewzaam-reviews:review, not $review. Bare $review only works when the
+  # skill is installed standalone under .agents/skills/.
+  default_prompt: "Use $jewzaam-reviews:review to review this codebase and write the findings files."
+
+# Mirrors disable-model-invocation in SKILL.md, which Codex does not read.
+# A review dispatches many paid agents and writes files at the project root —
+# it starts when asked for, never because a prompt sounded review-shaped.
+policy:
+  allow_implicit_invocation: false

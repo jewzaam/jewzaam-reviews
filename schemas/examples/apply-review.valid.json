@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.8.5",
+  "schema_version": "0.9.0",
   "source": "apply-review",
   "project": {
     "name": "sample"

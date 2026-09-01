@@ -7,7 +7,9 @@ Checks:
 1. **Semver format** — `.claude-plugin/plugin.json` `version` matches the
    official semver regex (X.Y.Z with optional pre-release / build).
 2. **Sources match** — `plugin.json` `version` equals
-   `marketplace.json` `plugins[0].version`.
+   `marketplace.json` `plugins[0].version` and `.codex-plugin/plugin.json`
+   `version`. `.agents/plugins/marketplace.json` is not checked: Codex
+   marketplace entries carry no version of their own.
 3. **Schema version aligned** — every `schema_version` in the
    `schemas/examples/*.json` fixtures matches the current plugin version.
    (Render scripts read the plugin version at runtime; fixtures are
@@ -37,6 +39,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_JSON = REPO_ROOT / ".claude-plugin" / "plugin.json"
 MARKETPLACE_JSON = REPO_ROOT / ".claude-plugin" / "marketplace.json"
+CODEX_PLUGIN_JSON = REPO_ROOT / ".codex-plugin" / "plugin.json"
 SCHEMA_EXAMPLES_DIR = REPO_ROOT / "schemas" / "examples"
 
 # Official semver.org regex
@@ -65,6 +68,12 @@ def read_marketplace_version() -> str:
         plugins[0] if plugins else {},
     )
     return target["version"]
+
+
+def read_codex_plugin_version() -> str:
+    with CODEX_PLUGIN_JSON.open("r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    return data["version"]
 
 
 def _git(*args: str) -> str:
@@ -217,6 +226,24 @@ def main(argv: list[str]) -> int:
         print(
             f"version-check: FAIL — plugin.json has '{plugin_ver}' but "
             f"marketplace.json has '{marketplace_ver}'. The two must stay in sync.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        codex_ver = read_codex_plugin_version()
+    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        print(
+            f"version-check: FAIL — could not read version from "
+            f"{CODEX_PLUGIN_JSON.relative_to(REPO_ROOT)}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if plugin_ver != codex_ver:
+        print(
+            f"version-check: FAIL — plugin.json has '{plugin_ver}' but "
+            f".codex-plugin/plugin.json has '{codex_ver}'. The two must stay in sync.",
             file=sys.stderr,
         )
         return 1

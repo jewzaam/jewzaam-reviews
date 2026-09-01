@@ -14,5 +14,6 @@
     "pull-request",
     "c4",
     "architecture"
-  ]
+  ],
+  "skills": "./skills/"
 }
