@@ -48,7 +48,11 @@ The selector does not depend on the scoring mode. Ask the user NOTHING here — 
 
 Exactly ONE AskUserQuestion call, carrying every decision still unanswered after Step 1's parse. Never two calls — the user answers one prompt per review, not one per decision. If neither question below applies, ask nothing and go to Step 4.
 
-On a host with no AskUserQuestion tool (Codex has none), ask the same content as ONE plain message and wait for the reply. The "exactly one prompt" rule is the point, not the tool.
+Use whichever structured-question tool the host provides — `AskUserQuestion` under Claude Code, `request_user_input` under Codex. Their shapes match closely enough to carry the same content: per-question header, prompt, and labelled options with one-sentence descriptions, recommended option first, and a free-form "Other" the client supplies (never author one).
+
+Two host limits differ, and the lower one wins. Codex takes at most 3 questions per call (Claude Code allows 4) and wants 2-3 options each, so the lens split below has to fold into fewer questions there — drop the least-useful lens options rather than emitting a second call.
+
+`request_user_input` is also mode-gated and root-thread-only, so it can return `request_user_input is unavailable in <mode> mode` even when it exists. Treat that, and any host with no such tool at all, the same way: ask the identical content as ONE plain message and wait for the reply. The "exactly one prompt" rule is the point, not the tool.
 
 **Scoring question** — include only when `--scoring` was not in `$ARGUMENTS`. Header "Scoring", two options:
 
@@ -60,7 +64,7 @@ If a prior run's `.tmp-review/costs.json` exists in the project, read `total_cos
 **Skip-lenses question(s)** — include only when Step 2 ran. Built dynamically from its output; this skill does not know the lens roster, the orchestrator owns it:
 
 - multiSelect, header "Skip lenses"; one option per lens Step 2 reported, label = slug, description = its rationale.
-- A question holds at most 4 options — with more than 4 matched lenses, split across additional questions (4 per question) inside the same call. The call holds at most 4 questions total, so use at most 3 for lenses when the scoring question is also present.
+- A question holds at most 4 options — with more than 4 matched lenses, split across additional questions (4 per question) inside the same call. The call holds at most 4 questions total, so use at most 3 for lenses when the scoring question is also present. Under a host with a lower ceiling (Codex: 3 questions), fit within it; never split into a second call.
 - Default is skipping none: submitting with nothing selected runs every matched lens.
 
 Selected slugs become `--skip-lenses <comma-separated>`. Nothing selected → omit the flag. If the session is non-interactive and the call cannot be made, use `categorical` with no skips.
