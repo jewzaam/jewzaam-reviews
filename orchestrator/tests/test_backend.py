@@ -150,6 +150,16 @@ class TestArgvConstruction:
         assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
         assert env["HOME"] == "/home/x"
 
+    def test_codex_env_scrubs_parent_session(self, monkeypatch):
+        capture = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        monkeypatch.setenv("CODEX_SESSION_ID", "parent")
+        monkeypatch.setenv("CODEX_THREAD_ID", "parent-thread")
+        backend.run_agent("p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp", harness="codex")
+        env = capture["kwargs"]["env"]
+        assert "CODEX_SESSION_ID" not in env
+        assert "CODEX_THREAD_ID" not in env
+
 
 class TestResultParsing:
     def test_success_with_schema(self, monkeypatch):

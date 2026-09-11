@@ -171,6 +171,16 @@ def _scrubbed_env() -> dict:
     return env
 
 
+def _codex_env() -> dict:
+    """Run Codex as an independent child, not as a nested current session."""
+    keep = {"CODEX_HOME", "CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_PACKAGE_ROOT"}
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("CODEX_") or key in keep
+    }
+
+
 def _is_budget_stop(result: dict) -> bool:
     """True when the CLI stopped itself on --max-budget-usd.
 
@@ -345,7 +355,7 @@ def run_agent(
             schema_file.close()
             argv += ["--output-schema", schema_file.name]
         argv.append("-")
-        child_env = dict(os.environ)
+        child_env = _codex_env()
     if otel_attributes:
         pairs = ",".join(
             f"{key}={re.sub(r'[,=]', '-', str(value))}"
