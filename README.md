@@ -19,6 +19,13 @@ A Claude Code plugin bundling a connected pipeline of review skills. Producer sk
 /plugin install jewzaam-reviews@jewzaam-reviews-marketplace
 ```
 
+For Codex:
+
+```bash
+codex plugin marketplace add jewzaam/jewzaam-reviews
+codex plugin add jewzaam-reviews@jewzaam-reviews-marketplace
+```
+
 ## Permissions
 
 Skills invoke Python and Bash scripts from the plugin cache. To avoid repeated permission prompts, add these to your global (`~/.claude/settings.json`) or project (`.claude/settings.json`) allowlist:
