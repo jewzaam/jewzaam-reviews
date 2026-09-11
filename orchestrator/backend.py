@@ -15,6 +15,7 @@ import json
 import os
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import threading
@@ -171,14 +172,21 @@ def _scrubbed_env() -> dict:
     return env
 
 
-def _codex_env() -> dict:
-    """Run Codex as an independent child, not as a nested current session."""
-    keep = {"CODEX_HOME", "CODEX_MANAGED_BY_NPM", "CODEX_MANAGED_PACKAGE_ROOT"}
-    return {
+def _codex_env() -> tuple[dict, Path]:
+    """Run Codex in a writable home while reusing its auth and config."""
+    source_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+    child_home = Path(tempfile.mkdtemp(prefix="review-codex-home-"))
+    for name in ("auth.json", "config.toml"):
+        source = source_home / name
+        if source.is_file():
+            (child_home / name).symlink_to(source)
+    env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith("CODEX_") or key in keep
+        if not key.startswith("CODEX_")
     }
+    env["CODEX_HOME"] = str(child_home)
+    return env, child_home
 
 
 def _is_budget_stop(result: dict) -> bool:
@@ -316,6 +324,7 @@ def run_agent(
     # Prompt goes via stdin, not argv: argv is world-visible in `ps` and
     # subject to ARG_MAX; prompts carry project content and can be large.
     schema_file = None
+    codex_home = None
     if harness == "claude":
         argv = [
             "claude", "-p", "--output-format", "json", "--model", model,
@@ -355,7 +364,7 @@ def run_agent(
             schema_file.close()
             argv += ["--output-schema", schema_file.name]
         argv.append("-")
-        child_env = _codex_env()
+        child_env, codex_home = _codex_env()
     if otel_attributes:
         pairs = ",".join(
             f"{key}={re.sub(r'[,=]', '-', str(value))}"
@@ -380,12 +389,16 @@ def run_agent(
     except OSError as exc:
         if schema_file is not None:
             Path(schema_file.name).unlink(missing_ok=True)
+        if codex_home is not None:
+            shutil.rmtree(codex_home, ignore_errors=True)
         return _finish(AgentResult(error=f"failed to spawn {harness}: {exc}", error_category="spawn"))
     try:
         stdout, stderr = popen.communicate(input=prompt, timeout=timeout_s)
     except subprocess.TimeoutExpired:
         if schema_file is not None:
             Path(schema_file.name).unlink(missing_ok=True)
+        if codex_home is not None:
+            shutil.rmtree(codex_home, ignore_errors=True)
         try:
             os.killpg(popen.pid, signal.SIGKILL)
         except OSError:
@@ -408,6 +421,8 @@ def run_agent(
 
     if schema_file is not None:
         Path(schema_file.name).unlink(missing_ok=True)
+    if codex_home is not None:
+        shutil.rmtree(codex_home, ignore_errors=True)
 
     if harness == "codex":
         events = []
