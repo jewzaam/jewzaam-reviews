@@ -1,4 +1,4 @@
-.PHONY: check test install-dev version-check check-resolved-schemas resolve-schemas version-bump-patch version-bump-minor version-bump-major help
+.PHONY: check test install-dev update-plugins version-check check-resolved-schemas resolve-schemas version-bump-patch version-bump-minor version-bump-major help
 
 ifeq ($(OS),Windows_NT)
     VENV_DIR ?= .venv
@@ -23,6 +23,25 @@ install-dev: $(PYTHON)  ## Create venv and install test dependencies
 
 test: install-dev  ## Run pytest across plugin + skills + orchestrator
 	$(PYTHON) -m pytest
+
+update-plugins:  ## Update installed Claude Code and Codex plugins when available
+	@if command -v claude >/dev/null 2>&1; then \
+		claude plugin marketplace update jewzaam-reviews-marketplace; \
+		claude plugin update jewzaam-reviews@jewzaam-reviews-marketplace -y; \
+	else \
+		echo "claude not installed; skipped"; \
+	fi
+	@if command -v codex >/dev/null 2>&1; then \
+		if ! codex plugin marketplace upgrade jewzaam-reviews-marketplace >/dev/null 2>&1; then \
+			echo "codex marketplace refresh skipped (local or non-Git marketplace)"; \
+		fi; \
+		if codex plugin list 2>/dev/null | grep -q 'jewzaam-reviews@jewzaam-reviews-marketplace'; then \
+			codex plugin remove jewzaam-reviews@jewzaam-reviews-marketplace; \
+		fi; \
+		codex plugin add jewzaam-reviews@jewzaam-reviews-marketplace; \
+	else \
+		echo "codex not installed; skipped"; \
+	fi
 
 version-check: install-dev  ## Validate semver: format, sources match, version bumped vs mainline
 	@$(PYTHON) scripts/version-check.py

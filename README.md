@@ -26,6 +26,29 @@ codex plugin marketplace add jewzaam/jewzaam-reviews
 codex plugin add jewzaam-reviews@jewzaam-reviews-marketplace
 ```
 
+To update a published plugin:
+
+```bash
+codex plugin marketplace upgrade jewzaam-reviews-marketplace
+codex plugin remove jewzaam-reviews@jewzaam-reviews-marketplace
+codex plugin add jewzaam-reviews@jewzaam-reviews-marketplace
+```
+
+From the repository, update both harnesses when installed:
+
+```bash
+make update-plugins
+```
+
+If the marketplace was added from a local checkout (`codex plugin marketplace add .`),
+it does not pull Git changes. After pushing updates, replace it with the Git marketplace:
+
+```bash
+codex plugin marketplace remove jewzaam-reviews-marketplace
+codex plugin marketplace add jewzaam/jewzaam-reviews
+codex plugin add jewzaam-reviews@jewzaam-reviews-marketplace
+```
+
 ## Permissions
 
 Skills invoke Python and Bash scripts from the plugin cache. To avoid repeated permission prompts, add these to your global (`~/.claude/settings.json`) or project (`.claude/settings.json`) allowlist:
@@ -49,7 +72,7 @@ Skills invoke Python and Bash scripts from the plugin cache. To avoid repeated p
 }
 ```
 
-The review orchestrator additionally invokes the `claude` CLI headlessly (`claude -p`) to run its reasoning agents; it uses your existing Claude Code authentication.
+The review orchestrator invokes the configured agent harness headlessly. Claude Code uses `claude -p`; Codex uses `codex exec`. Each harness uses its existing authentication.
 
 ## Pipeline Overview
 
@@ -64,7 +87,7 @@ graph LR
 
 ## Review Skill Architecture
 
-The review skill is a thin wrapper around a standalone Python orchestrator (`orchestrator/cli.py`). The orchestrator owns the whole pipeline deterministically; models are invoked only for reasoning, as headless `claude -p` agents with harness-enforced JSON schemas (`--json-schema`).
+The review skill is a thin wrapper around a standalone Python orchestrator (`orchestrator/cli.py`). The orchestrator owns the whole pipeline deterministically; models are invoked only for reasoning through the selected harness with harness-enforced JSON schemas.
 
 ```mermaid
 graph TD
@@ -101,7 +124,7 @@ The `compatibility` lens carries a self-contained breaking-change rubric — not
 
 Four rules in the rubric exist to suppress false positives as much as to find breaks: the **directionality rule** (narrowing what you accept and widening what you produce are breaking; the reverse is safe), the **well-behaved-consumer assumption** (a new optional field or enum value is additive, not a break), an explicit **not-breaking list** (new endpoints, bug fixes nobody could rely on, human-readable text changes), and **scope exclusions** (experimental features, unsupported configurations, interfaces with no outside consumer — though internal interfaces stay in scope for mixed-version coexistence on an HA service). Beyond detection, the lens reports a breaking change shipped without its version signal as a finding in its own right, and sizes the remedy per surface in `suggested_fix` — a deprecation cycle for an API break, a release-note entry and a word with the consuming team for a metric rename.
 - **Deterministic everything else.** Consolidation, diff-scope filtering, batching, verdict application, severity mapping, and rendering are tested Python scripts. The orchestrator sequences them; no model reasoning is involved.
-- **Measured cost.** Every headless agent result carries `total_cost_usd`. The orchestrator writes a per-stage/model ledger to `.tmp-review/costs.json` and prints a cost table after each run — real spend, never estimates.
+- **Measured cost.** Claude results carry `total_cost_usd`; Codex dollar cost is unavailable through this CLI adapter. The orchestrator writes a per-stage/model ledger to `.tmp-review/costs.json` and prints it after each run.
 - **Validator pass.** Critical and important findings get an adversarial validator agent (premise check, dimensional/severity check, and PR-attribution check against the merge base for PR reviews). Verdicts are confirm / rescore / remove with an auditable removal trail in `issues[]`.
 
 ### Scoring modes
@@ -154,7 +177,13 @@ python <plugin-root>/orchestrator/cli.py --detach ...  # long runs: start detach
 python <plugin-root>/orchestrator/cli.py --wait --wait-timeout-s 3600  # block until done; exit 3 = timed out, rerun
 ```
 
-The orchestrator needs only a `claude` CLI on PATH with working auth — any shell, CI job, or non-Claude agent frontend can drive it.
+The orchestrator needs either `claude` or `codex` on PATH with working auth. Select explicitly with `--harness claude|codex`, or leave the default `--harness auto` to use Codex when running under Codex and Claude otherwise.
+
+For example:
+
+```
+python <plugin-root>/orchestrator/cli.py --harness codex --pr 42 --scoring simple
+```
 
 ## Filename convention
 

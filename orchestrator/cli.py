@@ -5,7 +5,8 @@
 Usage (typically via the review skill wrapper, but works standalone):
 
     python orchestrator/cli.py [--pr N] [--guidance "text"]
-        [--scoring categorical|simple] [--project-root PATH]
+        [--scoring categorical|simple] [--harness auto|claude|codex]
+        [--project-root PATH]
         [--max-agents 16] [--parallel 4] [--timeout 600] [--dry-run]
 
 Long runs from an agent wrapper use the detach/wait pair — the run survives
@@ -154,6 +155,12 @@ def main(argv: list[str] | None = None) -> int:
         "simple: severity+confidence (cheaper, lighter)",
     )
     parser.add_argument(
+        "--harness",
+        choices=["auto", "claude", "codex"],
+        default="auto",
+        help="agent CLI harness; auto selects Codex when running under Codex, otherwise Claude",
+    )
+    parser.add_argument(
         "--project-root", default=os.getcwd(), help="project to review"
     )
     def _positive_int(value: str) -> int:
@@ -228,11 +235,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    harness = args.harness
+    if harness == "auto":
+        harness = os.environ.get("REVIEW_ORCHESTRATOR_HARNESS", "")
+        if harness not in {"claude", "codex"}:
+            harness = (
+                "codex"
+                if any(os.environ.get(key) for key in ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CODEX_CI"))
+                else "claude"
+            )
     options = pipeline.Options(
         project_root=str(Path(args.project_root).resolve()),
         pr_number=args.pr,
         guidance=args.guidance,
         scoring=args.scoring,
+        harness=harness,
         skip_lenses=skip_lenses,
         max_agents=args.max_agents,
         parallel=args.parallel,

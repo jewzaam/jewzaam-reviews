@@ -85,6 +85,39 @@ class TestArgvConstruction:
         assert json.loads(argv[argv.index("--json-schema") + 1]) == {"type": "object"}
         assert capture["kwargs"]["cwd"] == "/tmp"
 
+    def test_codex_argv_and_jsonl_output(self, monkeypatch):
+        capture = {}
+        stdout = "\n".join(
+            [
+                json.dumps({"type": "thread.started", "thread_id": "codex-1"}),
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": json.dumps({"ok": True}),
+                        },
+                    }
+                ),
+            ]
+        )
+        _patch_run(monkeypatch, _FakeProc(stdout), capture)
+        result = backend.run_agent(
+            "the prompt",
+            schema={"type": "object"},
+            model="sonnet",
+            allowed_tools=["Read"],
+            tools="Read",
+            cwd="/tmp",
+            harness="codex",
+        )
+        argv = capture["argv"]
+        assert argv[:3] == ["codex", "exec", "--json"]
+        assert "--sandbox" in argv and argv[argv.index("--sandbox") + 1] == "read-only"
+        assert "--output-schema" in argv
+        assert result.output == {"ok": True}
+        assert result.session_id == "codex-1"
+
     def test_no_schema_omits_json_schema_flag(self, monkeypatch):
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
