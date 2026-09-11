@@ -98,6 +98,7 @@ class Options:
     pr_number: int | None = None
     guidance: str = ""
     scoring: str = "categorical"  # or "simple"
+    harness: str = "claude"
     skip_lenses: tuple = ()  # lens slugs excluded before selection
     max_agents: int = 16
     parallel: int = 4
@@ -387,6 +388,7 @@ def _run_selector(state) -> dict | None:
             label="lens-selector",
             redact=state.scope.guidance or None,
             otel_attributes=state.agent_attributes("select", "lens-selector"),
+            harness=state.options.harness,
         ),
         schema=schema,
     )
@@ -450,6 +452,7 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
                 label=label,
                 redact=state.scope.guidance or None,
                 otel_attributes=state.agent_attributes("review", label),
+                harness=state.options.harness,
             ),
             schema=schema,
             harvest=lambda sid: backend.run_agent(
@@ -468,6 +471,7 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
                 label=f"{label} (harvest)",
                 redact=state.scope.guidance or None,
                 otel_attributes=state.agent_attributes("review", f"{label}-harvest"),
+                harness=state.options.harness,
             ),
         )
 
@@ -577,6 +581,7 @@ def run_validators(state) -> None:
                 otel_attributes=state.agent_attributes(
                     "validate", f"validator-batch-{batch['batch_number']}"
                 ),
+                harness=state.options.harness,
             ),
             schema=schema,
         )
@@ -603,6 +608,7 @@ def _write_costs(state) -> dict:
     """Persist the run ledger (cost, latency, denials) to .tmp-review/costs.json."""
     report = {
         "run_id": state.run_id,
+        "harness": state.options.harness,
         # The session that drove this run. Its own spend is not in `entries` and
         # cannot be: the orchestrator issues no model calls, and the session
         # outlives the run. Recorded so the run joins back to it in telemetry.

@@ -6,10 +6,9 @@ the single point a future backend (e.g. codex headless) must reimplement:
 same signature, different subprocess. Nothing else in the orchestrator may
 spawn an agent.
 
-The Claude implementation shells out to `claude -p --output-format json`
-with `--json-schema` for harness-level structured output. Every result
-carries the measured `total_cost_usd` from the CLI's result JSON — cost
-reporting is real spend, never an estimate.
+The Claude implementation shells out to `claude -p --output-format json`;
+the Codex implementation uses `codex exec --json`. Both return the same
+structured AgentResult to the pipeline.
 """
 
 import json
@@ -20,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -185,6 +185,43 @@ def _is_budget_stop(result: dict) -> bool:
     )
 
 
+def _codex_result(events: list[dict], returncode: int, stderr: str) -> dict:
+    """Normalize Codex JSONL events to the Claude result shape we consume."""
+    thread_id = next(
+        (event.get("thread_id") for event in events if event.get("type") == "thread.started"),
+        "",
+    )
+    text = ""
+    for event in reversed(events):
+        item = event.get("item", {})
+        if event.get("type") != "item.completed" or item.get("type") != "agent_message":
+            continue
+        text = item.get("text", "")
+        if not text and isinstance(item.get("content"), list):
+            text = "".join(
+                part.get("text", "") for part in item["content"] if isinstance(part, dict)
+            )
+        break
+    structured = None
+    if isinstance(text, str):
+        try:
+            structured = json.loads(text)
+        except json.JSONDecodeError:
+            pass
+    error = next(
+        (event.get("message") or event.get("error") for event in events if event.get("type") == "error"),
+        None,
+    )
+    return {
+        "is_error": returncode != 0 or error is not None,
+        "session_id": thread_id,
+        "total_cost_usd": 0.0,
+        "permission_denials": [],
+        "result": error or text or stderr.strip(),
+        "structured_output": structured,
+    }
+
+
 def run_agent(
     prompt: str,
     *,
@@ -204,8 +241,9 @@ def run_agent(
     label: str = "",
     redact: str | None = None,
     otel_attributes: dict | None = None,
+    harness: str = "claude",
 ) -> AgentResult:
-    """Run one headless claude agent and parse its result JSON.
+    """Run one headless agent harness and parse its structured result.
 
     `tools` restricts which built-in tools exist at all (e.g.
     "Read,Glob,Grep" gives an agent no Bash tool, period). `allowed_tools`
@@ -262,43 +300,52 @@ def run_agent(
         )
         return agent_result
 
+    if harness not in {"claude", "codex"}:
+        return AgentResult(error=f"unsupported agent harness: {harness}", error_category="spawn")
+
     # Prompt goes via stdin, not argv: argv is world-visible in `ps` and
     # subject to ARG_MAX; prompts carry project content and can be large.
-    argv = [
-        "claude",
-        "-p",
-        "--output-format",
-        "json",
-        "--model",
-        model,
-        # Deny non-allowlisted tool calls instead of prompting; denials are
-        # recorded in permission_denials on the result.
-        "--permission-mode",
-        "dontAsk",
-    ]
-    if not persist_session:
-        argv.append("--no-session-persistence")
-    if resume_session_id:
-        argv += ["--resume", resume_session_id]
-    elif session_id:
-        argv += ["--session-id", session_id]
-    if max_budget_usd is not None:
-        argv += ["--max-budget-usd", str(max_budget_usd)]
-    if debug_file is not None:
-        Path(debug_file).parent.mkdir(parents=True, exist_ok=True)
-        argv += ["--debug-file", str(debug_file)]
-    if schema is not None:
-        argv += ["--json-schema", json.dumps(schema)]
-    if tools is not None:
-        argv += ["--tools", tools]
-    if effort:
-        argv += ["--effort", effort]
-    if allowed_tools:
-        # Comma-separated: patterns like Bash(git diff:*) contain spaces,
-        # and the CLI splits a space-joined list inside them.
-        argv += ["--allowedTools", ",".join(allowed_tools)]
-
-    child_env = _scrubbed_env()
+    schema_file = None
+    if harness == "claude":
+        argv = [
+            "claude", "-p", "--output-format", "json", "--model", model,
+            "--permission-mode", "dontAsk",
+        ]
+        if not persist_session:
+            argv.append("--no-session-persistence")
+        if resume_session_id:
+            argv += ["--resume", resume_session_id]
+        elif session_id:
+            argv += ["--session-id", session_id]
+        if max_budget_usd is not None:
+            argv += ["--max-budget-usd", str(max_budget_usd)]
+        if debug_file is not None:
+            Path(debug_file).parent.mkdir(parents=True, exist_ok=True)
+            argv += ["--debug-file", str(debug_file)]
+        if schema is not None:
+            argv += ["--json-schema", json.dumps(schema)]
+        if tools is not None:
+            argv += ["--tools", tools]
+        if effort:
+            argv += ["--effort", effort]
+        if allowed_tools:
+            argv += ["--allowedTools", ",".join(allowed_tools)]
+        child_env = _scrubbed_env()
+    else:
+        # Codex has no Claude-style tool allowlist; read-only sandboxing keeps
+        # review agents from changing the project while retaining git reads.
+        argv = ["codex", "exec", "--json", "--ephemeral", "--sandbox", "read-only"]
+        if model not in {"haiku", "sonnet"}:
+            argv += ["--model", model]
+        if schema is not None:
+            schema_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", prefix="review-schema-", delete=False
+            )
+            json.dump(schema, schema_file)
+            schema_file.close()
+            argv += ["--output-schema", schema_file.name]
+        argv.append("-")
+        child_env = dict(os.environ)
     if otel_attributes:
         pairs = ",".join(
             f"{key}={re.sub(r'[,=]', '-', str(value))}"
@@ -321,10 +368,14 @@ def run_agent(
             start_new_session=True,
         )
     except OSError as exc:
-        return _finish(AgentResult(error=f"failed to spawn claude: {exc}", error_category="spawn"))
+        if schema_file is not None:
+            Path(schema_file.name).unlink(missing_ok=True)
+        return _finish(AgentResult(error=f"failed to spawn {harness}: {exc}", error_category="spawn"))
     try:
         stdout, stderr = popen.communicate(input=prompt, timeout=timeout_s)
     except subprocess.TimeoutExpired:
+        if schema_file is not None:
+            Path(schema_file.name).unlink(missing_ok=True)
         try:
             os.killpg(popen.pid, signal.SIGKILL)
         except OSError:
@@ -345,10 +396,22 @@ def run_agent(
         stdout=stdout, stderr=stderr, returncode=popen.returncode
     )
 
-    try:
-        result = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        result = None
+    if schema_file is not None:
+        Path(schema_file.name).unlink(missing_ok=True)
+
+    if harness == "codex":
+        events = []
+        for line in proc.stdout.splitlines():
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        result = _codex_result(events, proc.returncode, proc.stderr)
+    else:
+        try:
+            result = json.loads(proc.stdout)
+        except json.JSONDecodeError:
+            result = None
     if not isinstance(result, dict):
         stderr_tail = (proc.stderr or "").strip()[-2000:]
         return _finish(
