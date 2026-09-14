@@ -246,6 +246,43 @@ def _is_budget_stop(result: dict) -> bool:
     )
 
 
+def _codex_usage(events: list[dict]) -> dict:
+    """Token usage from the last `turn.completed`, in Claude's field names.
+
+    Codex reports no dollar cost at all, so normalized tokens are the only
+    cross-harness comparison available for a Codex run — dropping them, as
+    this did before, left the ledger reading 0 for a review that really ran.
+
+    The vocabularies differ: Codex splits reasoning out as
+    `reasoning_output_tokens`, which is billed and weighted as output, and
+    names its cache hits `cached_input_tokens`. It has no counterpart to
+    Anthropic's cache *writes*, so that weight simply never applies here.
+    """
+    usage = next(
+        (
+            event.get("usage") or (event.get("turn") or {}).get("usage")
+            for event in reversed(events)
+            if event.get("type") == "turn.completed"
+        ),
+        None,
+    )
+    if not isinstance(usage, dict):
+        return {}
+
+    def count(name: str) -> int:
+        try:
+            return max(int(usage.get(name) or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "input_tokens": count("input_tokens"),
+        "cache_read_input_tokens": count("cached_input_tokens"),
+        "cache_creation_input_tokens": 0,
+        "output_tokens": count("output_tokens") + count("reasoning_output_tokens"),
+    }
+
+
 def _codex_result(events: list[dict], returncode: int, stderr: str) -> dict:
     """Normalize Codex JSONL events to the Claude result shape we consume."""
     thread_id = next(
@@ -273,14 +310,22 @@ def _codex_result(events: list[dict], returncode: int, stderr: str) -> dict:
         (event.get("message") or event.get("error") for event in events if event.get("type") == "error"),
         None,
     )
-    return {
+    result = {
         "is_error": returncode != 0 or error is not None,
         "session_id": thread_id,
+        # Codex reports no cost; 0.0 means "unavailable", not "free".
         "total_cost_usd": 0.0,
         "permission_denials": [],
         "result": error or text or stderr.strip(),
         "structured_output": structured,
     }
+    usage = _codex_usage(events)
+    if usage:
+        # Omitted rather than zero-filled when the turn reported nothing:
+        # "not reported" and "genuinely zero" are different facts, and the
+        # ledger should not turn the first into the second.
+        result["usage"] = usage
+    return result
 
 
 def run_agent(

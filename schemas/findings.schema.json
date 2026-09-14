@@ -626,8 +626,11 @@
             "validation_failed",
             "tool_unavailable",
             "schema_rejected_input",
+            "finding_removed",
+            "finding_truncated",
             "other"
-          ]
+          ],
+          "description": "What kind of thing happened. The first five are operational failures \u2014 something the run could not do. `finding_removed` and `finding_truncated` are the opposite: a deliberate, successful pipeline decision recorded for audit (the diff-scope filter dropping an out-of-scope finding, a validator removing one, a title clipped to the schema bound). Renderers separate the two, because listing a working filter beside a dead sub-agent teaches readers to skim the section."
         },
         "message": {
           "type": "string",

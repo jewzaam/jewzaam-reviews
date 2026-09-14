@@ -200,7 +200,7 @@ def main(argv: list[str]) -> int:
             # carry the classification in the message prefix. Widen the shared
             # enum only if another skill needs the same category.
             "severity": "warning",
-            "kind": "other",
+            "kind": "finding_removed",
             "message": (
                 f"diff_scope_filtered: finding '{f['title']}' ({f['content_hash']}) "
                 f"removed — primary location(s) {loc_str} not among the files "

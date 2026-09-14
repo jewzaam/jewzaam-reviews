@@ -27,6 +27,7 @@ from scripts.envelope import (  # noqa: E402
 
 SEVERITY_ORDER = {"critical": 0, "important": 1, "suggestion": 2}
 CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2}
+MAX_TITLE_LENGTH = 120  # keep in sync with consolidate-findings.MAX_TITLE_LENGTH
 BATCH_SIZE = 8  # keep in sync with MAX_BATCH_SIZE in skills/review/scripts/batch-findings.py
 
 
@@ -50,9 +51,11 @@ def _merge(winner: dict, loser: dict) -> dict:
     return winner
 
 
-def collect_findings(raw_dir: Path) -> tuple[list[dict], list[dict], list[dict]]:
-    """Flatten agent outputs into hashed findings, a decomposition list, and
-    deduplicated cross-cutting observations."""
+def collect_findings(raw_dir: Path) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """Flatten agent outputs into hashed findings, a decomposition list,
+    deduplicated cross-cutting observations, and any issues raised while
+    normalizing them (currently title clipping)."""
+    issues: list[dict] = []
     findings: dict[tuple, dict] = {}
     decomposition: dict[str, dict] = {}
     seen_observations: set[tuple[str, str]] = set()
@@ -75,6 +78,21 @@ def collect_findings(raw_dir: Path) -> tuple[list[dict], list[dict], list[dict]]
         for finding in output["findings"]:
             entry = dict(finding)
             entry["concern_slug"] = output["concern_slug"]
+            # Same bound and the same reason as the categorical path; see
+            # consolidate-findings.MAX_TITLE_LENGTH.
+            if len(entry["title"]) > MAX_TITLE_LENGTH:
+                issues.append(
+                    {
+                        "severity": "warning",
+                        "kind": "finding_truncated",
+                        "message": (
+                            f"title clipped to {MAX_TITLE_LENGTH} chars "
+                            f"(was {len(entry['title'])}): {entry['title'][:80]}..."
+                        ),
+                        "source_component": "collect-findings",
+                    }
+                )
+                entry["title"] = entry["title"][: MAX_TITLE_LENGTH - 3] + "..."
             loc = primary_location(entry)
             entry["content_hash"] = content_hash(
                 output["concern_slug"],
@@ -106,7 +124,7 @@ def collect_findings(raw_dir: Path) -> tuple[list[dict], list[dict], list[dict]]
             )
             findings[key] = _merge(winner, loser)
     ordered = sorted(findings.values(), key=lambda f: f["content_hash"])
-    return ordered, list(decomposition.values()), observations
+    return ordered, list(decomposition.values()), observations, issues
 
 
 def write_stage(stage_dir: Path, project: dict, decomposition, issues, findings, observations=None):
@@ -184,7 +202,7 @@ def apply_verdicts(validation_dir: Path, findings: list[dict]) -> tuple[list[dic
         issues.append(
             {
                 "severity": "warning",
-                "kind": "other",
+                "kind": "finding_removed",
                 "message": (
                     f"validator_removed[{verdict['remove_reason']}]: finding "
                     f"'{finding['title']}' ({finding['content_hash']}) — "
@@ -202,7 +220,10 @@ def run_simple_path(state) -> None:
     cwd = state.options.project_root
     review_scope = state.scope
 
-    findings, decomposition, observations = collect_findings(tmp / "00-raw")
+    findings, decomposition, observations, collect_issues = collect_findings(
+        tmp / "00-raw"
+    )
+    state.issues.extend(collect_issues)
     project = {"name": review_scope.project_name}
     if review_scope.scope_slug:
         project["scope_slug"] = review_scope.scope_slug
