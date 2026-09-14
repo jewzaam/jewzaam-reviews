@@ -170,7 +170,7 @@ class TestRemovalTrail:
         # Must survive the envelope schema, per the v0.7.5 enum break.
         for issue in trail:
             assert issue["severity"] in ("error", "warning")
-            assert issue["kind"] == "other"
+            assert issue["kind"] == "finding_removed"
 
     def test_stdout_breaks_down_removals_by_reason(self, tmp_path: Path):
         _envelope, _kept, stdout = self._run_with_removals(tmp_path, [

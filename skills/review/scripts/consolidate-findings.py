@@ -377,6 +377,31 @@ def _load_and_validate_raw(
     return valid, warnings
 
 
+# Mirrors `maxLength` on `title` in merged-finding.schema.json and the shared
+# findings schema. The agent-facing schema cannot carry the bound at all —
+# OpenAI strict Structured Outputs rejects `maxLength` — so it is enforced
+# here, at the first deterministic stage that owns the finding, instead of
+# aborting the run two stages later when an agent writes a long one.
+MAX_TITLE_LENGTH = 120
+
+
+def _clip_title(finding: dict) -> dict | None:
+    """Clip an over-long title in place; return the issue to record, or None."""
+    title = finding["title"]
+    if len(title) <= MAX_TITLE_LENGTH:
+        return None
+    finding["title"] = title[: MAX_TITLE_LENGTH - 3] + "..."
+    return {
+        "severity": "warning",
+        "kind": "finding_truncated",
+        "message": (
+            f"title clipped to {MAX_TITLE_LENGTH} chars "
+            f"(was {len(title)}): {title[:80]}..."
+        ),
+        "source_component": "consolidate",
+    }
+
+
 def consolidate(
     agent_outputs: list[dict],
     project_name: str,
@@ -387,15 +412,20 @@ def consolidate(
     """Pure-data entry point. Used by tests that want to bypass the CLI."""
     # Flatten findings, annotating with their source dimension.
     flat: list[dict] = []
+    issues: list[dict] = []
     for ao in agent_outputs:
         for f in ao["findings"]:
-            flat.append(
-                {
-                    **f,
-                    "_dimension_slug": ao["dimension_slug"],
-                    "concern_slug": ao["concern_slug"],
-                }
-            )
+            entry = {
+                **f,
+                "_dimension_slug": ao["dimension_slug"],
+                "concern_slug": ao["concern_slug"],
+            }
+            # Before content_hash, which is taken over the title: clipping
+            # afterwards would leave the hash keyed to a string no stage holds.
+            issue = _clip_title(entry)
+            if issue is not None:
+                issues.append(issue)
+            flat.append(entry)
 
     # Pass 1: group by (concern_slug, primary location)
     pass1_groups: dict[tuple[str, str, str], list[dict]] = {}
@@ -480,6 +510,7 @@ def consolidate(
         "project": project,
         "decomposition": decomposition,
         "findings": final_findings,
+        "issues": issues,
     }
     observations = _collect_observations(agent_outputs)
     if observations:
@@ -681,7 +712,7 @@ def main(argv: list[str]) -> int:
     envelope = {
         "project": consolidated["project"],
         "decomposition": consolidated["decomposition"],
-        "issues": issues,
+        "issues": issues + consolidated.get("issues", []),
     }
     if consolidated.get("cross_cutting_observations"):
         envelope["cross_cutting_observations"] = consolidated[

@@ -65,6 +65,10 @@ HARVEST_PROMPT = (
 # failed   — aborted the run
 STEP_STATUSES = ("ok", "degraded", "skipped", "failed")
 
+# Issue kinds that record a deliberate pipeline decision, not a failure —
+# kept apart in every summary so a clean run does not report warnings.
+DECISION_KINDS = frozenset({"finding_removed", "finding_truncated"})
+
 RUN_REPORT_FILENAME = "run-report.json"
 
 
@@ -919,9 +923,14 @@ def _print_summary(state, cost_report) -> None:
             for tool, count in sorted(cost_report["denials_by_tool"].items())
         )
         print(f"\nTool denials: {denial_text}")
-    if state.issues:
-        print(f"\nOperational issues ({len(state.issues)}):")
-        for issue in state.issues:
+    decisions = [i for i in state.issues if i["kind"] in DECISION_KINDS]
+    failures = [i for i in state.issues if i["kind"] not in DECISION_KINDS]
+    for heading, group in (("Operational issues", failures),
+                           ("Pipeline decisions", decisions)):
+        if not group:
+            continue
+        print(f"\n{heading} ({len(group)}):")
+        for issue in group:
             component = issue.get("source_component", "")
             where = f" [{component}]" if component else ""
             print(f"  - {issue['severity']}/{issue['kind']}{where}: {issue['message']}")

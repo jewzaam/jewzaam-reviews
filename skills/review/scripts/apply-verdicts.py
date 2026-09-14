@@ -187,7 +187,7 @@ def main(argv: list[str]) -> int:
             removed_by_reason[reason] = removed_by_reason.get(reason, 0) + 1
             removal_issues.append({
                 "severity": "warning",
-                "kind": "other",
+                "kind": "finding_removed",
                 "message": (
                     f"validator_removed[{reason}]: finding "
                     f"'{finding['title']}' ({ch}) — {verdict['reasoning']}"

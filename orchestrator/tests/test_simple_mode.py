@@ -60,7 +60,7 @@ class TestCollectFindings:
                 )
             )
         )
-        findings, decomposition, _ = simple_mode.collect_findings(raw)
+        findings, decomposition, _, _ = simple_mode.collect_findings(raw)
         assert len(findings) == 2  # different concern_slug => different keys
         assert {d["dimension_slug"] for d in decomposition} == {"full-scope"}
         assert all(re.fullmatch(r"[a-f0-9]{16}", f["content_hash"]) for f in findings)
@@ -71,7 +71,7 @@ class TestCollectFindings:
         out = _simple_output("implementation", [_finding("f")])
         out["cross_cutting_observations"] = ["Note 1", "Note 1", ""]
         (raw / "implementation-full-scope.json").write_text(json.dumps(out))
-        _, _, observations = simple_mode.collect_findings(raw)
+        _, _, observations, _ = simple_mode.collect_findings(raw)
         assert observations == [
             {"agent": "implementation/full-scope", "text": "Note 1"}
         ]
@@ -85,7 +85,7 @@ class TestCollectFindings:
         (raw / "implementation-full-scope.json").write_text(
             json.dumps(_simple_output("implementation", [f1, f2]))
         )
-        findings, _, _ = simple_mode.collect_findings(raw)
+        findings, _, _, _ = simple_mode.collect_findings(raw)
         assert len(findings) == 1
         assert findings[0]["severity"] == "critical"
         assert len(findings[0]["locations"]) == 2

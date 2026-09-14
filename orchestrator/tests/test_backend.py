@@ -910,3 +910,56 @@ class TestDualHarnessSchemas:
              "required": ["a"]}
         )
         assert any("minLength" in p and "`pattern`" in p for p in problems)
+
+
+class TestCodexTokenUsage:
+    """Codex reports no dollar cost, so tokens are its only cost signal.
+
+    They were being dropped entirely: `_codex_result` never read `usage`, so
+    a full review ledgered 0 tokens and $0 — indistinguishable from a run
+    that never dispatched an agent.
+    """
+
+    def _events(self, **usage):
+        return [
+            json.dumps({"type": "thread.started", "thread_id": "t-1"}),
+            json.dumps({"type": "item.completed",
+                        "item": {"type": "agent_message", "text": "{}"}}),
+            json.dumps({"type": "turn.completed", "usage": usage}),
+        ]
+
+    def test_usage_is_mapped_to_claude_field_names(self, monkeypatch):
+        _patch_run(monkeypatch, _FakeProc("\n".join(self._events(
+            input_tokens=1000, cached_input_tokens=400,
+            output_tokens=50, reasoning_output_tokens=25))))
+        res = backend.run_agent("p", schema=None, model="sonnet",
+                                allowed_tools=[], cwd="/tmp", harness="codex")
+        assert res.token_usage == {
+            "input_tokens": 1000,
+            "cache_read_input_tokens": 400,
+            "cache_creation_input_tokens": 0,  # Codex has no cache-write counter
+            "output_tokens": 75,               # reasoning is billed as output
+        }
+        # 1000*1.0 + 400*0.1 + 0*1.25 + 75*6.0
+        assert backend.normalize_token_usage(res.token_usage) == 1490.0
+
+    def test_missing_usage_is_empty_not_zero_shaped(self, monkeypatch):
+        events = [json.dumps({"type": "thread.started", "thread_id": "t-1"}),
+                  json.dumps({"type": "item.completed",
+                              "item": {"type": "agent_message", "text": "{}"}})]
+        _patch_run(monkeypatch, _FakeProc("\n".join(events)))
+        res = backend.run_agent("p", schema=None, model="sonnet",
+                                allowed_tools=[], cwd="/tmp", harness="codex")
+        assert res.token_usage == {}
+
+    def test_usage_nested_under_turn_is_also_read(self, monkeypatch):
+        """Tolerate both shapes rather than betting on one event layout."""
+        events = [json.dumps({"type": "thread.started", "thread_id": "t-1"}),
+                  json.dumps({"type": "item.completed",
+                              "item": {"type": "agent_message", "text": "{}"}}),
+                  json.dumps({"type": "turn.completed",
+                              "turn": {"usage": {"input_tokens": 7}}})]
+        _patch_run(monkeypatch, _FakeProc("\n".join(events)))
+        res = backend.run_agent("p", schema=None, model="sonnet",
+                                allowed_tools=[], cwd="/tmp", harness="codex")
+        assert res.token_usage["input_tokens"] == 7

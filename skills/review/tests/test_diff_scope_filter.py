@@ -326,7 +326,7 @@ class TestDownstreamCompatibility:
             "validation_failed",
             "tool_unavailable",
             "schema_rejected_input",
-            "other",
+            "finding_removed",
         )
         _assert_envelope_valid(envelope)
 

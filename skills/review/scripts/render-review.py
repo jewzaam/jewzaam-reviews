@@ -137,6 +137,9 @@ def _concern_breakdown_table(findings: list[dict], supp_path: str) -> str:
 
 STEP_MARK = {"ok": "ok", "degraded": "DEGRADED", "skipped": "skipped", "failed": "FAILED"}
 
+# Issue kinds that record a pipeline decision rather than a failure.
+DECISION_KINDS = frozenset({"finding_removed", "finding_truncated"})
+
 
 def _run_report_section(rendered: dict) -> list[str]:
     """Render the run report and operational issues.
@@ -168,9 +171,23 @@ def _run_report_section(rendered: dict) -> list[str]:
             parts.append(f"| {step['step']} | {mark} | {detail} |")
         parts.append("")
 
-    if issues:
-        parts.append(f"### Operational Issues ({len(issues)})\n")
-        for issue in issues:
+    # Deliberate, successful pipeline decisions are not failures. Listing a
+    # working diff-scope filter beside a dead sub-agent trains the reader to
+    # skim the section, which is exactly what it exists to prevent.
+    decisions = [i for i in issues if i["kind"] in DECISION_KINDS]
+    failures = [i for i in issues if i["kind"] not in DECISION_KINDS]
+
+    for heading, group, blurb in (
+        ("Operational Issues", failures,
+         "Something the run could not do. Findings may be incomplete."),
+        ("Pipeline Decisions", decisions,
+         "Deliberate choices, recorded for audit. Not failures."),
+    ):
+        if not group:
+            continue
+        parts.append(f"### {heading} ({len(group)})\n")
+        parts.append(f"{blurb}\n")
+        for issue in group:
             component = issue.get("source_component")
             where = f" (`{component}`)" if component else ""
             parts.append(
