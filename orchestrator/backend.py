@@ -56,6 +56,11 @@ class AgentResult:
     # timeout | spawn | protocol | agent | budget | schema (set by callers) | None
     error_category: str | None = None
     session_id: str = ""  # child session id — joins the trace/ledger to telemetry
+    # The model actually invoked. Differs from the requested one whenever a
+    # harness resolves it: the lens roster names Anthropic tiers, and Codex
+    # runs a single configured model instead. The ledger records this, not the
+    # request, so a cost table never names a model that did not run.
+    model_used: str = ""
 
 
 def normalize_token_usage(usage: dict) -> float:
@@ -203,6 +208,33 @@ def _scrubbed_env() -> dict:
         env.setdefault("OTEL_LOGS_EXPORTER", "otlp")
         env.setdefault("OTEL_TRACES_EXPORTER", "otlp")
     return env
+
+
+# Codex is not tiered the way the lens roster is: the roster names Anthropic
+# tiers (`sonnet`, `haiku`) to split cheap lenses from expensive ones, and
+# Codex has no equivalent, so one configured model runs every agent. Passing
+# the tier name through would ask Codex for a model that does not exist;
+# dropping it silently — the previous behaviour — left the ledger reporting
+# `review/sonnet` for work no Anthropic model did.
+_CODEX_MODEL_ENV = "REVIEW_ORCHESTRATOR_CODEX_MODEL"
+_CODEX_EFFORT_ENV = "REVIEW_ORCHESTRATOR_CODEX_EFFORT"
+DEFAULT_CODEX_MODEL = "gpt-5.6-luna"
+DEFAULT_CODEX_EFFORT = "high"
+# Anthropic tier names in the lens roster. Never sent to Codex.
+_ANTHROPIC_TIERS = frozenset({"sonnet", "haiku", "opus"})
+
+
+def codex_model(requested: str) -> str:
+    """The Codex model to run for a roster entry naming an Anthropic tier.
+
+    A non-tier name is passed through untouched, so an explicit model still
+    wins. Set to an empty string to fall back to whatever Codex is
+    configured with, in which case nothing is sent and the ledger says
+    `codex:default` rather than inventing a name.
+    """
+    if requested not in _ANTHROPIC_TIERS:
+        return requested
+    return os.environ.get(_CODEX_MODEL_ENV, DEFAULT_CODEX_MODEL)
 
 
 def _codex_env() -> tuple[dict, Path]:
@@ -392,6 +424,7 @@ def run_agent(
                 "ts": round(time.time(), 3),
                 "label": label,
                 "model": model,
+                "model_used": effective_model or "codex:default",
                 "effort": effort,
                 "tools": tools,
                 "allowed_tools": allowed_tools,
@@ -415,6 +448,8 @@ def run_agent(
     # subject to ARG_MAX; prompts carry project content and can be large.
     schema_file = None
     codex_home = None
+    codex_log = None
+    effective_model = model
     if harness == "claude":
         argv = [
             "claude", "-p", "--output-format", "json", "--model", model,
@@ -456,8 +491,15 @@ def run_agent(
                 )
             )
         argv = ["codex", "exec", "--json", "--ephemeral", "--sandbox", sandbox]
-        if model not in {"haiku", "sonnet"}:
-            argv += ["--model", model]
+        effective_model = codex_model(model)
+        if effective_model:
+            argv += ["--model", effective_model]
+        # `effort` on the call names an Anthropic effort tier; Codex takes its
+        # own, and one setting covers every agent since the model is not
+        # tiered either. Config key, not a flag — there is no `--effort`.
+        codex_effort = os.environ.get(_CODEX_EFFORT_ENV, DEFAULT_CODEX_EFFORT)
+        if codex_effort:
+            argv += ["-c", f"model_reasoning_effort={codex_effort}"]
         if schema is not None:
             schema_file = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", prefix="review-schema-", delete=False
@@ -467,6 +509,13 @@ def run_agent(
             argv += ["--output-schema", schema_file.name]
         argv.append("-")
         child_env, codex_home = _codex_env()
+        if debug_file is not None:
+            # Codex has no `--debug-file`. Its JSONL event stream is the
+            # closest thing, and pointing stdout straight at the log makes it
+            # readable *while* the agent runs — which is the whole point of
+            # the file. It is read back below for parsing, so it serves both.
+            Path(debug_file).parent.mkdir(parents=True, exist_ok=True)
+            codex_log = open(debug_file, "w", encoding="utf-8")
     if otel_attributes:
         pairs = ",".join(
             f"{key}={re.sub(r'[,=]', '-', str(value))}"
@@ -483,7 +532,7 @@ def run_agent(
             cwd=cwd,
             env=child_env,
             stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
+            stdout=codex_log if codex_log is not None else subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=True,
@@ -494,9 +543,23 @@ def run_agent(
         if codex_home is not None:
             shutil.rmtree(codex_home, ignore_errors=True)
         return _finish(AgentResult(error=f"failed to spawn {harness}: {exc}", error_category="spawn"))
+    def _read_codex_log() -> str:
+        """Close the live log and read the events back for parsing."""
+        if codex_log is None:
+            return ""
+        codex_log.close()
+        try:
+            return Path(debug_file).read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
     try:
         stdout, stderr = popen.communicate(input=prompt, timeout=timeout_s)
+        if codex_log is not None:
+            stdout = _read_codex_log()
     except subprocess.TimeoutExpired:
+        if codex_log is not None:
+            codex_log.close()
         if schema_file is not None:
             Path(schema_file.name).unlink(missing_ok=True)
         if codex_home is not None:
@@ -555,6 +618,7 @@ def run_agent(
         cost_usd = 0.0
     denials = result.get("permission_denials")
     agent_result = AgentResult(
+        model_used=effective_model or "codex:default",
         cost_usd=cost_usd,
         token_usage=_parse_token_usage(result),
         permission_denials=denials if isinstance(denials, list) else [],

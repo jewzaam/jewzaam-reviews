@@ -197,6 +197,7 @@ class RunState:
             "review.stage": stage,
             "review.agent": label,
             "review.scoring": self.options.scoring,
+            "review.harness": self.options.harness,
         }
         if self.orchestrating_session_id:
             attributes["review.orchestrating_session_id"] = (
@@ -267,7 +268,11 @@ def _run_with_retry(state, stage, label, model, fn, schema=None, retries=2, harv
             CostEntry(
                 stage=stage,
                 label=label,
-                model=model,
+                # What ran, not what was asked for. Under Codex the roster's
+                # Anthropic tier is resolved to one configured model, and a
+                # by_stage row reading `review/sonnet` for a Codex run names
+                # a model that never executed.
+                model=attempt.model_used or model,
                 cost_usd=attempt.cost_usd,
                 token_usage=attempt.token_usage,
                 normalized_tokens=backend.normalize_token_usage(attempt.token_usage),
@@ -306,7 +311,7 @@ def _harvest(state, stage, label, model, harvest, stopped, schema):
         CostEntry(
             stage=stage,
             label=f"{label} (harvest)",
-            model=model,
+            model=attempt.model_used or model,
             cost_usd=attempt.cost_usd,
             token_usage=attempt.token_usage,
             normalized_tokens=backend.normalize_token_usage(attempt.token_usage),
