@@ -963,3 +963,95 @@ class TestCodexTokenUsage:
         res = backend.run_agent("p", schema=None, model="sonnet",
                                 allowed_tools=[], cwd="/tmp", harness="codex")
         assert res.token_usage["input_tokens"] == 7
+
+
+class TestCodexModelAndEffort:
+    """Codex is not tiered; the roster is. Resolving that must be visible.
+
+    Dropping the tier silently — the old behaviour — ran every agent on
+    Codex's default while the ledger reported `review/sonnet` and
+    `review/haiku`, naming two Anthropic models that never executed and
+    inventing a cost split that did not happen.
+    """
+
+    def _argv(self, monkeypatch, model="sonnet", **env):
+        for key in ("REVIEW_ORCHESTRATOR_CODEX_MODEL", "REVIEW_ORCHESTRATOR_CODEX_EFFORT"):
+            monkeypatch.delenv(key, raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        capture = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        res = backend.run_agent("p", schema=None, model=model, allowed_tools=[],
+                                cwd="/tmp", effort="low", harness="codex")
+        return capture["argv"], res
+
+    def test_tier_is_resolved_to_the_configured_model(self, monkeypatch):
+        argv, res = self._argv(monkeypatch, model="sonnet")
+        assert argv[argv.index("--model") + 1] == backend.DEFAULT_CODEX_MODEL
+        assert "sonnet" not in argv, "an Anthropic tier must never reach Codex"
+        assert res.model_used == backend.DEFAULT_CODEX_MODEL
+
+    def test_both_tiers_resolve_to_one_model(self, monkeypatch):
+        sonnet, _ = self._argv(monkeypatch, model="sonnet")
+        haiku, _ = self._argv(monkeypatch, model="haiku")
+        assert sonnet[sonnet.index("--model") + 1] == haiku[haiku.index("--model") + 1]
+
+    def test_env_overrides_the_model(self, monkeypatch):
+        argv, res = self._argv(monkeypatch, REVIEW_ORCHESTRATOR_CODEX_MODEL="gpt-x")
+        assert argv[argv.index("--model") + 1] == "gpt-x"
+        assert res.model_used == "gpt-x"
+
+    def test_empty_env_falls_back_to_codex_default(self, monkeypatch):
+        argv, res = self._argv(monkeypatch, REVIEW_ORCHESTRATOR_CODEX_MODEL="")
+        assert "--model" not in argv
+        assert res.model_used == "codex:default", "never invent a model name"
+
+    def test_explicit_non_tier_model_passes_through(self, monkeypatch):
+        argv, _ = self._argv(monkeypatch, model="gpt-explicit")
+        assert argv[argv.index("--model") + 1] == "gpt-explicit"
+
+    def test_reasoning_effort_is_sent_as_a_config_key(self, monkeypatch):
+        argv, _ = self._argv(monkeypatch)
+        assert "-c" in argv
+        assert f"model_reasoning_effort={backend.DEFAULT_CODEX_EFFORT}" in argv
+        assert "--effort" not in argv, "Codex has no --effort flag"
+
+    def test_effort_env_override(self, monkeypatch):
+        argv, _ = self._argv(monkeypatch, REVIEW_ORCHESTRATOR_CODEX_EFFORT="low")
+        assert "model_reasoning_effort=low" in argv
+
+    def test_claude_still_gets_the_tier_verbatim(self, monkeypatch):
+        capture = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[],
+                                cwd="/tmp", harness="claude")
+        argv = capture["argv"]
+        assert argv[argv.index("--model") + 1] == "haiku"
+        assert res.model_used == "haiku"
+
+
+class TestCodexLiveLog:
+    def test_events_are_written_to_the_agent_log_while_running(self, monkeypatch, tmp_path):
+        """Codex has no --debug-file; stdout goes straight to the log so it is
+        readable mid-run, and is read back for parsing."""
+        log = tmp_path / "logs" / "lens.log"
+        events = "\n".join([
+            json.dumps({"type": "thread.started", "thread_id": "t-9"}),
+            json.dumps({"type": "item.completed",
+                        "item": {"type": "agent_message", "text": '{"ok": true}'}}),
+        ])
+
+        def fake_popen(argv, **kwargs):
+            # The CLI writes to the handle the backend opened, not to a pipe.
+            assert kwargs["stdout"] is not subprocess.PIPE
+            kwargs["stdout"].write(events)
+            kwargs["stdout"].flush()
+            return _FakeProc("")
+
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        res = backend.run_agent("p", schema={"type": "object"}, model="sonnet",
+                                allowed_tools=[], cwd="/tmp", harness="codex",
+                                debug_file=log)
+        assert log.read_text().count("\n") >= 1, "log holds the event stream"
+        assert res.output == {"ok": True}, "and is still parsed for the result"
+        assert res.session_id == "t-9"
