@@ -5,72 +5,260 @@
   "description": "Verdicts from one validator agent for one batch of findings.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["batch_number", "verdicts"],
+  "required": [
+    "batch_number",
+    "verdicts"
+  ],
   "properties": {
-    "batch_number": {"type": "integer", "minimum": 1},
+    "batch_number": {
+      "type": "integer",
+      "minimum": 1
+    },
     "verdicts": {
       "type": "array",
       "minItems": 1,
-      "items": {"$ref": "#/$defs/verdict"}
+      "description": "One verdict per finding, as a closed union discriminated by `action`. Written as `anyOf` over three complete shapes rather than a shared object plus `allOf`/`if`/`then` conditionals: `anyOf` is the only composition keyword OpenAI's strict Structured Outputs accepts, so the conditional form was rejected outright under Codex and the per-action rules had to be re-checked after generation instead of enforced during it. The union is equivalent and holds on both harnesses. Nested composition is fine on both; only ROOT-level composition is rejected (see scripts/resolve_schema.py).",
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/confirm"
+          },
+          {
+            "$ref": "#/$defs/rescore"
+          },
+          {
+            "$ref": "#/$defs/remove"
+          }
+        ]
+      }
     }
   },
   "$defs": {
-    "verdict": {
+    "confirm": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["finding_ref", "action", "reasoning"],
+      "required": [
+        "finding_ref",
+        "action",
+        "reasoning"
+      ],
       "properties": {
         "finding_ref": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["content_hash"],
+          "required": [
+            "content_hash"
+          ],
           "properties": {
-            "content_hash": {"type": "string", "pattern": "^[a-f0-9]{16,64}$"}
+            "content_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{16,64}$"
+            }
           }
         },
-        "action": {"type": "string", "enum": ["confirm", "rescore", "remove"]},
-        "remove_reason": {
+        "action": {
           "type": "string",
-          "enum": ["not_real", "pre_existing", "positive_observation"],
-          "description": "Why the finding was removed. Required when action is 'remove', forbidden otherwise. not_real = the issue does not exist or the premise is invalid. pre_existing = the issue is real but would hold at the merge base, so this PR did not introduce or expose it. positive_observation = the finding describes working code, not a problem."
+          "const": "confirm"
+        },
+        "reasoning": {
+          "type": "string",
+          "pattern": "^[\\s\\S]+$"
+        }
+      }
+    },
+    "rescore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_ref",
+        "action",
+        "new_dimensions",
+        "reasoning"
+      ],
+      "properties": {
+        "finding_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "content_hash"
+          ],
+          "properties": {
+            "content_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{16,64}$"
+            }
+          }
+        },
+        "action": {
+          "type": "string",
+          "const": "rescore"
         },
         "new_dimensions": {
           "type": "object",
           "additionalProperties": false,
-          "minProperties": 1,
           "properties": {
-            "runtime_scope": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/runtime_scope"},
-            "runtime_scope_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/runtime_scope_justification"},
-            "failure_mode": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/failure_mode"},
-            "failure_mode_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/failure_mode_justification"},
-            "evidence_quality": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/evidence_quality"},
-            "evidence_quality_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/evidence_quality_justification"},
-            "trace_origin": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/trace_origin"},
-            "trace_origin_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/trace_origin_justification"},
-            "effort_to_fix": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/effort_to_fix"},
-            "effort_to_fix_justification": {"$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/effort_to_fix_justification"}
+            "runtime_scope": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/runtime_scope"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "runtime_scope_justification": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/runtime_scope_justification"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "failure_mode": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/failure_mode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "failure_mode_justification": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/failure_mode_justification"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "evidence_quality": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/evidence_quality"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "evidence_quality_justification": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/evidence_quality_justification"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "trace_origin": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/trace_origin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "trace_origin_justification": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/trace_origin_justification"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "effort_to_fix": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/effort_to_fix"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "effort_to_fix_justification": {
+              "anyOf": [
+                {
+                  "$ref": "https://github.com/jewzaam/jewzaam-reviews/schemas/findings.schema.json#/$defs/effort_to_fix_justification"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "runtime_scope",
+            "runtime_scope_justification",
+            "failure_mode",
+            "failure_mode_justification",
+            "evidence_quality",
+            "evidence_quality_justification",
+            "trace_origin",
+            "trace_origin_justification",
+            "effort_to_fix",
+            "effort_to_fix_justification"
+          ],
+          "description": "Dimensions to change. Every member is listed in `required` because OpenAI strict Structured Outputs forbids optional properties; a dimension that is NOT being changed is sent as null and removed from the response by backend._drop_nulls, so apply-verdicts.py sees the same partial patch it always has."
+        },
+        "reasoning": {
+          "type": "string",
+          "pattern": "^[\\s\\S]+$"
+        }
+      }
+    },
+    "remove": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "finding_ref",
+        "action",
+        "remove_reason",
+        "reasoning"
+      ],
+      "properties": {
+        "finding_ref": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "content_hash"
+          ],
+          "properties": {
+            "content_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{16,64}$"
+            }
           }
         },
-        "reasoning": {"type": "string", "minLength": 1}
-      },
-      "allOf": [
-        {
-          "if": {"properties": {"action": {"const": "rescore"}}},
-          "then": {"required": ["new_dimensions"]}
+        "action": {
+          "type": "string",
+          "const": "remove"
         },
-        {
-          "if": {"properties": {"action": {"enum": ["confirm", "remove"]}}},
-          "then": {"not": {"required": ["new_dimensions"]}}
+        "remove_reason": {
+          "type": "string",
+          "enum": [
+            "not_real",
+            "pre_existing",
+            "positive_observation"
+          ],
+          "description": "Why the finding was removed. not_real = the issue does not exist or the premise is invalid. pre_existing = the issue is real but would hold at the merge base, so this PR did not introduce or expose it. positive_observation = the finding describes working code, not a problem."
         },
-        {
-          "if": {"properties": {"action": {"const": "remove"}}},
-          "then": {"required": ["remove_reason"]}
-        },
-        {
-          "if": {"properties": {"action": {"enum": ["confirm", "rescore"]}}},
-          "then": {"not": {"required": ["remove_reason"]}}
+        "reasoning": {
+          "type": "string",
+          "pattern": "^[\\s\\S]+$"
         }
-      ]
+      }
     }
   }
 }

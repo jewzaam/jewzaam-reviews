@@ -35,7 +35,11 @@ from orchestrator import pipeline  # noqa: E402
 
 EXIT_STILL_RUNNING = 3
 _EXIT_FILE_ENV = "REVIEW_ORCHESTRATOR_EXIT_FILE"
-_LOG_TAIL_LINES = 40
+# Tail of the run log that --wait prints back. The end-of-run summary is now
+# counts + run-report table + issue list + cost/token tables, which already
+# runs past 40 lines on an 8-lens review — and the severity counts are at the
+# TOP of it, so an undersized tail drops exactly what the caller relays.
+_LOG_TAIL_LINES = 150
 _POLL_INTERVAL_S = 5
 
 

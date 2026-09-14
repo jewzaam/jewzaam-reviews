@@ -60,8 +60,9 @@ def _write_agent_output(
         "concern_slug": concern_slug,
         "dimension_name": dimension_name or dimension_slug,
         "dimension_slug": dimension_slug,
-        "dimension_scope": {"paths": [f"src/{dimension_slug}/"]},
+        "dimension_scope": {"paths": [f"src/{dimension_slug}/"], "theme": None, "shared_infrastructure": None},
         "findings": findings,
+        "cross_cutting_observations": [],
     }
     path = raw_dir / f"{concern_slug}-{dimension_slug}.json"
     with path.open("w", encoding="utf-8") as fh:
@@ -857,8 +858,9 @@ class TestConsolidatePureFunction:
             "concern_slug": concern_slug,
             "dimension_name": dimension_slug,
             "dimension_slug": dimension_slug,
-            "dimension_scope": {"paths": [f"src/{dimension_slug}/"]},
+            "dimension_scope": {"paths": [f"src/{dimension_slug}/"], "theme": None, "shared_infrastructure": None},
             "findings": findings,
+            "cross_cutting_observations": [],
         }
 
     def test_empty_agent_outputs_returns_empty_consolidated(self):
@@ -908,7 +910,7 @@ class TestConsolidatePureFunction:
 
 
 class TestCrossCuttingObservations:
-    """cross_cutting_observations is an optional agent-output field.
+    """cross_cutting_observations is required but may be empty.
 
     The consolidator surfaces observations as envelope entries (rendered in
     the supplementary markdown) but never as findings. These tests document
@@ -939,8 +941,9 @@ class TestCrossCuttingObservations:
             "concern_slug": concern_slug,
             "dimension_name": dimension_slug,
             "dimension_slug": dimension_slug,
-            "dimension_scope": {"paths": [f"src/{dimension_slug}/"]},
+            "dimension_scope": {"paths": [f"src/{dimension_slug}/"], "theme": None, "shared_infrastructure": None},
             "findings": findings,
+            "cross_cutting_observations": [],
         }
 
     def test_observations_collected_into_envelope_entries(self):

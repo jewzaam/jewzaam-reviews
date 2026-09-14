@@ -10,6 +10,8 @@ the parts of the pipeline that are identical across skills:
   `${plugin_root}/schemas/findings.schema.json`.
 - Build the shared-schema envelope with the right optional fields per source.
 - Load an optional issues-file argument into a validated list.
+- Load an optional run-report file (which pipeline steps ran, and how each
+  ended) so a findings file says what produced it.
 - Report a validation error consistently (single-line, no partial writes
   upstream — callers must not write any outputs when validation fails).
 - Compute a stable `content_hash` for a finding.
@@ -105,14 +107,15 @@ def build_envelope(
     scoring: str | None = None,
     run_id: str | None = None,
     orchestrating_session_id: str | None = None,
+    run_report: dict | None = None,
 ) -> dict:
     """Construct the shared-schema envelope.
 
     `schema_version`, `source`, `project`, `findings`, and `issues` are
     always present (findings and issues default to empty lists).
-    `decomposition`, `applied`, `supplementary`, `scoring`, `run_id` and
-    `orchestrating_session_id` are included only when passed (i.e., the key is
-    absent from the envelope when the argument is None). `scoring` is only
+    `decomposition`, `applied`, `supplementary`, `scoring`, `run_id`,
+    `orchestrating_session_id` and `run_report` are included only when passed
+    (i.e., the key is absent from the envelope when the argument is None). `scoring` is only
     meaningful for `source: review` — absent means categorical. The two id
     fields are the durable link from a findings file back to the run that
     produced it: the local ledger under .tmp-review/ is wiped by the next run.
@@ -130,6 +133,8 @@ def build_envelope(
         envelope["run_id"] = run_id
     if orchestrating_session_id is not None:
         envelope["orchestrating_session_id"] = orchestrating_session_id
+    if run_report is not None:
+        envelope["run_report"] = run_report
     if decomposition is not None:
         envelope["decomposition"] = list(decomposition)
     if applied is not None:
@@ -166,6 +171,24 @@ def load_issues_file(path: Path | None) -> list[dict]:
     if not isinstance(data, list):
         raise ValueError(
             f"--issues file must contain a JSON array, got {type(data).__name__}"
+        )
+    return data
+
+
+def load_run_report_file(path: Path | None) -> dict | None:
+    """Load a run report written by the orchestrator, or None when absent.
+
+    Missing is not an error: only orchestrated runs have one, and a
+    hand-run render script legitimately has nothing to report. A file that
+    exists but is not a JSON object is an error — a silently dropped run
+    report is the failure this whole record exists to remove.
+    """
+    if path is None:
+        return None
+    data = safe_load_json(path)
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"--run-report file must contain a JSON object, got {type(data).__name__}"
         )
     return data
 
@@ -250,9 +273,14 @@ def content_hash(*parts: str) -> str:
 
 
 def primary_location(finding: dict) -> dict:
-    """First location whose role is 'primary' or absent; falls back to [0]."""
+    """First location whose role is 'primary', null, or absent; falls back to [0].
+
+    null and absent mean the same thing here: the agent schema lists every
+    property in `required` (OpenAI strict outputs forbid optional ones), so
+    an unset role arrives as null rather than missing.
+    """
     for loc in finding["locations"]:
-        if loc.get("role", "primary") == "primary":
+        if (loc.get("role") or "primary") == "primary":
             return loc
     return finding["locations"][0]
 
@@ -297,7 +325,7 @@ def _default_sort_key(finding: dict) -> tuple:
         (
             loc
             for loc in locations
-            if loc.get("role", "primary") == "primary"
+            if (loc.get("role") or "primary") == "primary"
         ),
         locations[0],
     )

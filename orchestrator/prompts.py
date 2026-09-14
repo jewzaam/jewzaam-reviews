@@ -50,7 +50,8 @@ SELECTION RULES:
 - Be liberal: when in doubt, include the lens.
 - Select only from the lenses listed above.{always_run_rule}
 - Give a one-line rationale per selected lens, grounded in what the scope actually touches.
-- Only propose `dimensions` (max 3) when the scope is large enough that a single agent per lens cannot cover it — e.g. a large multi-subsystem diff or a full-repo review of a big codebase. For small scopes, omit dimensions entirely.
+- Only propose `dimensions` (max 3) when the scope is large enough that a single agent per lens cannot cover it — e.g. a large multi-subsystem diff or a full-repo review of a big codebase. For small scopes send an empty `dimensions` list.
+- Every field is required, including the ones that do not apply. Send `null` for a scope field you are not setting (e.g. `{{"paths": ["src/auth/"], "theme": null, "shared_infrastructure": null}}`) rather than leaving it out.
 - When a proposed dimension covers shared infrastructure files (e.g. core/, lib/, shared utils) changed alongside feature files, set `"shared_infrastructure": true` in that dimension's scope object so its agents only report issues introduced or exposed by the change.
 
 Do not report findings. Do not modify anything. Read-only analysis only."""
@@ -91,7 +92,9 @@ LENS SCOPE:
 DIMENSION SCOPE (confine your review to this):
 {json.dumps(dimension.get("scope", {}))}
 {shared_infra}
-If you notice issues clearly outside this scope, list them under cross_cutting_observations but do not investigate deeply.
+If you notice issues clearly outside this scope, list them under cross_cutting_observations but do not investigate deeply; send an empty list when there are none.
+
+Every field in the output schema is required, including the ones that do not apply to a given finding. Echo `dimension_scope` back exactly as given above, and send `null` for any optional value you are not setting (a location's `role`, an unset scope field) rather than leaving the key out.
 
 PROJECT CONTEXT:
 - Language: {scope.language}
@@ -212,9 +215,13 @@ diff."""
         else ""
     )
     rescore_line = (
-        '- action: "rescore" — provide BOTH new_severity and new_confidence (severity alone can be overridden by a stale low confidence)'
+        '- action: "rescore" — provide new_confidence, and new_severity when the '
+        'severity is also wrong (send new_severity: null otherwise; severity '
+        'alone can be overridden by a stale low confidence)'
         if simple
-        else '- action: "rescore" — provide new_dimensions with corrected dimension values and justifications'
+        else '- action: "rescore" — provide new_dimensions carrying every '
+        'dimension key: the corrected value and justification for each one you '
+        'are changing, and null for each one you are leaving alone'
     )
 
     return f"""You are a validator agent for batch {batch["batch_number"]} of {batch["total_batches"]}. Your job is to adversarially challenge each finding below.

@@ -56,7 +56,7 @@ def _write_stage_dir(stage_dir: Path, findings: list[dict]) -> None:
     envelope = {
         "project": {"name": "myapp", "scope_slug": ""},
         "decomposition": [
-            {"dimension_name": "x", "dimension_slug": "x", "dimension_scope": {}},
+            {"dimension_name": "x", "dimension_slug": "x", "dimension_scope": {"paths": None, "theme": None, "shared_infrastructure": None}},
         ],
         "issues": [],
     }
@@ -214,8 +214,16 @@ class TestRemovalTrail:
                 "finding_ref": {"content_hash": "aaaaaaaaaaaaaaaa"},
                 "action": "rescore",
                 "new_dimensions": {
+                    "runtime_scope": None,
+                    "runtime_scope_justification": None,
+                    "failure_mode": None,
+                    "failure_mode_justification": None,
                     "evidence_quality": "demonstrated",
                     "evidence_quality_justification": "found additional evidence",
+                    "trace_origin": None,
+                    "trace_origin_justification": None,
+                    "effort_to_fix": None,
+                    "effort_to_fix_justification": None,
                 },
                 "reasoning": "upgraded",
             },

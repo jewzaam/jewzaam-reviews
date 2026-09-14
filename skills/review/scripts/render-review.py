@@ -36,6 +36,7 @@ from scripts.envelope import (  # noqa: E402
     build_envelope,
     format_locations_block,
     format_validation_error,
+    load_run_report_file,
     load_stage_dir,
     validate_envelope,
 )
@@ -134,6 +135,51 @@ def _concern_breakdown_table(findings: list[dict], supp_path: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+STEP_MARK = {"ok": "ok", "degraded": "DEGRADED", "skipped": "skipped", "failed": "FAILED"}
+
+
+def _run_report_section(rendered: dict) -> list[str]:
+    """Render the run report and operational issues.
+
+    Both live in the main file, above the findings: a review that lost a
+    stage is not the same review as one that did not, and reading the
+    findings without knowing that is the failure mode this replaces.
+    """
+    parts: list[str] = []
+    report = rendered.get("run_report")
+    issues = rendered.get("issues") or []
+    if not report and not issues:
+        return parts
+
+    parts.append("## Run Report\n")
+    if report:
+        headline = {
+            "ok": "Every pipeline step completed.",
+            "degraded": "Some pipeline steps did not complete in full — "
+            "findings below may be incomplete or unvalidated.",
+            "failed": "A pipeline step failed.",
+        }.get(report.get("status", ""), "")
+        parts.append(f"**Status:** `{report.get('status', 'unknown')}` — {headline}\n")
+        parts.append("| Step | Status | Detail |")
+        parts.append("|---|---|---|")
+        for step in report.get("steps", []):
+            mark = STEP_MARK.get(step["status"], step["status"])
+            detail = (step.get("detail") or "").replace("|", "\\|").replace("\n", " ")
+            parts.append(f"| {step['step']} | {mark} | {detail} |")
+        parts.append("")
+
+    if issues:
+        parts.append(f"### Operational Issues ({len(issues)})\n")
+        for issue in issues:
+            component = issue.get("source_component")
+            where = f" (`{component}`)" if component else ""
+            parts.append(
+                f"- **{issue['severity']}** `{issue['kind']}`{where}: {issue['message']}"
+            )
+        parts.append("")
+    return parts
+
+
 def render_main_markdown(rendered: dict, project_name: str, scope_slug: str) -> str:
     """Render the main findings markdown: TL;DR, critical/important inline, suggestions/needs-review by reference."""
     findings = rendered["findings"]
@@ -152,6 +198,7 @@ def render_main_markdown(rendered: dict, project_name: str, scope_slug: str) -> 
         f"{len(by_bucket['needs-review'])} needs-review."
     )
     parts.append(f"{counts}\n")
+    parts.extend(_run_report_section(rendered))
     parts.append("## Findings\n")
     parts.append("### Critical\n")
     if by_bucket["critical"]:
@@ -286,6 +333,16 @@ def main(argv: list[str]) -> int:
         ),
     )
     parser.add_argument(
+        "--run-report",
+        type=Path,
+        default=None,
+        help=(
+            "JSON run report from the orchestrator (which pipeline steps ran "
+            "and how each ended); embedded in the envelope and rendered into "
+            "the main markdown"
+        ),
+    )
+    parser.add_argument(
         "--orchestrating-session-id",
         default="",
         help=(
@@ -322,6 +379,12 @@ def main(argv: list[str]) -> int:
         logger.error("could not read stage directory %s: %s", args.input_dir, exc)
         return 1
 
+    try:
+        run_report = load_run_report_file(args.run_report)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        logger.error("could not read --run-report %s: %s", args.run_report, exc)
+        return 1
+
     rendered_findings = assign_buckets_and_ids(findings, scoring=args.scoring)
     observations = envelope.get("cross_cutting_observations", [])
     rendered = build_envelope(
@@ -333,6 +396,7 @@ def main(argv: list[str]) -> int:
         scoring="simple" if args.scoring == "simple" else None,
         run_id=args.run_id or None,
         orchestrating_session_id=args.orchestrating_session_id or None,
+        run_report=run_report,
         supplementary={"cross_cutting_observations": observations}
         if observations
         else None,

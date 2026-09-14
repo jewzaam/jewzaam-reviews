@@ -126,6 +126,7 @@ Four rules in the rubric exist to suppress false positives as much as to find br
 - **Deterministic everything else.** Consolidation, diff-scope filtering, batching, verdict application, severity mapping, and rendering are tested Python scripts. The orchestrator sequences them; no model reasoning is involved.
 - **Measured cost and normalized tokens.** Claude results carry `total_cost_usd`; Codex dollar cost is unavailable through this CLI adapter. The orchestrator also records token usage and prints normalized token units when cost is unavailable. Normalization uses input = 1x, cache-read input = 0.1x, cache-write input = 1.25x, and output = 6x. These are comparison units, not a price estimate. Both measures are written to the per-stage/model ledger at `.tmp-review/costs.json`.
 - **Validator pass.** Critical and important findings get an adversarial validator agent (premise check, dimensional/severity check, and PR-attribution check against the merge base for PR reviews). Verdicts are confirm / rescore / remove with an auditable removal trail in `issues[]`.
+- **Run report.** Every step of the pipeline records how it ended — `ok`, `degraded`, `skipped` or `failed` — as `run_report` in the findings JSON, a `## Run Report` table at the top of `Findings-review*.md`, and a step table in the CLI summary. This is what makes a partial review legible: a selector that fell back to the full roster, a lens agent that died, a validator batch that never dispatched all show up as rows, so "27 findings, one of them unvalidated" never has to be reconstructed from logs. The standalone copy at `.tmp-review/run-report.json` (mirrored into `costs.json`) is written even when the run aborts before rendering.
 
 ### Scoring modes
 
@@ -211,7 +212,7 @@ make version-bump-major # Bump major (e.g. 0.2.8 → 1.0.0)
 
 ## Shared handoff schema
 
-All producer and consumer skills validate their JSON against `schemas/findings.schema.json`. The schema discriminates on a top-level `source` field (`review` / `standards` / `c4-reverse-engineer` / `apply-review`) and carries a uniform `issues[]` array for meta-issues from the run. Review envelopes may carry a `scoring` field (`categorical` when absent, or `simple`) that selects which finding shape applies. `update-pr` is absent from the enum by design — it emits review-shaped findings with optional `pr_comment` fields, under `source: "review"`. See `CLAUDE.md` for the invariants and `resources/handoff-contract.md` for the full contract.
+All producer and consumer skills validate their JSON against `schemas/findings.schema.json`. The schema discriminates on a top-level `source` field (`review` / `standards` / `c4-reverse-engineer` / `apply-review`) and carries a uniform `issues[]` array for meta-issues from the run, plus an optional `run_report` object recording which pipeline steps ran and how each ended (`issues[]` says what went wrong; `run_report.steps[]` says what ran at all). Review envelopes may carry a `scoring` field (`categorical` when absent, or `simple`) that selects which finding shape applies. `update-pr` is absent from the enum by design — it emits review-shaped findings with optional `pr_comment` fields, under `source: "review"`. See `CLAUDE.md` for the invariants and `resources/handoff-contract.md` for the full contract.
 
 ## License
 

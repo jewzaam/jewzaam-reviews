@@ -118,7 +118,9 @@ On a host that cannot both background a command and wake the session when it exi
 
 The run writes three files at the project root: `Findings-review[-<scope>].json` (structured findings), `.md` (critical/important detail, plus a concern-by-severity table linking the rest), and `-supplementary.md` (every finding grouped by concern then severity, decomposition, cross-cutting observations). Critical and important findings appear in both markdown files by design — the main file is the severity read, the supplementary is the per-concern read.
 
-Relay the final `--wait` output verbatim: severity counts, output filenames, and the cost plus normalized-token tables. If it reports a non-zero finish, show that output and stop — do not attempt to reconstruct findings yourself.
+Relay the final `--wait` output verbatim: severity counts, output filenames, the run-report step table, the operational issue list, and the cost plus normalized-token tables. If it reports a non-zero finish, show that output and stop — do not attempt to reconstruct findings yourself.
+
+The run report is the answer to "did the whole pipeline run?" — one row per step with `ok`, `degraded`, `skipped` or `failed`. Relay it as printed; do not summarize a `degraded` row away. The same table and the issue list are rendered into `Findings-review*.md` under `## Run Report`, and the structured form is `run_report` in the JSON, so nothing here has to be dug out of `.tmp-review/` logs.
 
 ## Critical Rules
 

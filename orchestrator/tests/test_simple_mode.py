@@ -22,8 +22,9 @@ def _simple_output(concern_slug, findings, dimension_slug="full-scope"):
         "concern_slug": concern_slug,
         "dimension_name": "full scope",
         "dimension_slug": dimension_slug,
-        "dimension_scope": {},
+        "dimension_scope": {"paths": None, "theme": None, "shared_infrastructure": None},
         "findings": findings,
+        "cross_cutting_observations": [],
     }
 
 
@@ -129,6 +130,7 @@ def _fake_simple_backend(calls):
             return backend.AgentResult(
                 output={
                     "lenses": [{"name": "implementation", "rationale": "always"}],
+                    "dimensions": [],
                 },
                 cost_usd=0.001,
             )
@@ -180,6 +182,16 @@ class TestSimpleEndToEnd:
         # validator saw the simple finding block
         validator_prompts = [c for c in calls if "validator agent" in c]
         assert validator_prompts and "severity: critical" in validator_prompts[0]
+
+        # Simple mode uses its own Python stages, so it records its own steps.
+        report = envelope["run_report"]
+        assert report["scoring"] == "simple"
+        assert report["status"] == "ok"
+        steps = {step["step"]: step["status"] for step in report["steps"]}
+        assert steps["consolidate"] == "ok"  # Python dedup, not the stage CLI
+        assert steps["batch"] == "ok"
+        assert steps["validate"] == "ok"
+        assert steps["apply-verdicts"] == "ok"
 
 
 class TestWriteBatches:

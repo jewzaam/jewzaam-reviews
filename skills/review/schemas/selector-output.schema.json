@@ -6,7 +6,8 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "lenses"
+    "lenses",
+    "dimensions"
   ],
   "properties": {
     "lenses": {
@@ -36,7 +37,7 @@
           },
           "rationale": {
             "type": "string",
-            "minLength": 1,
+            "pattern": "^[\\s\\S]+$",
             "description": "One line grounded in what the scope actually touches."
           }
         }
@@ -57,7 +58,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1,
+            "pattern": "^[\\s\\S]+$",
             "description": "Short human-readable dimension name, e.g. \"auth subsystem\"."
           },
           "slug": {
@@ -67,19 +68,51 @@
           },
           "scope": {
             "type": "object",
-            "description": "What the dimension covers, e.g. {\"paths\": [\"src/auth/\"]} or {\"theme\": \"all CLI entry points\"}. Set \"shared_infrastructure\": true when the dimension covers shared code (core/, lib/, shared utils) changed alongside feature files \u2014 its agents then only report issues introduced or exposed by the change.",
+            "additionalProperties": false,
+            "description": "Scope descriptor for one review dimension. Closed rather than free-form: OpenAI strict Structured Outputs rejects an open object, and only `shared_infrastructure` is read by name (orchestrator/prompts.py) \u2014 the rest is serialized whole into the lens prompt and the report. null means not set.",
+            "required": [
+              "paths",
+              "theme",
+              "shared_infrastructure"
+            ],
             "properties": {
               "paths": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Repo-relative paths this dimension covers."
               },
               "theme": {
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Short thematic description when the dimension is not path-scoped."
+              },
+              "shared_infrastructure": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "True when the dimension covers code shared across other dimensions; alters the lens prompt."
               }
-            },
-            "additionalProperties": true
+            }
           }
         }
       }

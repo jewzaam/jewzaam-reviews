@@ -200,6 +200,9 @@ def resolve_selection(
     return selected, "selector", rationales
 
 
+EMPTY_SCOPE = {"paths": None, "theme": None, "shared_infrastructure": None}
+
+
 def resolve_dimensions(
     selector_output: dict | None, lens_count: int, max_agents: int
 ) -> list[dict]:
@@ -208,7 +211,11 @@ def resolve_dimensions(
     Default is one full-scope dimension. The selector may propose up to 3;
     excess dimensions are dropped (first kept) rather than dropping lenses.
     """
-    default = [{"name": "full scope", "slug": "full-scope", "scope": {}}]
+    # Every scope key present, unset ones null: the lens prompt tells the agent
+    # to echo dimension_scope back verbatim, and the agent-output schema
+    # requires all three (see orchestrator/tests/test_backend.py::
+    # TestDualHarnessSchemas for why the schema cannot make them optional).
+    default = [{"name": "full scope", "slug": "full-scope", "scope": EMPTY_SCOPE}]
     proposed = (selector_output or {}).get("dimensions") or []
     dims: list[dict] = []
     seen_slugs: set[str] = set()
@@ -221,7 +228,9 @@ def resolve_dimensions(
             # Duplicate slugs would race on the same output filename.
             continue
         seen_slugs.add(d["slug"])
-        dims.append({"name": d["name"], "slug": d["slug"], "scope": d.get("scope", {})})
+        dims.append(
+            {"name": d["name"], "slug": d["slug"], "scope": d.get("scope") or EMPTY_SCOPE}
+        )
     dims = dims or default
     max_dims = max(1, max_agents // max(1, lens_count))
     return dims[:max_dims]

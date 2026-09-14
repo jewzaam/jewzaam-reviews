@@ -8,196 +8,277 @@
       "type": "integer"
     },
     "verdicts": {
+      "description": "One verdict per finding, as a closed union discriminated by `action`. Written as `anyOf` over three complete shapes rather than a shared object plus `allOf`/`if`/`then` conditionals: `anyOf` is the only composition keyword OpenAI's strict Structured Outputs accepts, so the conditional form was rejected outright under Codex and the per-action rules had to be re-checked after generation instead of enforced during it. The union is equivalent and holds on both harnesses. Nested composition is fine on both; only ROOT-level composition is rejected (see scripts/resolve_schema.py).",
       "items": {
-        "additionalProperties": false,
-        "allOf": [
+        "anyOf": [
           {
-            "if": {
-              "properties": {
-                "action": {
-                  "const": "rescore"
-                }
-              }
-            },
-            "then": {
-              "required": [
-                "new_dimensions"
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "action": {
-                  "enum": [
-                    "confirm",
-                    "remove"
-                  ]
-                }
-              }
-            },
-            "then": {
-              "not": {
-                "required": [
-                  "new_dimensions"
-                ]
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "action": {
-                  "const": "remove"
-                }
-              }
-            },
-            "then": {
-              "required": [
-                "remove_reason"
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "action": {
-                  "enum": [
-                    "confirm",
-                    "rescore"
-                  ]
-                }
-              }
-            },
-            "then": {
-              "not": {
-                "required": [
-                  "remove_reason"
-                ]
-              }
-            }
-          }
-        ],
-        "properties": {
-          "action": {
-            "enum": [
-              "confirm",
-              "rescore",
-              "remove"
-            ],
-            "type": "string"
-          },
-          "finding_ref": {
             "additionalProperties": false,
             "properties": {
-              "content_hash": {
-                "pattern": "^[a-f0-9]{16,64}$",
+              "action": {
+                "const": "confirm",
+                "type": "string"
+              },
+              "finding_ref": {
+                "additionalProperties": false,
+                "properties": {
+                  "content_hash": {
+                    "pattern": "^[a-f0-9]{16,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content_hash"
+                ],
+                "type": "object"
+              },
+              "reasoning": {
+                "pattern": "^[\\s\\S]+$",
                 "type": "string"
               }
             },
             "required": [
-              "content_hash"
+              "finding_ref",
+              "action",
+              "reasoning"
             ],
             "type": "object"
           },
-          "new_dimensions": {
+          {
             "additionalProperties": false,
-            "minProperties": 1,
             "properties": {
-              "effort_to_fix": {
-                "description": "Estimated remediation cost. Not used in criticality assessment; used for prioritization. Values: trivial \u2014 a one-line change, rename, or config tweak with no design decisions. small \u2014 a localized fix within one file or function. moderate \u2014 changes spanning multiple files or functions, potentially requiring test updates. large \u2014 requires architectural changes, new abstractions, or significant refactoring.",
-                "enum": [
-                  "trivial",
-                  "small",
-                  "moderate",
-                  "large"
-                ]
-              },
-              "effort_to_fix_justification": {
-                "description": "Describe the fix approach and why it requires the stated level of effort.",
-                "minLength": 1,
+              "action": {
+                "const": "rescore",
                 "type": "string"
               },
-              "evidence_quality": {
-                "description": "How strongly the finding is grounded in observable code evidence. 'demonstrated' requires demonstrating a failure in the code, not demonstrating the absence of a test. Proving that a test does not exist is not demonstrated evidence of a defect \u2014 use inferred if you can identify a plausible failure scenario the test would catch, or speculative if you cannot. Values listed from least to most severe: speculative \u2014 suspected based on patterns or general best practices; no concrete code path identified. inferred \u2014 a plausible scenario is visible in the code structure, but the conclusion requires assumptions about runtime state, configuration, or input that are not verified. demonstrated \u2014 a specific code path is traced from input to problematic outcome, citing concrete lines; the issue is visible from the code alone without runtime assumptions.",
-                "enum": [
-                  "speculative",
-                  "inferred",
-                  "demonstrated"
-                ]
+              "finding_ref": {
+                "additionalProperties": false,
+                "properties": {
+                  "content_hash": {
+                    "pattern": "^[a-f0-9]{16,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content_hash"
+                ],
+                "type": "object"
               },
-              "evidence_quality_justification": {
-                "description": "Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed.",
-                "minLength": 1,
-                "type": "string"
+              "new_dimensions": {
+                "additionalProperties": false,
+                "description": "Dimensions to change. Every member is listed in `required` because OpenAI strict Structured Outputs forbids optional properties; a dimension that is NOT being changed is sent as null and removed from the response by backend._drop_nulls, so apply-verdicts.py sees the same partial patch it always has.",
+                "properties": {
+                  "effort_to_fix": {
+                    "anyOf": [
+                      {
+                        "description": "Estimated remediation cost. Not used in criticality assessment; used for prioritization. Values: trivial \u2014 a one-line change, rename, or config tweak with no design decisions. small \u2014 a localized fix within one file or function. moderate \u2014 changes spanning multiple files or functions, potentially requiring test updates. large \u2014 requires architectural changes, new abstractions, or significant refactoring.",
+                        "enum": [
+                          "trivial",
+                          "small",
+                          "moderate",
+                          "large"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "effort_to_fix_justification": {
+                    "anyOf": [
+                      {
+                        "description": "Describe the fix approach and why it requires the stated level of effort.",
+                        "pattern": "^[\\s\\S]+$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "evidence_quality": {
+                    "anyOf": [
+                      {
+                        "description": "How strongly the finding is grounded in observable code evidence. 'demonstrated' requires demonstrating a failure in the code, not demonstrating the absence of a test. Proving that a test does not exist is not demonstrated evidence of a defect \u2014 use inferred if you can identify a plausible failure scenario the test would catch, or speculative if you cannot. Values listed from least to most severe: speculative \u2014 suspected based on patterns or general best practices; no concrete code path identified. inferred \u2014 a plausible scenario is visible in the code structure, but the conclusion requires assumptions about runtime state, configuration, or input that are not verified. demonstrated \u2014 a specific code path is traced from input to problematic outcome, citing concrete lines; the issue is visible from the code alone without runtime assumptions.",
+                        "enum": [
+                          "speculative",
+                          "inferred",
+                          "demonstrated"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "evidence_quality_justification": {
+                    "anyOf": [
+                      {
+                        "description": "Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed.",
+                        "pattern": "^[\\s\\S]+$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "failure_mode": {
+                    "anyOf": [
+                      {
+                        "description": "The category of consequence if the issue manifests. The failure must be current \u2014 'if a future regression occurs' is not a failure mode; use unclear when the system currently works correctly and the finding is about a coverage or observability gap. Values listed from least to most severe: unclear \u2014 no specific failure scenario can be identified; the issue is stylistic, structural, or speculative. confusion \u2014 misleads a human reading an artifact: documentation, comments, identifiers, log text, error strings. It does not cover values the system writes: a wrong value in a persisted record, an API response, an exported event, or a status served to a UI is the system's output, not an artifact a human reads, and is degraded-behavior even when the wrong value is itself a label like 'success'. build-break \u2014 prevents successful build, lint, or test execution; blocks CI but does not affect running systems. degraded-behavior \u2014 the system produces incorrect results, loses functionality, or behaves unexpectedly under specific conditions, but remains available. crash-or-outage \u2014 the system becomes unavailable (e.g., process crash, unhandled exception, resource exhaustion, denial of service). data-loss-or-security \u2014 the system's data integrity, confidentiality, or security posture is compromised (e.g., data corruption, exfiltration, unauthorized access, privilege escalation, injection, information disclosure).",
+                        "enum": [
+                          "unclear",
+                          "confusion",
+                          "build-break",
+                          "degraded-behavior",
+                          "crash-or-outage",
+                          "data-loss-or-security"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "failure_mode_justification": {
+                    "anyOf": [
+                      {
+                        "description": "Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified.",
+                        "pattern": "^[\\s\\S]+$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "runtime_scope": {
+                    "anyOf": [
+                      {
+                        "description": "Where the affected code executes in the deployment lifecycle. Values listed from least to most severe: documentation \u2014 non-executable content (e.g., markdown, comments, READMEs). tooling \u2014 developer tooling and local scripts that never execute in CI or production. ci \u2014 CI/CD pipelines and build infrastructure; executes during integration but not at production runtime. Findings about missing or incomplete tests use ci because tests execute in CI, not in production. Use service-internal or service-external only for findings about defects in production runtime code, not for test coverage gaps. service-internal \u2014 production runtime code not directly exposed to untrusted input. service-external \u2014 production runtime code directly exposed to external users or untrusted input. This axis measures input exposure, not output visibility: code whose output reaches an external consumer (an exported audit record, an API response, a UI status) is still service-internal when untrusted input does not reach it. When a finding identifies both a production defect and a test gap, report them as separate findings: the defect uses service-internal or service-external; the test gap uses ci.",
+                        "enum": [
+                          "documentation",
+                          "tooling",
+                          "ci",
+                          "service-internal",
+                          "service-external"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "runtime_scope_justification": {
+                    "anyOf": [
+                      {
+                        "description": "Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test.",
+                        "pattern": "^[\\s\\S]+$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "trace_origin": {
+                    "anyOf": [
+                      {
+                        "description": "How far back the agent traced to establish reachability. The trace must lead to a problematic outcome \u2014 tracing to working code and noting 'but there is no test' is not an entry-point trace. For test coverage gaps, use local because the finding observes a single code site (the missing test) without tracing a failure through callers. Values listed from least to most severe: local \u2014 observed at a single code site without tracing callers or callees. component \u2014 traced within a module or package boundary (e.g., function A calls function B which exhibits the issue); external reachability is not established. entry-point \u2014 traced from an identified external entry point (e.g., API handler, CLI command, CI trigger, user action) through the call chain to the problematic code.",
+                        "enum": [
+                          "local",
+                          "component",
+                          "entry-point"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "trace_origin_justification": {
+                    "anyOf": [
+                      {
+                        "description": "For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed.",
+                        "pattern": "^[\\s\\S]+$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "runtime_scope",
+                  "runtime_scope_justification",
+                  "failure_mode",
+                  "failure_mode_justification",
+                  "evidence_quality",
+                  "evidence_quality_justification",
+                  "trace_origin",
+                  "trace_origin_justification",
+                  "effort_to_fix",
+                  "effort_to_fix_justification"
+                ],
+                "type": "object"
               },
-              "failure_mode": {
-                "description": "The category of consequence if the issue manifests. The failure must be current \u2014 'if a future regression occurs' is not a failure mode; use unclear when the system currently works correctly and the finding is about a coverage or observability gap. Values listed from least to most severe: unclear \u2014 no specific failure scenario can be identified; the issue is stylistic, structural, or speculative. confusion \u2014 misleads a human reading an artifact: documentation, comments, identifiers, log text, error strings. It does not cover values the system writes: a wrong value in a persisted record, an API response, an exported event, or a status served to a UI is the system's output, not an artifact a human reads, and is degraded-behavior even when the wrong value is itself a label like 'success'. build-break \u2014 prevents successful build, lint, or test execution; blocks CI but does not affect running systems. degraded-behavior \u2014 the system produces incorrect results, loses functionality, or behaves unexpectedly under specific conditions, but remains available. crash-or-outage \u2014 the system becomes unavailable (e.g., process crash, unhandled exception, resource exhaustion, denial of service). data-loss-or-security \u2014 the system's data integrity, confidentiality, or security posture is compromised (e.g., data corruption, exfiltration, unauthorized access, privilege escalation, injection, information disclosure).",
-                "enum": [
-                  "unclear",
-                  "confusion",
-                  "build-break",
-                  "degraded-behavior",
-                  "crash-or-outage",
-                  "data-loss-or-security"
-                ]
-              },
-              "failure_mode_justification": {
-                "description": "Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified.",
-                "minLength": 1,
-                "type": "string"
-              },
-              "runtime_scope": {
-                "description": "Where the affected code executes in the deployment lifecycle. Values listed from least to most severe: documentation \u2014 non-executable content (e.g., markdown, comments, READMEs). tooling \u2014 developer tooling and local scripts that never execute in CI or production. ci \u2014 CI/CD pipelines and build infrastructure; executes during integration but not at production runtime. Findings about missing or incomplete tests use ci because tests execute in CI, not in production. Use service-internal or service-external only for findings about defects in production runtime code, not for test coverage gaps. service-internal \u2014 production runtime code not directly exposed to untrusted input. service-external \u2014 production runtime code directly exposed to external users or untrusted input. This axis measures input exposure, not output visibility: code whose output reaches an external consumer (an exported audit record, an API response, a UI status) is still service-internal when untrusted input does not reach it. When a finding identifies both a production defect and a test gap, report them as separate findings: the defect uses service-internal or service-external; the test gap uses ci.",
-                "enum": [
-                  "documentation",
-                  "tooling",
-                  "ci",
-                  "service-internal",
-                  "service-external"
-                ]
-              },
-              "runtime_scope_justification": {
-                "description": "Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test.",
-                "minLength": 1,
-                "type": "string"
-              },
-              "trace_origin": {
-                "description": "How far back the agent traced to establish reachability. The trace must lead to a problematic outcome \u2014 tracing to working code and noting 'but there is no test' is not an entry-point trace. For test coverage gaps, use local because the finding observes a single code site (the missing test) without tracing a failure through callers. Values listed from least to most severe: local \u2014 observed at a single code site without tracing callers or callees. component \u2014 traced within a module or package boundary (e.g., function A calls function B which exhibits the issue); external reachability is not established. entry-point \u2014 traced from an identified external entry point (e.g., API handler, CLI command, CI trigger, user action) through the call chain to the problematic code.",
-                "enum": [
-                  "local",
-                  "component",
-                  "entry-point"
-                ]
-              },
-              "trace_origin_justification": {
-                "description": "For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed.",
-                "minLength": 1,
+              "reasoning": {
+                "pattern": "^[\\s\\S]+$",
                 "type": "string"
               }
             },
+            "required": [
+              "finding_ref",
+              "action",
+              "new_dimensions",
+              "reasoning"
+            ],
             "type": "object"
           },
-          "reasoning": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "remove_reason": {
-            "description": "Why the finding was removed. Required when action is 'remove', forbidden otherwise. not_real = the issue does not exist or the premise is invalid. pre_existing = the issue is real but would hold at the merge base, so this PR did not introduce or expose it. positive_observation = the finding describes working code, not a problem.",
-            "enum": [
-              "not_real",
-              "pre_existing",
-              "positive_observation"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "remove",
+                "type": "string"
+              },
+              "finding_ref": {
+                "additionalProperties": false,
+                "properties": {
+                  "content_hash": {
+                    "pattern": "^[a-f0-9]{16,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content_hash"
+                ],
+                "type": "object"
+              },
+              "reasoning": {
+                "pattern": "^[\\s\\S]+$",
+                "type": "string"
+              },
+              "remove_reason": {
+                "description": "Why the finding was removed. not_real = the issue does not exist or the premise is invalid. pre_existing = the issue is real but would hold at the merge base, so this PR did not introduce or expose it. positive_observation = the finding describes working code, not a problem.",
+                "enum": [
+                  "not_real",
+                  "pre_existing",
+                  "positive_observation"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "finding_ref",
+              "action",
+              "remove_reason",
+              "reasoning"
             ],
-            "type": "string"
+            "type": "object"
           }
-        },
-        "required": [
-          "finding_ref",
-          "action",
-          "reasoning"
-        ],
-        "type": "object"
+        ]
       },
       "minItems": 1,
       "type": "array"

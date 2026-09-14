@@ -8,166 +8,143 @@
       "type": "integer"
     },
     "verdicts": {
+      "description": "One verdict per finding, as a closed union discriminated by `action`. Written as `anyOf` over three complete shapes rather than a shared object plus `allOf`/`if`/`then` conditionals: `anyOf` is the only composition keyword OpenAI's strict Structured Outputs accepts, so the conditional form was rejected outright under Codex and the per-action rules had to be re-checked after generation instead of enforced during it. The union is equivalent and holds on both harnesses. Nested composition is fine on both; only ROOT-level composition is rejected (see scripts/resolve_schema.py).",
       "items": {
-        "additionalProperties": false,
-        "allOf": [
+        "anyOf": [
           {
-            "if": {
-              "properties": {
-                "action": {
-                  "const": "rescore"
-                }
-              }
-            },
-            "then": {
-              "anyOf": [
-                {
-                  "required": [
-                    "new_severity"
-                  ]
-                },
-                {
-                  "required": [
-                    "new_confidence"
-                  ]
-                }
-              ]
-            }
-          },
-          {
-            "if": {
-              "required": [
-                "new_severity"
-              ]
-            },
-            "then": {
-              "required": [
-                "new_confidence"
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "action": {
-                  "enum": [
-                    "confirm",
-                    "remove"
-                  ]
-                }
-              }
-            },
-            "then": {
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "new_severity"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "new_confidence"
-                    ]
-                  }
-                ]
-              }
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "action": {
-                  "const": "remove"
-                }
-              }
-            },
-            "then": {
-              "required": [
-                "remove_reason"
-              ]
-            }
-          },
-          {
-            "if": {
-              "properties": {
-                "action": {
-                  "enum": [
-                    "confirm",
-                    "rescore"
-                  ]
-                }
-              }
-            },
-            "then": {
-              "not": {
-                "required": [
-                  "remove_reason"
-                ]
-              }
-            }
-          }
-        ],
-        "properties": {
-          "action": {
-            "enum": [
-              "confirm",
-              "rescore",
-              "remove"
-            ],
-            "type": "string"
-          },
-          "finding_ref": {
             "additionalProperties": false,
             "properties": {
-              "content_hash": {
-                "pattern": "^[a-f0-9]{16,64}$",
+              "action": {
+                "const": "confirm",
+                "type": "string"
+              },
+              "finding_ref": {
+                "additionalProperties": false,
+                "properties": {
+                  "content_hash": {
+                    "pattern": "^[a-f0-9]{16,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content_hash"
+                ],
+                "type": "object"
+              },
+              "reasoning": {
+                "pattern": "^[\\s\\S]+$",
                 "type": "string"
               }
             },
             "required": [
-              "content_hash"
+              "finding_ref",
+              "action",
+              "reasoning"
             ],
             "type": "object"
           },
-          "new_confidence": {
-            "description": "Corrected confidence.",
-            "enum": [
-              "high",
-              "medium",
-              "low"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "rescore",
+                "type": "string"
+              },
+              "finding_ref": {
+                "additionalProperties": false,
+                "properties": {
+                  "content_hash": {
+                    "pattern": "^[a-f0-9]{16,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content_hash"
+                ],
+                "type": "object"
+              },
+              "new_confidence": {
+                "description": "Corrected confidence. Always present on a rescore.",
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "new_severity": {
+                "anyOf": [
+                  {
+                    "description": "Corrected severity. Optional alongside new_confidence; a severity change always ships with the confidence the renderer will bucket on, because the needs-review bucket is derived from confidence and a stale low confidence would silently override a raised severity.",
+                    "enum": [
+                      "critical",
+                      "important",
+                      "suggestion"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "reasoning": {
+                "pattern": "^[\\s\\S]+$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "finding_ref",
+              "action",
+              "new_severity",
+              "new_confidence",
+              "reasoning"
             ],
-            "type": "string"
+            "type": "object"
           },
-          "new_severity": {
-            "description": "Corrected severity. Requires new_confidence alongside it \u2014 the renderer derives the needs-review bucket from confidence, so a severity-only rescore could be silently overridden by a stale low confidence.",
-            "enum": [
-              "critical",
-              "important",
-              "suggestion"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "remove",
+                "type": "string"
+              },
+              "finding_ref": {
+                "additionalProperties": false,
+                "properties": {
+                  "content_hash": {
+                    "pattern": "^[a-f0-9]{16,64}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content_hash"
+                ],
+                "type": "object"
+              },
+              "reasoning": {
+                "pattern": "^[\\s\\S]+$",
+                "type": "string"
+              },
+              "remove_reason": {
+                "description": "Why the finding was removed. not_real = the issue does not exist or the premise is invalid. pre_existing = the issue is real but would hold at the merge base, so this PR did not introduce or expose it. positive_observation = the finding describes working code, not a problem. Same semantics as validation-output.schema.json.",
+                "enum": [
+                  "not_real",
+                  "pre_existing",
+                  "positive_observation"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "finding_ref",
+              "action",
+              "remove_reason",
+              "reasoning"
             ],
-            "type": "string"
-          },
-          "reasoning": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "remove_reason": {
-            "description": "Why the finding was removed. Required when action is 'remove', forbidden otherwise. Same semantics as validation-output.schema.json.",
-            "enum": [
-              "not_real",
-              "pre_existing",
-              "positive_observation"
-            ],
-            "type": "string"
+            "type": "object"
           }
-        },
-        "required": [
-          "finding_ref",
-          "action",
-          "reasoning"
-        ],
-        "type": "object"
+        ]
       },
       "minItems": 1,
       "type": "array"

@@ -690,3 +690,112 @@ class TestRunIdentity:
         rendered = _load(tmp_path / "out" / "Findings-review.json")
         assert "run_id" not in rendered
         assert "orchestrating_session_id" not in rendered
+
+
+class TestRunReport:
+    """The run report reaches both the JSON and the top of the main markdown.
+
+    Before this, a review whose validator stage never dispatched rendered
+    identically to one where it succeeded, and the only way to tell was to
+    read the orchestrator's logs.
+    """
+
+    SAMPLE = {
+        "run_id": "abc123abc123",
+        "harness": "codex",
+        "scoring": "categorical",
+        "status": "degraded",
+        "steps": [
+            {"step": "scope", "status": "ok", "detail": "myapp (Python); full repo"},
+            {
+                "step": "validate",
+                "status": "degraded",
+                "detail": "0/1 validator batches succeeded; failed: validator-batch-1",
+            },
+            {"step": "diff-scope-filter", "status": "skipped", "detail": "no merge base"},
+        ],
+    }
+
+    def _render(self, tmp_path, report=None, issues=None):
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        if issues is not None:
+            envelope = _load(stage / "_envelope.json")
+            envelope["issues"] = issues
+            with (stage / "_envelope.json").open("w", encoding="utf-8") as fh:
+                json.dump(envelope, fh)
+        args = [
+            "--input-dir", str(stage),
+            "--out-dir", str(tmp_path / "out"),
+            "--project-name", "myapp",
+        ]
+        if report is not None:
+            report_path = tmp_path / "run-report.json"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            args += ["--run-report", str(report_path)]
+        return _run(args)
+
+    def test_report_is_embedded_and_validates(self, tmp_path):
+        result = self._render(tmp_path, report=self.SAMPLE)
+        assert result.returncode == 0, result.stderr
+        rendered = _load(tmp_path / "out" / "Findings-review.json")
+        assert rendered["run_report"] == self.SAMPLE
+        with SHARED_SCHEMA.open("r", encoding="utf-8") as fh:
+            jsonschema.Draft202012Validator(json.load(fh)).validate(rendered)
+
+    def test_report_renders_above_the_findings(self, tmp_path):
+        result = self._render(tmp_path, report=self.SAMPLE)
+        assert result.returncode == 0, result.stderr
+        md = (tmp_path / "out" / "Findings-review.md").read_text(encoding="utf-8")
+        assert md.index("## Run Report") < md.index("## Findings")
+        assert "`degraded`" in md
+        assert "| validate | DEGRADED | 0/1 validator batches succeeded" in md
+        assert "| diff-scope-filter | skipped | no merge base |" in md
+
+    def test_issues_are_listed_not_just_counted(self, tmp_path):
+        issues = [
+            {
+                "severity": "warning",
+                "kind": "subagent_failure",
+                "message": "validator-batch-1: invalid_json_schema",
+                "source_component": "validate",
+            }
+        ]
+        result = self._render(tmp_path, report=self.SAMPLE, issues=issues)
+        assert result.returncode == 0, result.stderr
+        md = (tmp_path / "out" / "Findings-review.md").read_text(encoding="utf-8")
+        assert "### Operational Issues (1)" in md
+        assert "validator-batch-1: invalid_json_schema" in md
+
+    def test_detail_pipes_do_not_break_the_table(self, tmp_path):
+        report = dict(self.SAMPLE, steps=[
+            {"step": "scope", "status": "ok", "detail": "a | b\nsecond line"}
+        ])
+        result = self._render(tmp_path, report=report)
+        assert result.returncode == 0, result.stderr
+        md = (tmp_path / "out" / "Findings-review.md").read_text(encoding="utf-8")
+        assert "| scope | ok | a \\| b second line |" in md
+
+    def test_absent_report_renders_no_section(self, tmp_path):
+        result = self._render(tmp_path)
+        assert result.returncode == 0, result.stderr
+        rendered = _load(tmp_path / "out" / "Findings-review.json")
+        assert "run_report" not in rendered
+        md = (tmp_path / "out" / "Findings-review.md").read_text(encoding="utf-8")
+        assert "## Run Report" not in md
+
+    def test_unreadable_report_fails_the_render(self, tmp_path):
+        """A dropped run report is the failure this record exists to remove."""
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        bad = tmp_path / "run-report.json"
+        bad.write_text("[]", encoding="utf-8")
+        result = _run([
+            "--input-dir", str(stage),
+            "--out-dir", str(tmp_path / "out"),
+            "--project-name", "myapp",
+            "--run-report", str(bad),
+        ])
+        assert result.returncode == 1
+        assert "run-report" in result.stderr
+        assert not (tmp_path / "out" / "Findings-review.json").exists()

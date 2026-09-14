@@ -133,7 +133,7 @@
                 },
                 "effort_to_fix_justification": {
                   "description": "Describe the fix approach and why it requires the stated level of effort.",
-                  "minLength": 1,
+                  "pattern": "^[\\s\\S]+$",
                   "type": "string"
                 },
                 "evidence_quality": {
@@ -146,7 +146,7 @@
                 },
                 "evidence_quality_justification": {
                   "description": "Summarize the evidence chain \u2014 what was traced, what was verified, and what (if anything) remains assumed.",
-                  "minLength": 1,
+                  "pattern": "^[\\s\\S]+$",
                   "type": "string"
                 },
                 "failure_mode": {
@@ -162,7 +162,7 @@
                 },
                 "failure_mode_justification": {
                   "description": "Describe the specific failure scenario \u2014 what goes wrong, for whom, and under what conditions. For unclear, explain why no specific failure scenario can be identified.",
-                  "minLength": 1,
+                  "pattern": "^[\\s\\S]+$",
                   "type": "string"
                 },
                 "pr_comment": {
@@ -200,7 +200,7 @@
                 },
                 "runtime_scope_justification": {
                   "description": "Cite the file/module and explain its role in the deployment lifecycle. For test coverage gaps, cite the test directory and the code under test.",
-                  "minLength": 1,
+                  "pattern": "^[\\s\\S]+$",
                   "type": "string"
                 },
                 "source_dimensions": {
@@ -220,7 +220,7 @@
                 },
                 "trace_origin_justification": {
                   "description": "For entry-point: name the entry point and trace the path to the problematic outcome. For component: identify the module boundary. For local: explain why no caller trace was performed.",
-                  "minLength": 1,
+                  "pattern": "^[\\s\\S]+$",
                   "type": "string"
                 }
               },
@@ -831,6 +831,73 @@
     "run_id": {
       "description": "Identifier of the orchestrator run that produced this envelope, matching costs.json `run_id` and the `review.run_id` OTEL resource attribute on every sub-agent. Present only for orchestrated runs (source: review); the local run ledger under .tmp-review/ is wiped by the next run, so this is the durable link from findings back to the agents that produced them.",
       "type": "string"
+    },
+    "run_report": {
+      "description": "Per-step outcome of the orchestrated run that produced this envelope. Answers 'what ran and what did not' without reading logs or the run ledger (.tmp-review/costs.json, which the next run wipes). Complements issues[]: issues say what went wrong, steps say what ran at all \u2014 a stage that degraded quietly (a validator batch that never dispatched, a selector that fell back to the full roster) is a step row even when it produced no issue. The render step itself is absent by construction: this report is written before rendering.",
+      "properties": {
+        "harness": {
+          "description": "Agent CLI that ran the agents, e.g. claude or codex.",
+          "type": "string"
+        },
+        "run_id": {
+          "description": "Matches the envelope's run_id.",
+          "type": "string"
+        },
+        "scoring": {
+          "enum": [
+            "categorical",
+            "simple"
+          ],
+          "type": "string"
+        },
+        "status": {
+          "description": "Worst step outcome: failed if any step failed, degraded if any step degraded, otherwise ok. A skipped step alone is not a degradation.",
+          "enum": [
+            "ok",
+            "degraded",
+            "failed"
+          ]
+        },
+        "steps": {
+          "items": {
+            "description": "One pipeline step and how it ended.",
+            "properties": {
+              "detail": {
+                "description": "Human-readable outcome: counts, which agents failed, why it was skipped.",
+                "type": "string"
+              },
+              "status": {
+                "description": "ok = ran and nothing was lost. degraded = ran, but part of its work did not land (some agents failed, a fallback was taken). skipped = deliberately not run for this scope or mode. failed = aborted the run.",
+                "enum": [
+                  "ok",
+                  "degraded",
+                  "skipped",
+                  "failed"
+                ]
+              },
+              "step": {
+                "description": "Pipeline step name, e.g. scope, select, review, validate.",
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "step",
+              "status"
+            ],
+            "type": "object",
+            "unevaluatedProperties": false
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "status",
+        "steps"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "schema_version": {
       "description": "SemVer string, aligned with the plugin version at the time the document was written (.claude-plugin/plugin.json version). Consumers read this to identify which plugin release produced the envelope.",

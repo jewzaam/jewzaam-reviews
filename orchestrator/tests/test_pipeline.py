@@ -11,6 +11,9 @@ sys.path.insert(0, str(REPO_ROOT))
 from orchestrator import backend, pipeline  # noqa: E402
 
 
+_SCOPE = {"paths": None, "theme": None, "shared_infrastructure": None}
+
+
 def _lens_output(concern, concern_slug, dimension_slug="full-scope"):
     return {
         "agent_id": f"{concern_slug}/{dimension_slug}",
@@ -18,7 +21,7 @@ def _lens_output(concern, concern_slug, dimension_slug="full-scope"):
         "concern_slug": concern_slug,
         "dimension_name": "full scope",
         "dimension_slug": dimension_slug,
-        "dimension_scope": {},
+        "dimension_scope": {"paths": None, "theme": None, "shared_infrastructure": None},
         "findings": [
             {
                 "title": f"{concern_slug} finding",
@@ -62,20 +65,21 @@ def _fake_run_agent_factory(calls, selector_response="default", fail_labels=(), 
                     output={
                         "lenses": [{"name": "implementation", "rationale": "always"}],
                         "dimensions": [
-                            {"name": "core", "slug": "core", "scope": {}},
-                            {"name": "docs", "slug": "docs", "scope": {}},
+                            {"name": "core", "slug": "core", "scope": _SCOPE},
+                            {"name": "docs", "slug": "docs", "scope": _SCOPE},
                         ],
                     },
                     cost_usd=0.001,
                 )
             if selector_response == "empty":
                 return backend.AgentResult(
-                    output={"lenses": []},
+                    output={"lenses": [], "dimensions": []},
                     cost_usd=0.001,
                 )
             return backend.AgentResult(
                 output={
                     "lenses": [{"name": "implementation", "rationale": "always"}],
+                    "dimensions": [],
                 },
                 cost_usd=0.001,
             )
@@ -692,3 +696,149 @@ class TestAgentLogsExist:
         monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
         assert pipeline.run_review(_options(git_repo)) == 0
         assert (git_repo / ".tmp-review" / pipeline.LOG_DIRNAME).is_dir()
+
+
+def _steps(report) -> dict:
+    """step name -> status, for the assertions below."""
+    return {step["step"]: step["status"] for step in report["steps"]}
+
+
+class TestRunReport:
+    """The run report answers 'what ran and what failed' without mining logs.
+
+    Every assertion here is about a stage that used to lose work silently:
+    a skipped validator batch, a selector fallback, an excluded raw file.
+    """
+
+    def test_clean_run_reports_every_step_ok(self, git_repo, monkeypatch):
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_review(_options(git_repo)) == 0
+
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        report = findings["run_report"]
+        assert report["status"] == "ok"
+        assert report["run_id"] == findings["run_id"]
+        assert report["harness"] == "claude"
+        statuses = _steps(report)
+        assert statuses["scope"] == "ok"
+        assert statuses["select"] == "ok"
+        assert statuses["review"] == "ok"
+        assert statuses["validate"] == "ok"
+        assert statuses["consolidate"] == "ok"
+        assert statuses["apply-verdicts"] == "ok"
+        # Full-repo review has no merge base to filter against.
+        assert statuses["diff-scope-filter"] == "skipped"
+
+    def test_report_lands_in_costs_and_tmp_dir_too(self, git_repo, monkeypatch):
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_review(_options(git_repo)) == 0
+
+        tmp = git_repo / ".tmp-review"
+        standalone = json.loads((tmp / pipeline.RUN_REPORT_FILENAME).read_text())
+        costs = json.loads((tmp / "costs.json").read_text())
+        embedded = json.loads((git_repo / "Findings-review.json").read_text())
+        assert standalone["steps"] == embedded["run_report"]["steps"]
+        assert costs["steps"] == standalone["steps"]
+
+    def test_failed_validator_batch_degrades_the_run(self, git_repo, monkeypatch):
+        monkeypatch.setattr(
+            backend,
+            "run_agent",
+            _fake_run_agent_factory([], fail_validators=True),
+        )
+        assert pipeline.run_review(_options(git_repo)) == 0
+
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        report = findings["run_report"]
+        # Degraded, not failed: apply-verdicts.py passes an unvalidated
+        # batch through, so the run still produced findings.
+        assert report["status"] == "degraded"
+        assert _steps(report)["validate"] == "degraded"
+        validate_step = next(
+            s for s in report["steps"] if s["step"] == "validate"
+        )
+        assert "validator-batch-1" in validate_step["detail"]
+        # The consequence is stated, not left for the reader to infer.
+        messages = " ".join(issue["message"] for issue in findings["issues"])
+        assert "never adversarially validated" in messages
+
+    def test_selector_fallback_is_a_degraded_step(self, git_repo, monkeypatch):
+        monkeypatch.setattr(
+            backend,
+            "run_agent",
+            _fake_run_agent_factory([], selector_response="fail"),
+        )
+        assert pipeline.run_review(_options(git_repo)) == 0
+
+        report = json.loads((git_repo / "Findings-review.json").read_text())["run_report"]
+        assert _steps(report)["select"] == "degraded"
+        assert report["status"] == "degraded"
+
+    def test_partial_lens_failure_degrades_the_review_step(self, git_repo, monkeypatch):
+        monkeypatch.setattr(
+            backend,
+            "run_agent",
+            _fake_run_agent_factory(
+                [], selector_response="fail", fail_labels={"security"}
+            ),
+        )
+        assert pipeline.run_review(_options(git_repo)) == 0
+
+        report = json.loads((git_repo / "Findings-review.json").read_text())["run_report"]
+        review_step = next(s for s in report["steps"] if s["step"] == "review")
+        assert review_step["status"] == "degraded"
+        assert "security/full-scope" in review_step["detail"]
+
+    def test_total_lens_failure_reports_failed_and_writes_the_report(
+        self, git_repo, monkeypatch, capsys
+    ):
+        """The run that produces no findings file still produces a report."""
+        monkeypatch.setattr(
+            backend,
+            "run_agent",
+            _fake_run_agent_factory([], fail_labels={"implementation"}),
+        )
+        assert pipeline.run_review(_options(git_repo)) == 1
+        assert not (git_repo / "Findings-review.json").exists()
+
+        report = json.loads(
+            (git_repo / ".tmp-review" / pipeline.RUN_REPORT_FILENAME).read_text()
+        )
+        assert report["status"] == "failed"
+        assert _steps(report)["review"] == "failed"
+        assert "Run report (failed)" in capsys.readouterr().out
+
+    def test_stage_cli_failure_names_the_step_in_the_report(self, git_repo, monkeypatch):
+        """A fatal deterministic stage still records which one ended the run."""
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        real_stage_cli = pipeline.stage_cli
+
+        def failing_stage_cli(script_name, *args, **kwargs):
+            if script_name == "batch-findings.py":
+                kwargs.pop("detail", None)
+                return real_stage_cli(
+                    script_name, "--input-dir", "./does-not-exist/", *args[4:], **kwargs
+                )
+            return real_stage_cli(script_name, *args, **kwargs)
+
+        monkeypatch.setattr(pipeline, "stage_cli", failing_stage_cli)
+        try:
+            pipeline.run_review(_options(git_repo))
+        except pipeline.PipelineError:
+            pass
+        report = json.loads(
+            (git_repo / ".tmp-review" / pipeline.RUN_REPORT_FILENAME).read_text()
+        )
+        assert _steps(report)["batch"] == "failed"
+        assert report["status"] == "failed"
+
+    def test_unknown_status_is_rejected(self, git_repo):
+        state = pipeline.RunState(
+            options=_options(git_repo), scope=None  # scope unused by record_step
+        )
+        try:
+            state.record_step("review", "mostly-fine")
+        except ValueError as exc:
+            assert "mostly-fine" in str(exc)
+        else:
+            raise AssertionError("expected ValueError for an unknown status")

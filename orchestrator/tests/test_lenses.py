@@ -57,7 +57,11 @@ def test_duplicates_dropped():
 
 def test_dimensions_default_single():
     dims = lenses.resolve_dimensions(None, lens_count=3, max_agents=16)
-    assert dims == [{"name": "full scope", "slug": "full-scope", "scope": {}}]
+    # Every scope key present, unset ones null — the agent-output schema
+    # requires all three, and the lens prompt has the agent echo this back.
+    assert dims == [
+        {"name": "full scope", "slug": "full-scope", "scope": lenses.EMPTY_SCOPE}
+    ]
 
 
 def test_dimensions_capped_by_max_agents():

@@ -58,6 +58,16 @@ HARVEST_PROMPT = (
 )
 
 
+# ok       — ran, nothing lost
+# degraded — ran, but part of its work did not land (some agents failed, a
+#            fallback was taken); the run continues with less than it should
+# skipped  — deliberately not run for this scope/mode
+# failed   — aborted the run
+STEP_STATUSES = ("ok", "degraded", "skipped", "failed")
+
+RUN_REPORT_FILENAME = "run-report.json"
+
+
 def budget_for(model: str) -> float:
     """Spend cap for one agent invocation on this model."""
     return BUDGET_USD_BY_MODEL.get(model, DEFAULT_BUDGET_USD)
@@ -146,6 +156,35 @@ class RunState:
     costs: list[CostEntry] = field(default_factory=list)
     issues: list[dict] = field(default_factory=list)
     issues_merged: int = 0  # how many of `issues` already reached an envelope
+    # Ordered outcome of every pipeline step. Separate from `issues` on
+    # purpose: issues say what went wrong, steps say what ran at all. A
+    # stage that degrades quietly — a validator batch that never dispatched,
+    # a selector that fell back — shows up here as a row, so reading the run
+    # never means reconstructing it from logs.
+    steps: list[dict] = field(default_factory=list)
+
+    def record_step(self, name: str, status: str, detail: str = "") -> None:
+        """Append one step outcome. `status` is ok|degraded|skipped|failed."""
+        if status not in STEP_STATUSES:
+            raise ValueError(f"unknown step status {status!r}")
+        self.steps.append({"step": name, "status": status, "detail": detail})
+
+    def run_report(self) -> dict:
+        """The machine-readable run report embedded in the findings envelope."""
+        statuses = {step["status"] for step in self.steps}
+        if "failed" in statuses:
+            overall = "failed"
+        elif "degraded" in statuses:
+            overall = "degraded"
+        else:
+            overall = "ok"
+        return {
+            "run_id": self.run_id,
+            "harness": self.options.harness,
+            "scoring": self.options.scoring,
+            "status": overall,
+            "steps": list(self.steps),
+        }
 
     def agent_attributes(self, stage: str, label: str) -> dict:
         """OTEL resource attributes stamping a child with run correlation."""
@@ -291,6 +330,40 @@ def _harvest(state, stage, label, model, harvest, stopped, schema):
     return attempt
 
 
+def _record_fan_out_step(
+    state,
+    step: str,
+    plural_noun: str,
+    total: int,
+    failed: list[str],
+    *,
+    empty_is_fatal: bool = False,
+) -> None:
+    """One run-report row for a whole agent stage.
+
+    A stage where some agents died still produces output, so nothing else
+    marks it as incomplete — that is exactly the silence this row removes.
+
+    "failed" is reserved for a stage that ends the run: losing every
+    validator batch is a degradation (apply-verdicts.py passes those
+    findings through and the run finishes), while losing every lens agent
+    leaves nothing to consolidate and aborts — hence `empty_is_fatal`.
+    """
+    if total == 0:
+        state.record_step(step, "skipped", f"no {plural_noun} to run")
+        return
+    if not failed:
+        state.record_step(step, "ok", f"{total}/{total} {plural_noun} succeeded")
+        return
+    status = "failed" if (empty_is_fatal and len(failed) == total) else "degraded"
+    state.record_step(
+        step,
+        status,
+        f"{total - len(failed)}/{total} {plural_noun} succeeded; failed: "
+        + ", ".join(sorted(failed)),
+    )
+
+
 def _record_agent_failure(state, component: str, result) -> None:
     """Record a final agent failure (and any denials) as envelope issues."""
     state.issues.append(
@@ -312,24 +385,44 @@ def _record_agent_failure(state, component: str, result) -> None:
         )
 
 
-def stage_cli(script_name: str, *args: str, cwd: str) -> None:
+def stage_cli(
+    script_name: str,
+    *args: str,
+    cwd: str,
+    state=None,
+    step: str | None = None,
+    detail: str = "",
+) -> None:
     """Run one of the tested stage CLIs; raise PipelineError on failure.
 
-    Public: the simple-mode path reuses this and run_validators.
+    Public: the simple-mode path reuses this and run_validators. When
+    `state` is given the outcome is recorded as a run-report step — the
+    failing one is named there as well as in the raised error, so an
+    aborted run still says which stage ended it.
     """
     argv = [sys.executable, str(REVIEW_SCRIPTS / script_name), *args]
     proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
     if proc.stdout.strip():
         print(proc.stdout.strip(), file=sys.stderr)
+    name = step or script_name
     if proc.returncode != 0:
+        if state is not None:
+            state.record_step(
+                name,
+                "failed",
+                f"exit {proc.returncode}: {proc.stderr.strip()[:300]}",
+            )
         raise PipelineError(
             f"{script_name} failed (exit {proc.returncode}):\n{proc.stderr.strip()}"
         )
+    if state is not None:
+        state.record_step(name, "ok", detail)
 
 
 def maybe_diff_scope_filter(state, cwd: str) -> None:
     """Run the diff-scope filter on 10-merged for PR-scoped reviews only."""
     if not state.scope.merge_base:
+        state.record_step("diff-scope-filter", "skipped", "no merge base (full-repo review)")
         return
     stage_cli(
         "diff-scope-filter.py",
@@ -338,6 +431,9 @@ def maybe_diff_scope_filter(state, cwd: str) -> None:
         "--base-ref",
         state.scope.merge_base,
         cwd=cwd,
+        state=state,
+        step="diff-scope-filter",
+        detail=f"filtered against {state.scope.merge_base}",
     )
 
 
@@ -404,8 +500,14 @@ def _run_selector(state) -> dict | None:
     return result.output
 
 
-def _fan_out(state, items, run_one, on_success) -> None:
-    """Run agent jobs concurrently; failures become issues, successes call back."""
+def _fan_out(state, items, run_one, on_success) -> list[str]:
+    """Run agent jobs concurrently; failures become issues, successes call back.
+
+    Returns the labels that failed, so the caller can record one run-report
+    step for the whole stage instead of leaving the loss visible only as
+    individual issues.
+    """
+    failed: list[str] = []
     with ThreadPoolExecutor(max_workers=state.options.parallel) as pool:
         futures = {pool.submit(run_one, item): item for item in items}
         for future, item in futures.items():
@@ -413,8 +515,10 @@ def _fan_out(state, items, run_one, on_success) -> None:
             label = item["label"]
             if result.error is not None:
                 _record_agent_failure(state, label, result)
+                failed.append(label)
                 continue
             on_success(item, result)
+    return failed
 
 
 def _dispatch_review_agents(state, selected, dimensions) -> None:
@@ -486,7 +590,7 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
         for dim in dimensions
         for lens in selected
     ]
-    _fan_out(
+    failed = _fan_out(
         state,
         jobs,
         lambda job: run_lens(job["lens"], job["dim"]),
@@ -494,10 +598,14 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
             json.dumps(result.output, indent=2), encoding="utf-8"
         ),
     )
+    _record_fan_out_step(
+        state, "review", "lens agents", len(jobs), failed, empty_is_fatal=True
+    )
 
 
 def _revalidate_raw(state) -> None:
     """Defense-in-depth re-check of raw files; invalid files are removed."""
+    excluded: list[str] = []
     raw_dir = state.tmp_dir / "00-raw"
     schema_arg = (
         "agent-output"
@@ -518,6 +626,7 @@ def _revalidate_raw(state) -> None:
         )
         if proc.returncode != 0:
             path.unlink()
+            excluded.append(path.name)
             detail = (proc.stderr or "").strip().splitlines()
             state.issues.append(
                 {
@@ -530,6 +639,14 @@ def _revalidate_raw(state) -> None:
                     "source_component": "revalidate",
                 }
             )
+    if excluded:
+        state.record_step(
+            "revalidate",
+            "degraded",
+            f"{len(excluded)} raw agent output(s) excluded: " + ", ".join(excluded),
+        )
+    else:
+        state.record_step("revalidate", "ok", "all raw agent outputs valid")
 
 
 def _merge_issues_into_envelope(state, stage_dir: Path) -> None:
@@ -554,6 +671,9 @@ def run_validators(state) -> None:
     validation_dir = state.tmp_dir / "15-validation"
     batch_files = sorted(validation_dir.glob("batch-*-input.json"))
     if not batch_files:
+        state.record_step(
+            "validate", "skipped", "no findings were batched for validation"
+        )
         return
     simple = state.options.scoring == "simple"
     schema = backend.load_resolved_schema(
@@ -600,7 +720,7 @@ def run_validators(state) -> None:
     ]
     for job in jobs:
         job["label"] = f"validator-batch-{job['batch']['batch_number']}"
-    _fan_out(
+    failed = _fan_out(
         state,
         jobs,
         lambda job: run_batch(job["batch"]),
@@ -608,6 +728,53 @@ def run_validators(state) -> None:
             validation_dir / f"batch-{job['batch']['batch_number']}-output.json"
         ).write_text(json.dumps(result.output, indent=2), encoding="utf-8"),
     )
+    _record_fan_out_step(state, "validate", "validator batches", len(jobs), failed)
+    if failed:
+        unvalidated = sum(
+            len(job["batch"].get("findings", []))
+            for job in jobs
+            if job["label"] in failed
+        )
+        # The consequence, not just the cause: apply-verdicts.py passes a
+        # batch with no verdict file straight through, so those findings
+        # ship with nothing having challenged them.
+        state.issues.append(
+            {
+                "severity": "warning",
+                "kind": "subagent_failure",
+                "message": (
+                    f"{unvalidated} finding(s) in {len(failed)} batch(es) were "
+                    "never adversarially validated and pass through unchanged"
+                ),
+                "source_component": "validate",
+            }
+        )
+
+
+def _write_run_report(state) -> Path:
+    """Persist the run report and return its path.
+
+    Written before rendering so the renderer can embed it in the findings
+    envelope, where it outlives `.tmp-review/` (wiped by the next run).
+    The render step itself is deliberately not a row: a rendered file is
+    its own evidence that rendering worked, and a render failure aborts
+    with the stage CLI's error rather than quietly degrading.
+    """
+    path = state.tmp_dir / RUN_REPORT_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state.run_report(), indent=2), encoding="utf-8")
+    return path
+
+
+def _print_run_report(state) -> None:
+    """Print the step table. The skill relays this output verbatim, so a
+    degraded run says so here rather than only inside the JSON."""
+    report = state.run_report()
+    print(f"\nRun report ({report['status']}):")
+    width = max([len(step["step"]) for step in report["steps"]] + [4])
+    for step in report["steps"]:
+        detail = f"  {step['detail']}" if step["detail"] else ""
+        print(f"  {step['step']:<{width}} {step['status']:<9}{detail}")
 
 
 def _write_costs(state) -> dict:
@@ -625,6 +792,10 @@ def _write_costs(state) -> dict:
         "total_normalized_tokens": round(
             sum(c.normalized_tokens for c in state.costs), 3
         ),
+        # Also in the findings envelope. Duplicated here on purpose: a run
+        # that dies before render never writes an envelope, and the ledger
+        # is written on every exit path including the fatal ones.
+        "steps": list(state.steps),
         "by_stage": {},
         "normalized_tokens_by_stage": {},
         "seconds_by_stage": {},
@@ -724,6 +895,8 @@ def _print_summary(state, cost_report) -> None:
     for suffix in (".json", ".md", "-supplementary.md"):
         print(f"- {base}{suffix}")
 
+    _print_run_report(state)
+
     print(f"\nRun ID: {state.run_id} (telemetry label review_run_id)")
     if state.orchestrating_session_id:
         print(
@@ -747,7 +920,11 @@ def _print_summary(state, cost_report) -> None:
         )
         print(f"\nTool denials: {denial_text}")
     if state.issues:
-        print(f"\n{len(state.issues)} issue(s) recorded in the findings envelope.")
+        print(f"\nOperational issues ({len(state.issues)}):")
+        for issue in state.issues:
+            component = issue.get("source_component", "")
+            where = f" [{component}]" if component else ""
+            print(f"  - {issue['severity']}/{issue['kind']}{where}: {issue['message']}")
 
 
 def _head_sha(project_root: str) -> str:
@@ -855,6 +1032,16 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
         return 2
 
     state = RunState(options=options, scope=review_scope)
+    state.record_step(
+        "scope",
+        "ok",
+        f"{review_scope.project_name} ({review_scope.language}); "
+        + (
+            f"PR #{options.pr_number}, merge base {review_scope.merge_base}"
+            if review_scope.merge_base
+            else "full repo"
+        ),
+    )
 
     if options.dry_run:
         print(f"Project: {review_scope.project_name} ({review_scope.language})")
@@ -870,9 +1057,13 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
     try:
         return _run_stages(state)
     except BaseException:
-        # Real spend happened; persist the ledger before propagating,
-        # whatever the failure (PipelineError, bug, KeyboardInterrupt).
+        # Real spend happened; persist the ledger and the step record before
+        # propagating, whatever the failure (PipelineError, bug,
+        # KeyboardInterrupt). No findings file gets written on this path, so
+        # .tmp-review/ is the only place the report can land.
+        _write_run_report(state)
         _write_costs(state)
+        _print_run_report(state)
         raise
 
 
@@ -890,11 +1081,27 @@ def _run_stages(state: RunState) -> int:
             file=sys.stderr,
         )
     selector_output = state.saved_selection
+    reused_selection = selector_output is not None
     if selector_output is None:
         selector_output = _run_selector(state)
     else:
         print("using saved lens selection from --select-only", file=sys.stderr)
     selected, source, rationales = lenses.resolve_selection(selector_output, roster)
+    if reused_selection:
+        state.record_step("select", "ok", "reused the --select-only selection")
+    elif source == "selector":
+        state.record_step(
+            "select", "ok", f"selector matched {len(selected)} lens(es)"
+        )
+    else:
+        # The fallback is a full-roster review, which is more expensive and
+        # less targeted — not a neutral outcome, so not an "ok" row.
+        state.record_step(
+            "select",
+            "degraded",
+            f"selector produced no usable selection; fell back to all "
+            f"{len(selected)} lens(es)",
+        )
     if len(selected) > options.max_agents:
         dropped = [lens.slug for lens in selected[options.max_agents :]]
         selected = selected[: options.max_agents]
@@ -922,7 +1129,9 @@ def _run_stages(state: RunState) -> int:
         print("ERROR: no lens agent produced valid output.", file=sys.stderr)
         for issue in state.issues:
             print(f"ERROR: {issue['message']}", file=sys.stderr)
+        _write_run_report(state)
         _write_costs(state)
+        _print_run_report(state)
         return 1
 
     cwd = options.project_root
@@ -939,7 +1148,13 @@ def _run_stages(state: RunState) -> int:
         ]
         if review_scope.scope_slug:
             consolidate_args += ["--scope-slug", review_scope.scope_slug]
-        stage_cli("consolidate-findings.py", *consolidate_args, cwd=cwd)
+        stage_cli(
+            "consolidate-findings.py",
+            *consolidate_args,
+            cwd=cwd,
+            state=state,
+            step="consolidate",
+        )
         _merge_issues_into_envelope(state, state.tmp_dir / "10-merged")
 
         maybe_diff_scope_filter(state, cwd)
@@ -954,6 +1169,9 @@ def _run_stages(state: RunState) -> int:
             "--only-buckets",
             buckets,
             cwd=cwd,
+            state=state,
+            step="batch",
+            detail=f"buckets sent to validation: {buckets}",
         )
         run_validators(state)
         stage_cli(
@@ -965,6 +1183,8 @@ def _run_stages(state: RunState) -> int:
             "--output-dir",
             f"./{TMP_DIR_NAME}/20-findings/",
             cwd=cwd,
+            state=state,
+            step="apply-verdicts",
         )
         # Validator failures were recorded after the 10-merged merge;
         # fold them into the post-verdict envelope.
@@ -978,6 +1198,8 @@ def _run_stages(state: RunState) -> int:
             review_scope.project_name,
             "--run-id",
             state.run_id,
+            "--run-report",
+            str(_write_run_report(state)),
         ]
         if state.orchestrating_session_id:
             render_args += [
