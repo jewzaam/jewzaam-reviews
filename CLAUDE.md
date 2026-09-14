@@ -191,9 +191,16 @@ Pytest autodiscovers three test trees: `tests/` at the plugin root (cross-skill 
 4. **If the new skill produces findings or an action report**, write a render script that (a) builds the shared envelope, (b) validates against `schemas/findings.schema.json` before writing, (c) emits both JSON and any markdown view. Markdown must come from the JSON — never hand-authored.
 5. Add pytest coverage under `skills/<name>/tests/` (`make test` auto-discovers it).
 6. Update `README.md` skill table.
-7. Bump `version` with `make version-bump-patch` (or `-minor`/`-major`).
+7. Do **not** bump the plugin version. Version bumps are user-only after the
+   change is reviewed; the agent must leave version fields and fixture
+   `schema_version` values untouched.
 
 ## Versioning
+
+**User-only operation:** agents must not run any version-bump target or edit
+version fields. The user decides and applies the bump after reviewing the
+complete change, so the diff remains trustworthy without generated version
+churn.
 
 SemVer per `~/source/standards/common/versioning.md`. Three `version` fields must stay in sync: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (`plugins[0].version`), and `.codex-plugin/plugin.json`. `.agents/plugins/marketplace.json` has none — a Codex marketplace entry identifies a plugin and lets the plugin's own manifest carry the version.
 
