@@ -96,7 +96,11 @@ def _apply_verdict(finding: dict, verdict: dict) -> dict | None:
         return dict(finding)
     if action == "rescore":
         result = dict(finding)
+        # A dimension the validator is not changing arrives as null: the
+        # schema requires every member, so "unset" has to be a value.
         for key, value in verdict["new_dimensions"].items():
+            if value is None:
+                continue
             result[key] = value
         return result
     return dict(finding)

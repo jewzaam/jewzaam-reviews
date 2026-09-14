@@ -174,9 +174,10 @@ def apply_verdicts(validation_dir: Path, findings: list[dict]) -> tuple[list[dic
             continue
         if verdict["action"] == "rescore":
             updated = dict(finding)
-            if "new_severity" in verdict:
+            # null means "not changing this" — the schema requires the key.
+            if verdict.get("new_severity") is not None:
                 updated["severity"] = verdict["new_severity"]
-            if "new_confidence" in verdict:
+            if verdict.get("new_confidence") is not None:
                 updated["confidence"] = verdict["new_confidence"]
             survivors.append(updated)
             continue
@@ -210,14 +211,23 @@ def run_simple_path(state) -> None:
     write_stage(
         tmp / "10-merged", project, decomposition, state.issues, findings, observations
     )
+    state.record_step(
+        "consolidate", "ok", f"{len(findings)} finding(s) after dedup"
+    )
 
     pipeline.maybe_diff_scope_filter(state, cwd)
 
     envelope, findings = load_stage(tmp / "10-merged")
-    write_batches(tmp / "15-validation", findings)
+    batch_count = write_batches(tmp / "15-validation", findings)
+    state.record_step("batch", "ok", f"{batch_count} validator batch(es)")
     pipeline.run_validators(state)
 
     survivors, verdict_issues = apply_verdicts(tmp / "15-validation", findings)
+    state.record_step(
+        "apply-verdicts",
+        "ok",
+        f"{len(survivors)}/{len(findings)} finding(s) survived validation",
+    )
     # envelope["issues"] already holds everything written before the filter
     # (plus any diff_scope_filtered entries); append only what came later.
     late_issues = state.issues[issues_written:]
@@ -242,6 +252,8 @@ def run_simple_path(state) -> None:
         "simple",
         "--run-id",
         state.run_id,
+        "--run-report",
+        str(pipeline._write_run_report(state)),
     ]
     if state.orchestrating_session_id:
         render_args += [

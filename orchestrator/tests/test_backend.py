@@ -2,9 +2,12 @@
 """Tests for orchestrator/backend.py — the agent seam."""
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -688,3 +691,222 @@ class TestSessionAndBudgetArgv:
         assert res.error_category == "timeout"
         assert res.session_id == "cccccccc-2222-3333-4444-555555555555"
         assert res.cost_usd == 0.0, "cost is genuinely unknowable after SIGKILL"
+
+
+# Every schema the orchestrator hands to an agent. Not in backend.py: no
+# production code reads it, because the point of this whole area is that
+# nothing at runtime inspects or rewrites a schema on the way out.
+AGENT_FACING_SCHEMAS = (
+    "agent-output",
+    "agent-output-simple",
+    "selector-output",
+    "validation-output",
+    "validation-output-simple",
+)
+
+# Keywords outside the OpenAI Structured Outputs strict subset
+# (platform.openai.com/docs/guides/structured-outputs). Supported there: the
+# types plus `anyOf`, `pattern`/`format` on strings, the numeric bounds, and
+# `minItems`/`maxItems` on arrays. Everything here is rejected with a 400
+# `invalid_json_schema` *before the agent runs*, losing the whole turn.
+OPENAI_STRICT_FORBIDDEN = frozenset(
+    {
+        "allOf", "oneOf", "not", "if", "then", "else",
+        "dependentRequired", "dependentSchemas",
+        "minLength", "maxLength",
+        "minProperties", "maxProperties", "patternProperties", "propertyNames",
+        "uniqueItems", "contains", "minContains", "maxContains",
+        "unevaluatedProperties", "unevaluatedItems",
+    }
+)
+# Anthropic rejects composition only at the schema root; nested is fine.
+ANTHROPIC_ROOT_FORBIDDEN = frozenset({"allOf", "anyOf", "oneOf"})
+
+
+def dual_harness_violations(schema: dict) -> list[str]:
+    """Why this schema would be rejected by Claude or Codex, or [] if neither.
+
+    One schema goes to both harnesses with no per-harness rewriting, so it
+    has to satisfy the intersection of their rules on its own:
+
+    - no composition at the root (Anthropic), and `anyOf` as the only
+      composition keyword anywhere (OpenAI strict);
+    - every property listed in `required` — express a genuinely optional
+      field as `anyOf: [<type>, {"type": "null"}]` and let consumers read
+      null as absent;
+    - `additionalProperties: false` on every object;
+    - no keyword outside the strict subset — an anchored `pattern` in place
+      of `minLength`/`maxLength`.
+    """
+    problems = []
+    for keyword in sorted(ANTHROPIC_ROOT_FORBIDDEN & schema.keys()):
+        problems.append(
+            f"<root>: '{keyword}' at the schema root is rejected by Anthropic "
+            "(400); move the composition inside a property or array items"
+        )
+    for path, node in _walk(schema):
+        for keyword in sorted(OPENAI_STRICT_FORBIDDEN & node.keys()):
+            hint = (
+                " — use an anchored `pattern` instead"
+                if keyword in ("minLength", "maxLength")
+                else " — express per-variant rules as a discriminated `anyOf`"
+                if keyword in ("allOf", "oneOf", "not", "if", "then", "else")
+                else ""
+            )
+            problems.append(
+                f"{path}: '{keyword}' is outside the OpenAI strict subset{hint}"
+            )
+        pattern = node.get("pattern")
+        if isinstance(pattern, str) and not (
+            pattern.startswith("^") and pattern.endswith("$")
+        ):
+            # JSON Schema says `pattern` is a search, so bare `\S` means
+            # "contains non-whitespace". A grammar compiler may instead
+            # full-match it, where the same `\S` means "exactly one
+            # non-whitespace character" — a silent one-char cap that
+            # spec-compliant local validation would never catch.
+            problems.append(
+                f"{path}: pattern {pattern!r} is unanchored; anchor it with "
+                "^...$ so search and full-match engines agree"
+            )
+        if node.get("type") != "object" and "properties" not in node:
+            continue
+        properties = node.get("properties") or {}
+        if node.get("additionalProperties") is not False:
+            problems.append(
+                f"{path}: objects must set `additionalProperties: false`"
+            )
+        optional = sorted(set(properties) - set(node.get("required") or []))
+        if optional:
+            problems.append(
+                f"{path}: every property must be in `required`; optional "
+                f"{optional} must be widened to `anyOf: [<type>, null]`"
+            )
+    return problems
+
+
+def _walk(node, path="<root>"):
+    if isinstance(node, dict):
+        yield path, node
+        for key, value in node.items():
+            yield from _walk(value, f"{path}/{key}")
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _walk(value, f"{path}[{index}]")
+
+
+class TestDualHarnessSchemas:
+    """Agent-facing schemas must satisfy Claude AND Codex as written.
+
+    The orchestrator sends them to both harnesses untouched. That is the
+    point: an adapter that rewrote a schema at dispatch time meant the
+    contract under review was not the contract sent, and a keyword it
+    dropped weakened the agent's instructions with nothing reporting it.
+    A schema that cannot satisfy both belongs in the diff, not in a runtime
+    transform.
+    """
+
+    @pytest.mark.parametrize("name", AGENT_FACING_SCHEMAS)
+    def test_schema_is_compatible_as_written(self, name):
+        violations = dual_harness_violations(
+            backend.load_resolved_schema(name)
+        )
+        assert not violations, "\n".join(violations)
+
+    @pytest.mark.parametrize("name", AGENT_FACING_SCHEMAS)
+    def test_schema_is_sent_verbatim(self, name, monkeypatch):
+        """No transform between load and dispatch, on either harness."""
+        schema = backend.load_resolved_schema(name)
+        for harness, reader in (
+            ("claude", lambda argv: json.loads(argv[argv.index("--json-schema") + 1])),
+            ("codex", lambda argv: json.loads(
+                Path(argv[argv.index("--output-schema") + 1]).read_text())),
+        ):
+            capture = {}
+            sent = {}
+
+            def fake_popen(argv, **kwargs):
+                capture["argv"] = argv
+                sent["schema"] = reader(argv)  # read before the temp file is unlinked
+                return _FakeProc(json.dumps(_cli_result()))
+
+            monkeypatch.setattr(subprocess, "Popen", fake_popen)
+            backend.run_agent(
+                "p", schema=schema, model="sonnet", allowed_tools=[],
+                cwd="/tmp", harness=harness,
+            )
+            assert sent["schema"] == schema, f"{harness} mutated the schema"
+
+    def test_root_composition_is_reported(self):
+        problems = dual_harness_violations(
+            {"type": "object", "additionalProperties": False,
+             "properties": {}, "required": [],
+             "anyOf": [{"required": ["a"]}, {"required": ["b"]}]}
+        )
+        assert any("root" in p and "Anthropic" in p for p in problems)
+
+    def test_conditional_composition_is_reported_with_the_fix(self):
+        problems = dual_harness_violations(
+            {"type": "object", "additionalProperties": False,
+             "properties": {"a": {"type": "string"}}, "required": ["a"],
+             "allOf": [{"if": {"properties": {"a": {"const": "x"}}},
+                        "then": {"required": ["b"]}}]}
+        )
+        assert any("allOf" in p and "discriminated `anyOf`" in p for p in problems)
+
+    def test_optional_property_is_reported_with_the_fix(self):
+        problems = dual_harness_violations(
+            {"type": "object", "additionalProperties": False,
+             "properties": {"a": {"type": "string"}, "b": {"type": "string"}},
+             "required": ["a"]}
+        )
+        assert any("['b']" in p and "null" in p for p in problems)
+
+    def test_open_object_is_reported(self):
+        problems = dual_harness_violations(
+            {"type": "object", "additionalProperties": True,
+             "properties": {"a": {"type": "string"}}, "required": ["a"]}
+        )
+        assert any("additionalProperties: false" in p for p in problems)
+
+    def test_unanchored_pattern_is_reported(self):
+        """`\\S` unanchored means "contains non-whitespace"; full-matched it
+        means "exactly one character" — a silent one-char cap that
+        spec-compliant local validation would never catch. No shipped pattern
+        may depend on which reading the engine picks."""
+        problems = dual_harness_violations(
+            {"type": "object", "additionalProperties": False,
+             "properties": {"a": {"type": "string", "pattern": "\\S"}},
+             "required": ["a"]}
+        )
+        assert any("unanchored" in p for p in problems)
+
+    def test_anchored_pattern_is_accepted(self):
+        assert not dual_harness_violations(
+            {"type": "object", "additionalProperties": False,
+             "properties": {"a": {"type": "string", "pattern": "^[\\s\\S]+$"}},
+             "required": ["a"]}
+        )
+
+    @pytest.mark.parametrize("name", AGENT_FACING_SCHEMAS)
+    def test_every_shipped_pattern_reads_the_same_either_way(self, name):
+        """Belt and braces over the anchoring rule: compare the two readings
+        on real values rather than trusting the ^...$ heuristic alone."""
+        samples = ["", " ", "   ", "a", "hello world", "x" * 400, "  pad  ",
+                   "a\nb", "src/auth/policy.py", "12", "12-20", "a" * 16]
+        for path, node in _walk(backend.load_resolved_schema(name)):
+            pattern = node.get("pattern")
+            if not isinstance(pattern, str):
+                continue
+            for value in samples:
+                assert bool(re.search(pattern, value)) == bool(
+                    re.fullmatch(pattern, value, re.S)
+                ), f"{path}: {pattern!r} disagrees on {value!r}"
+
+    def test_length_bounds_are_reported_with_the_fix(self):
+        problems = dual_harness_violations(
+            {"type": "object", "additionalProperties": False,
+             "properties": {"a": {"type": "string", "minLength": 1}},
+             "required": ["a"]}
+        )
+        assert any("minLength" in p and "`pattern`" in p for p in problems)

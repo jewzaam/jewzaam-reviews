@@ -50,7 +50,7 @@ def _write_stage_dir(stage_dir: Path, findings: list[dict]) -> None:
             {
                 "dimension_name": "x",
                 "dimension_slug": "x",
-                "dimension_scope": {},
+                "dimension_scope": {"paths": None, "theme": None, "shared_infrastructure": None},
             }
         ],
         "issues": [],

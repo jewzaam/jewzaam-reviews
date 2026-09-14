@@ -222,46 +222,14 @@ def _codex_env() -> tuple[dict, Path]:
     return env, child_home
 
 
-def _codex_schema(schema: dict) -> dict:
-    """Make the existing schema acceptable to Codex strict outputs."""
-    result = deepcopy(schema)
-
-    def normalize(node):
-        if isinstance(node, dict):
-            properties = node.get("properties")
-            if node.get("type") == "object" or properties is not None:
-                properties = properties or {}
-                required = set(node.get("required", []))
-                if node.get("additionalProperties") is True:
-                    for name, value in {
-                        "paths": {"type": "array", "items": {"type": "string"}},
-                        "theme": {"type": "string"},
-                        "shared_infrastructure": {"type": "boolean"},
-                    }.items():
-                        properties.setdefault(name, value)
-                for name in set(properties) - required:
-                    properties[name] = {
-                        "anyOf": [properties[name], {"type": "null"}]
-                    }
-                node["properties"] = properties
-                node["required"] = list(properties)
-                node["additionalProperties"] = False
-            for value in node.values():
-                normalize(value)
-        elif isinstance(node, list):
-            for value in node:
-                normalize(value)
-
-    normalize(result)
-    return result
-
-
-def _drop_nulls(value):
-    if isinstance(value, dict):
-        return {key: _drop_nulls(item) for key, item in value.items() if item is not None}
-    if isinstance(value, list):
-        return [_drop_nulls(item) for item in value]
-    return value
+# The schema reaches both CLIs exactly as loaded: nothing here rewrites it,
+# and nothing rewrites the agent's result. An adapter that edited the schema
+# at dispatch time would mean the contract under review is not the contract
+# sent, and a keyword it quietly dropped would weaken the agent's
+# instructions with nothing reporting the gap. A schema that cannot satisfy
+# both harnesses is therefore a diff, not a runtime transform — the rules and
+# their enforcement live in
+# orchestrator/tests/test_backend.py::TestDualHarnessSchemas.
 
 
 def _is_budget_stop(result: dict) -> bool:
@@ -298,7 +266,7 @@ def _codex_result(events: list[dict], returncode: int, stderr: str) -> dict:
     structured = None
     if isinstance(text, str):
         try:
-            structured = _drop_nulls(json.loads(text))
+            structured = json.loads(text)
         except json.JSONDecodeError:
             pass
     error = next(
@@ -449,7 +417,7 @@ def run_agent(
             schema_file = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", prefix="review-schema-", delete=False
             )
-            json.dump(_codex_schema(schema), schema_file)
+            json.dump(schema, schema_file)
             schema_file.close()
             argv += ["--output-schema", schema_file.name]
         argv.append("-")

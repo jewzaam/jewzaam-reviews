@@ -103,7 +103,8 @@ def parse_line_range(line_str: str) -> tuple[int, int]:
 def primary_locations(finding: dict) -> list[dict]:
     """Primary locations, falling back to the first location when none is tagged."""
     locations = finding.get("locations", [])
-    primary = [loc for loc in locations if loc.get("role", "primary") == "primary"]
+    # null and absent both mean primary — see scripts/envelope.primary_location.
+    primary = [loc for loc in locations if (loc.get("role") or "primary") == "primary"]
     return primary or locations[:1]
 
 

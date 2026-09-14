@@ -5,7 +5,7 @@
   "properties": {
     "agent_id": {
       "description": "Stable identifier for the sub-agent instance (e.g. 'implementation/full-scope').",
-      "minLength": 1,
+      "pattern": "^[\\s\\S]+$",
       "type": "string"
     },
     "concern": {
@@ -45,12 +45,55 @@
     },
     "dimension_name": {
       "description": "Human-readable name of the dimension being reviewed.",
-      "minLength": 1,
+      "pattern": "^[\\s\\S]+$",
       "type": "string"
     },
     "dimension_scope": {
-      "additionalProperties": true,
-      "description": "Free-form scope descriptor passed from the orchestrator.",
+      "additionalProperties": false,
+      "description": "Scope descriptor for one review dimension. Closed rather than free-form: OpenAI strict Structured Outputs rejects an open object, and only `shared_infrastructure` is read by name (orchestrator/prompts.py) \u2014 the rest is serialized whole into the lens prompt and the report. null means not set.",
+      "properties": {
+        "paths": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Repo-relative paths this dimension covers."
+        },
+        "shared_infrastructure": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "True when the dimension covers code shared across other dimensions; alters the lens prompt."
+        },
+        "theme": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Short thematic description when the dimension is not path-scoped."
+        }
+      },
+      "required": [
+        "paths",
+        "theme",
+        "shared_infrastructure"
+      ],
       "type": "object"
     },
     "dimension_slug": {
@@ -74,7 +117,7 @@
           },
           "issue": {
             "description": "1-3 sentence prose description of the problem.",
-            "minLength": 1,
+            "pattern": "^[\\s\\S]+$",
             "type": "string"
           },
           "locations": {
@@ -89,23 +132,31 @@
                 },
                 "path": {
                   "description": "Repo-relative file path (POSIX separators).",
-                  "minLength": 1,
+                  "pattern": "^[\\s\\S]+$",
                   "type": "string"
                 },
                 "role": {
-                  "description": "primary = canonical location; related = supporting evidence; callsite = where the issue is invoked; requirement = spec/standards reference. Defaults to primary when absent.",
-                  "enum": [
-                    "primary",
-                    "related",
-                    "callsite",
-                    "requirement"
-                  ],
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "description": "primary = canonical location; related = supporting evidence; callsite = where the issue is invoked; requirement = spec/standards reference. Defaults to primary when absent.",
+                      "enum": [
+                        "primary",
+                        "related",
+                        "callsite",
+                        "requirement"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
                 "path",
-                "line"
+                "line",
+                "role"
               ],
               "type": "object"
             },
@@ -123,18 +174,17 @@
           },
           "suggested_fix": {
             "description": "Prose describing the recommended change.",
-            "minLength": 1,
+            "pattern": "^[\\s\\S]+$",
             "type": "string"
           },
           "title": {
             "description": "Short human-readable title for the finding (<=120 chars).",
-            "maxLength": 120,
-            "minLength": 1,
+            "pattern": "^[\\s\\S]+$",
             "type": "string"
           },
           "why_it_matters": {
             "description": "Prose grounding the finding in the project's own patterns, standards, or stated requirements.",
-            "minLength": 1,
+            "pattern": "^[\\s\\S]+$",
             "type": "string"
           }
         },
@@ -159,7 +209,8 @@
     "dimension_name",
     "dimension_slug",
     "dimension_scope",
-    "findings"
+    "findings",
+    "cross_cutting_observations"
   ],
   "title": "Agent Output (simple scoring)",
   "type": "object"

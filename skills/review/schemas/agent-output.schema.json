@@ -12,12 +12,13 @@
     "dimension_name",
     "dimension_slug",
     "dimension_scope",
-    "findings"
+    "findings",
+    "cross_cutting_observations"
   ],
   "properties": {
     "agent_id": {
       "type": "string",
-      "minLength": 1,
+      "pattern": "^[\\s\\S]+$",
       "description": "Stable identifier for the sub-agent instance (e.g. 'architecture/auth'). Used for logging and issues[].source_component attribution."
     },
     "concern": {
@@ -50,7 +51,7 @@
     },
     "dimension_name": {
       "type": "string",
-      "minLength": 1,
+      "pattern": "^[\\s\\S]+$",
       "description": "Human-readable name of the dimension being reviewed (e.g. 'auth subsystem')."
     },
     "dimension_slug": {
@@ -60,8 +61,51 @@
     },
     "dimension_scope": {
       "type": "object",
-      "additionalProperties": true,
-      "description": "Free-form scope descriptor passed from the main agent. Typical shape: {paths: [...]} and/or {theme: '...'}."
+      "additionalProperties": false,
+      "description": "Scope descriptor for one review dimension. Closed rather than free-form: OpenAI strict Structured Outputs rejects an open object, and only `shared_infrastructure` is read by name (orchestrator/prompts.py) \u2014 the rest is serialized whole into the lens prompt and the report. null means not set.",
+      "required": [
+        "paths",
+        "theme",
+        "shared_infrastructure"
+      ],
+      "properties": {
+        "paths": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Repo-relative paths this dimension covers."
+        },
+        "theme": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Short thematic description when the dimension is not path-scoped."
+        },
+        "shared_infrastructure": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "True when the dimension covers code shared across other dimensions; alters the lens prompt."
+        }
+      }
     },
     "findings": {
       "type": "array",
@@ -102,8 +146,7 @@
       "properties": {
         "title": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 120,
+          "pattern": "^[\\s\\S]+$",
           "description": "Short human-readable title for the finding (<=120 chars)."
         },
         "runtime_scope": {
@@ -146,17 +189,17 @@
         },
         "issue": {
           "type": "string",
-          "minLength": 1,
+          "pattern": "^[\\s\\S]+$",
           "description": "1-3 sentence prose description of the problem."
         },
         "why_it_matters": {
           "type": "string",
-          "minLength": 1,
+          "pattern": "^[\\s\\S]+$",
           "description": "Prose grounding the finding in the project's own patterns, standards, or stated requirements."
         },
         "suggested_fix": {
           "type": "string",
-          "minLength": 1,
+          "pattern": "^[\\s\\S]+$",
           "description": "Prose describing the recommended change."
         }
       }
@@ -166,12 +209,13 @@
       "additionalProperties": false,
       "required": [
         "path",
-        "line"
+        "line",
+        "role"
       ],
       "properties": {
         "path": {
           "type": "string",
-          "minLength": 1,
+          "pattern": "^[\\s\\S]+$",
           "description": "Repo-relative file path (POSIX separators)."
         },
         "line": {
@@ -180,13 +224,20 @@
           "description": "Line number or inclusive range (e.g. '12' or '12-20'). Stored as a string so ranges are allowed."
         },
         "role": {
-          "type": "string",
-          "description": "primary = canonical location for this finding; related = supporting evidence elsewhere; callsite = where the issue is invoked; requirement = spec/standards file:line that states the requirement being violated. Defaults to primary when absent.",
-          "enum": [
-            "primary",
-            "related",
-            "callsite",
-            "requirement"
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "primary = canonical location for this finding; related = supporting evidence elsewhere; callsite = where the issue is invoked; requirement = spec/standards file:line that states the requirement being violated. Defaults to primary when absent.",
+              "enum": [
+                "primary",
+                "related",
+                "callsite",
+                "requirement"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }

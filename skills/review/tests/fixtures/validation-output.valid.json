@@ -2,24 +2,43 @@
   "batch_number": 1,
   "verdicts": [
     {
-      "finding_ref": {"content_hash": "a1b2c3d4e5f60718"},
+      "finding_ref": {
+        "content_hash": "a1b2c3d4e5f60718"
+      },
       "action": "confirm",
       "reasoning": "Verified the location and severity is appropriate."
     },
     {
-      "finding_ref": {"content_hash": "b2c3d4e5f6071829"},
+      "finding_ref": {
+        "content_hash": "b2c3d4e5f6071829"
+      },
       "action": "rescore",
-      "new_dimensions": {"evidence_quality": "demonstrated", "evidence_quality_justification": "Found additional evidence in src/auth/policy.py:33 that confirms the issue."},
+      "new_dimensions": {
+        "evidence_quality": "demonstrated",
+        "evidence_quality_justification": "Found additional evidence in src/auth/policy.py:33 that confirms the issue.",
+        "effort_to_fix": null,
+        "effort_to_fix_justification": null,
+        "failure_mode": null,
+        "failure_mode_justification": null,
+        "runtime_scope": null,
+        "runtime_scope_justification": null,
+        "trace_origin": null,
+        "trace_origin_justification": null
+      },
       "reasoning": "Found additional evidence in src/auth/policy.py:33 that confirms the issue."
     },
     {
-      "finding_ref": {"content_hash": "c3d4e5f607182930"},
+      "finding_ref": {
+        "content_hash": "c3d4e5f607182930"
+      },
       "action": "remove",
       "remove_reason": "not_real",
       "reasoning": "Cited line does not exist; finding appears speculative."
     },
     {
-      "finding_ref": {"content_hash": "d4e5f60718293041"},
+      "finding_ref": {
+        "content_hash": "d4e5f60718293041"
+      },
       "action": "remove",
       "remove_reason": "pre_existing",
       "reasoning": "git diff 9fdaf134...HEAD -- src/auth/policy.py shows the PR did not touch this validation branch; the same missing check is present at the merge base."

@@ -4,7 +4,13 @@
   "concern_slug": "implementation",
   "dimension_name": "core module",
   "dimension_slug": "core",
-  "dimension_scope": {"paths": ["src/core/"]},
+  "dimension_scope": {
+    "paths": [
+      "src/core/"
+    ],
+    "shared_infrastructure": null,
+    "theme": null
+  },
   "findings": [
     {
       "title": "Missing null check",

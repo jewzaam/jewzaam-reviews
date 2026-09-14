@@ -202,9 +202,13 @@ class TestValidationOutputSchema:
 
 class TestValidationOutputSimpleSchema:
     def _verdict(self, **kwargs):
+        # new_severity defaults to an explicit null: strict outputs forbid
+        # optional properties, so "not changing severity" is a value, not an
+        # absence. test_rescore_severity_without_confidence_fails overrides it.
         base = {
             "finding_ref": {"content_hash": "a" * 16},
             "action": "rescore",
+            "new_severity": None,
             "reasoning": "adjusted",
         }
         base.update(kwargs)
@@ -215,6 +219,7 @@ class TestValidationOutputSimpleSchema:
         _validate(schema, self._verdict(new_severity="suggestion", new_confidence="medium"))
 
     def test_rescore_severity_without_confidence_fails(self, schemas_dir):
+        """A severity change always ships the confidence it will be bucketed on."""
         schema = _load_json(schemas_dir / "validation-output-simple.schema.json")
         with pytest.raises(jsonschema.ValidationError):
             _validate(schema, self._verdict(new_severity="suggestion"))
