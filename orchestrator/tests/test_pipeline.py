@@ -174,7 +174,7 @@ class TestCategoricalEndToEnd:
         kinds = [issue["kind"] for issue in findings["issues"]]
         assert "subagent_failure" in kinds
 
-    def test_failed_lens_agent_becomes_issue(self, git_repo, monkeypatch):
+    def test_failed_lens_agent_becomes_issue(self, git_repo, monkeypatch, capsys):
         calls = []
         monkeypatch.setattr(
             backend,
@@ -187,6 +187,7 @@ class TestCategoricalEndToEnd:
         costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
         impl_entries = [e for e in costs["entries"] if e["label"] == "implementation/full-scope"]
         assert len(impl_entries) == 3  # initial + 2 retries, all costed
+        assert "implementation/full-scope: implementation agent failed" in capsys.readouterr().err
 
     def test_validator_failure_passes_findings_through(self, git_repo, monkeypatch):
         calls = []
@@ -380,6 +381,23 @@ class TestDenialAggregation:
         pipeline._run_with_retry(state, "select", "x", "haiku", lambda: result)
         report = pipeline._write_costs(state)
         assert report["denials_by_tool"] == {"Bash": 2}
+
+    def test_normalized_tokens_are_rolled_up(self, git_repo):
+        state = pipeline.RunState(options=_options(git_repo), scope=None)
+        state.tmp_dir.mkdir(exist_ok=True)
+        result = backend.AgentResult(
+            output={"ok": True},
+            token_usage={
+                "input_tokens": 100,
+                "cache_read_input_tokens": 200,
+                "cache_creation_input_tokens": 20,
+                "output_tokens": 10,
+            },
+        )
+        pipeline._run_with_retry(state, "select", "x", "haiku", lambda: result)
+        report = pipeline._write_costs(state)
+        assert report["total_normalized_tokens"] == 205.0
+        assert report["normalized_tokens_by_stage"] == {"select/haiku": 205.0}
 
 
 class TestSelectOnly:

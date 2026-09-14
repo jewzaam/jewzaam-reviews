@@ -72,7 +72,7 @@ Skills invoke Python and Bash scripts from the plugin cache. To avoid repeated p
 }
 ```
 
-The review orchestrator invokes the configured agent harness headlessly. Claude Code uses `claude -p`; Codex uses `codex exec`. Each harness uses its existing authentication.
+The review orchestrator invokes the configured agent harness headlessly. Claude Code uses `claude -p`; Codex uses `codex exec`. Each harness uses its existing authentication. Under OpenShell, Codex uses `danger-full-access` inside the outer sandbox because nested read-only namespaces are blocked; set `REVIEW_ORCHESTRATOR_CODEX_SANDBOX=read-only` only where nested namespaces are available.
 
 ## Pipeline Overview
 
@@ -124,7 +124,7 @@ The `compatibility` lens carries a self-contained breaking-change rubric — not
 
 Four rules in the rubric exist to suppress false positives as much as to find breaks: the **directionality rule** (narrowing what you accept and widening what you produce are breaking; the reverse is safe), the **well-behaved-consumer assumption** (a new optional field or enum value is additive, not a break), an explicit **not-breaking list** (new endpoints, bug fixes nobody could rely on, human-readable text changes), and **scope exclusions** (experimental features, unsupported configurations, interfaces with no outside consumer — though internal interfaces stay in scope for mixed-version coexistence on an HA service). Beyond detection, the lens reports a breaking change shipped without its version signal as a finding in its own right, and sizes the remedy per surface in `suggested_fix` — a deprecation cycle for an API break, a release-note entry and a word with the consuming team for a metric rename.
 - **Deterministic everything else.** Consolidation, diff-scope filtering, batching, verdict application, severity mapping, and rendering are tested Python scripts. The orchestrator sequences them; no model reasoning is involved.
-- **Measured cost.** Claude results carry `total_cost_usd`; Codex dollar cost is unavailable through this CLI adapter. The orchestrator writes a per-stage/model ledger to `.tmp-review/costs.json` and prints it after each run.
+- **Measured cost and normalized tokens.** Claude results carry `total_cost_usd`; Codex dollar cost is unavailable through this CLI adapter. The orchestrator also records token usage and prints normalized token units when cost is unavailable. Normalization uses input = 1x, cache-read input = 0.1x, cache-write input = 1.25x, and output = 6x. These are comparison units, not a price estimate. Both measures are written to the per-stage/model ledger at `.tmp-review/costs.json`.
 - **Validator pass.** Critical and important findings get an adversarial validator agent (premise check, dimensional/severity check, and PR-attribution check against the merge base for PR reviews). Verdicts are confirm / rescore / remove with an auditable removal trail in `issues[]`.
 
 ### Scoring modes
