@@ -110,12 +110,14 @@ class Options:
 
 @dataclass
 class CostEntry:
-    """One agent attempt in the run ledger (real spend, never estimated)."""
+    """One agent attempt in the run ledger."""
 
     stage: str
     label: str
     model: str
     cost_usd: float
+    token_usage: dict = field(default_factory=dict)
+    normalized_tokens: float = 0.0
     elapsed_s: float = 0.0
     retries: int = 0
     error: str | None = None
@@ -224,6 +226,8 @@ def _run_with_retry(state, stage, label, model, fn, schema=None, retries=2, harv
                 label=label,
                 model=model,
                 cost_usd=attempt.cost_usd,
+                token_usage=attempt.token_usage,
+                normalized_tokens=backend.normalize_token_usage(attempt.token_usage),
                 elapsed_s=round(time.monotonic() - started, 3),
                 retries=attempt_number,
                 error=failure_reason,
@@ -261,6 +265,8 @@ def _harvest(state, stage, label, model, harvest, stopped, schema):
             label=f"{label} (harvest)",
             model=model,
             cost_usd=attempt.cost_usd,
+            token_usage=attempt.token_usage,
+            normalized_tokens=backend.normalize_token_usage(attempt.token_usage),
             elapsed_s=round(time.monotonic() - started, 3),
             retries=0,
             error=failure_reason,
@@ -605,7 +611,7 @@ def run_validators(state) -> None:
 
 
 def _write_costs(state) -> dict:
-    """Persist the run ledger (cost, latency, denials) to .tmp-review/costs.json."""
+    """Persist the run ledger to .tmp-review/costs.json."""
     report = {
         "run_id": state.run_id,
         "harness": state.options.harness,
@@ -615,7 +621,12 @@ def _write_costs(state) -> dict:
         "orchestrating_session_id": state.orchestrating_session_id or None,
         "scoring": state.options.scoring,
         "total_cost_usd": round(sum(c.cost_usd for c in state.costs), 6),
+        "token_normalization": backend.TOKEN_WEIGHTS,
+        "total_normalized_tokens": round(
+            sum(c.normalized_tokens for c in state.costs), 3
+        ),
         "by_stage": {},
+        "normalized_tokens_by_stage": {},
         "seconds_by_stage": {},
         "denials_by_tool": {},
         "entries": [
@@ -624,6 +635,8 @@ def _write_costs(state) -> dict:
                 "label": c.label,
                 "model": c.model,
                 "cost_usd": c.cost_usd,
+                "token_usage": c.token_usage,
+                "normalized_tokens": c.normalized_tokens,
                 "elapsed_s": c.elapsed_s,
                 "retries": c.retries,
                 "error": c.error,
@@ -643,6 +656,11 @@ def _write_costs(state) -> dict:
         )
         report["seconds_by_stage"][key] = round(
             report["seconds_by_stage"].get(key, 0.0) + entry.elapsed_s, 1
+        )
+        report["normalized_tokens_by_stage"][key] = round(
+            report["normalized_tokens_by_stage"].get(key, 0.0)
+            + entry.normalized_tokens,
+            3,
         )
         for denial in entry.denials:
             tool = denial.get("tool_name", "unknown")
@@ -678,7 +696,7 @@ def _validation_buckets(merged_dir: Path) -> str:
 
 
 def _print_summary(state, cost_report) -> None:
-    """Print the terse end-of-run summary: counts, files, measured cost."""
+    """Print the terse end-of-run summary: counts, files, cost, tokens."""
     base = review_file_basename(state.scope.scope_slug)
     findings_path = Path(state.options.project_root) / f"{base}.json"
     try:
@@ -712,12 +730,16 @@ def _print_summary(state, cost_report) -> None:
             f"Orchestrating session: {state.orchestrating_session_id} "
             "(its spend is NOT in the table below)"
         )
-    print(f"\nCost (measured, scoring={cost_report['scoring']}):")
+    print(f"\nCost (backend-reported, scoring={cost_report['scoring']}):")
     width = max([len(k) for k in cost_report["by_stage"]] + [len("total")])
     for stage_model, cost in cost_report["by_stage"].items():
         seconds = cost_report["seconds_by_stage"].get(stage_model, 0.0)
         print(f"  {stage_model:<{width}} ${cost:.4f}  ({seconds:.0f}s agent time)")
     print(f"  {'total':<{width}} ${cost_report['total_cost_usd']:.4f}")
+    print("\nTokens (normalized: input=1x, cache read=0.1x, cache write=1.25x, output=6x):")
+    for stage_model, tokens in cost_report["normalized_tokens_by_stage"].items():
+        print(f"  {stage_model:<{width}} {tokens:.3f}")
+    print(f"  {'total':<{width}} {cost_report['total_normalized_tokens']:.3f}")
     if cost_report["denials_by_tool"]:
         denial_text = ", ".join(
             f"{tool} ({count})"
@@ -767,6 +789,8 @@ def run_select_only(options: Options, selection_file: Path) -> int:
                         "label": c.label,
                         "model": c.model,
                         "cost_usd": c.cost_usd,
+                        "token_usage": c.token_usage,
+                        "normalized_tokens": c.normalized_tokens,
                         "elapsed_s": c.elapsed_s,
                         "retries": c.retries,
                         "error": c.error,
@@ -896,6 +920,8 @@ def _run_stages(state: RunState) -> int:
 
     if not any((state.tmp_dir / "00-raw").glob("*.json")):
         print("ERROR: no lens agent produced valid output.", file=sys.stderr)
+        for issue in state.issues:
+            print(f"ERROR: {issue['message']}", file=sys.stderr)
         _write_costs(state)
         return 1
 

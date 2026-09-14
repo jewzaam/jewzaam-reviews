@@ -109,10 +109,10 @@ On a host that cannot both background a command and wake the session when it exi
 
 The run writes three files at the project root: `Findings-review[-<scope>].json` (structured findings), `.md` (critical/important detail, plus a concern-by-severity table linking the rest), and `-supplementary.md` (every finding grouped by concern then severity, decomposition, cross-cutting observations). Critical and important findings appear in both markdown files by design — the main file is the severity read, the supplementary is the per-concern read.
 
-Relay the final `--wait` output verbatim: severity counts, output filenames, and the measured per-stage/model cost table. If it reports a non-zero finish, show that output and stop — do not attempt to reconstruct findings yourself.
+Relay the final `--wait` output verbatim: severity counts, output filenames, and the cost plus normalized-token tables. If it reports a non-zero finish, show that output and stop — do not attempt to reconstruct findings yourself.
 
 ## Critical Rules
 
 - Never write or edit `Findings-*` files — the renderer script owns them.
 - Never re-run pipeline stage scripts by hand; the orchestrator sequences them.
-- The orchestrator's cost table is measured spend from the agent backend. Report it as-is.
+- The orchestrator's cost table is backend-reported spend; its normalized-token table is comparison-only. Report both as-is.

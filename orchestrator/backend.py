@@ -8,7 +8,9 @@ spawn an agent.
 
 The Claude implementation shells out to `claude -p --output-format json`;
 the Codex implementation uses `codex exec --json`. Both return the same
-structured AgentResult to the pipeline.
+structured AgentResult to the pipeline. Claude results report measured
+`total_cost_usd` when available; all backends may provide token usage for
+normalized comparison.
 """
 
 import json
@@ -30,6 +32,13 @@ ORCHESTRATOR_ROOT = Path(__file__).resolve().parent
 PLUGIN_ROOT = ORCHESTRATOR_ROOT.parent
 REVIEW_SCHEMAS_DIR = PLUGIN_ROOT / "skills" / "review" / "schemas"
 
+TOKEN_WEIGHTS = {
+    "input_tokens": 1.0,
+    "cache_read_input_tokens": 0.1,
+    "cache_creation_input_tokens": 1.25,
+    "output_tokens": 6.0,
+}
+
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
@@ -40,12 +49,35 @@ class AgentResult:
 
     output: dict | None = None  # structured_output; None on failure
     cost_usd: float = 0.0  # total_cost_usd (0.0 if unavailable)
+    token_usage: dict = field(default_factory=dict)
     permission_denials: list = field(default_factory=list)
     error: str | None = None
     # Machine-readable failure class for aggregation/alerting:
     # timeout | spawn | protocol | agent | budget | schema (set by callers) | None
     error_category: str | None = None
     session_id: str = ""  # child session id — joins the trace/ledger to telemetry
+
+
+def normalize_token_usage(usage: dict) -> float:
+    """Convert token usage to comparable, intentionally approximate units."""
+    return round(
+        sum((usage.get(name) or 0) * weight for name, weight in TOKEN_WEIGHTS.items()),
+        3,
+    )
+
+
+def _parse_token_usage(result: dict) -> dict:
+    usage = result.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+    parsed = {}
+    for name in TOKEN_WEIGHTS:
+        try:
+            value = int(usage.get(name) or 0)
+        except (TypeError, ValueError):
+            value = 0
+        parsed[name] = max(value, 0)
+    return parsed
 
 
 def load_resolved_schema(name: str) -> dict:
@@ -354,6 +386,8 @@ def run_agent(
                 "elapsed_s": round(time.monotonic() - started, 3),
                 "error": agent_result.error,
                 "cost_usd": agent_result.cost_usd,
+                "token_usage": agent_result.token_usage,
+                "normalized_tokens": normalize_token_usage(agent_result.token_usage),
                 "denials": agent_result.permission_denials,
                 "prompt": redact_prompt(prompt, redact),
                 "result": raw_result,
@@ -394,9 +428,21 @@ def run_agent(
             argv += ["--allowedTools", ",".join(allowed_tools)]
         child_env = _scrubbed_env()
     else:
-        # Codex has no Claude-style tool allowlist; read-only sandboxing keeps
-        # review agents from changing the project while retaining git reads.
-        argv = ["codex", "exec", "--json", "--ephemeral", "--sandbox", "read-only"]
+        # The outer OpenShell sandbox is the security boundary. Its seccomp
+        # policy blocks the nested user namespace that Codex read-only mode
+        # needs; use full access inside that already-contained sandbox.
+        default_sandbox = (
+            "danger-full-access" if os.environ.get("OPENSHELL_SANDBOX") else "read-only"
+        )
+        sandbox = os.environ.get("REVIEW_ORCHESTRATOR_CODEX_SANDBOX", default_sandbox)
+        if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
+            return _finish(
+                AgentResult(
+                    error=f"unsupported Codex sandbox: {sandbox}",
+                    error_category="spawn",
+                )
+            )
+        argv = ["codex", "exec", "--json", "--ephemeral", "--sandbox", sandbox]
         if model not in {"haiku", "sonnet"}:
             argv += ["--model", model]
         if schema is not None:
@@ -497,6 +543,7 @@ def run_agent(
     denials = result.get("permission_denials")
     agent_result = AgentResult(
         cost_usd=cost_usd,
+        token_usage=_parse_token_usage(result),
         permission_denials=denials if isinstance(denials, list) else [],
         session_id=str(result.get("session_id") or "")
         or (resume_session_id or session_id or ""),

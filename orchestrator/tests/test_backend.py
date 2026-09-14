@@ -87,6 +87,8 @@ class TestArgvConstruction:
 
     def test_codex_argv_and_jsonl_output(self, monkeypatch):
         capture = {}
+        monkeypatch.setenv("OPENSHELL_SANDBOX", "1")
+        monkeypatch.delenv("REVIEW_ORCHESTRATOR_CODEX_SANDBOX", raising=False)
         stdout = "\n".join(
             [
                 json.dumps({"type": "thread.started", "thread_id": "codex-1"}),
@@ -113,10 +115,20 @@ class TestArgvConstruction:
         )
         argv = capture["argv"]
         assert argv[:3] == ["codex", "exec", "--json"]
-        assert "--sandbox" in argv and argv[argv.index("--sandbox") + 1] == "read-only"
+        assert "--sandbox" in argv and argv[argv.index("--sandbox") + 1] == "danger-full-access"
         assert "--output-schema" in argv
         assert result.output == {"ok": True}
         assert result.session_id == "codex-1"
+
+    def test_codex_sandbox_can_be_overridden(self, monkeypatch):
+        capture = {}
+        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
+        monkeypatch.setenv("REVIEW_ORCHESTRATOR_CODEX_SANDBOX", "read-only")
+        backend.run_agent(
+            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp", harness="codex"
+        )
+        argv = capture["argv"]
+        assert argv[argv.index("--sandbox") + 1] == "read-only"
 
     def test_no_schema_omits_json_schema_flag(self, monkeypatch):
         capture = {}
@@ -172,6 +184,22 @@ class TestResultParsing:
         assert res.cost_usd == 0.0123
         assert res.session_id == "sess-1234"
         assert res.permission_denials == []
+
+    def test_token_usage_is_parsed_and_normalized(self, monkeypatch):
+        _patch_run(
+            monkeypatch,
+            _FakeProc(json.dumps(_cli_result(usage={
+                "input_tokens": 100,
+                "cache_read_input_tokens": 200,
+                "cache_creation_input_tokens": 20,
+                "output_tokens": 10,
+            }))),
+        )
+        res = backend.run_agent(
+            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+        )
+        assert res.token_usage["input_tokens"] == 100
+        assert backend.normalize_token_usage(res.token_usage) == 205.0
 
     def test_success_without_schema_returns_text(self, monkeypatch):
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())))
