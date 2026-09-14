@@ -1,8 +1,8 @@
 ---
 name: review
-description: Perform a scope-aware multi-agent codebase review via the script orchestrator. A selector agent picks applicable review lenses from the diff or repo shape, lens agents review in parallel, validators adversarially check critical/important findings, and deterministic scripts handle everything else. Use when the user asks to review, assess, audit, or evaluate a codebase or project. Accepts an optional PR number, a --scoring flag, and free-form guidance text.
+description: Perform a scope-aware multi-agent codebase review via the script orchestrator. A selector agent picks applicable review lenses from the diff or repo shape, lens agents review in parallel, validators adversarially check critical/important findings, and deterministic scripts handle everything else. Use when the user asks to review, assess, audit, or evaluate a codebase or project. Defaults to categorical scoring with no skipped lenses; pass -i or --interactive to choose options.
 disable-model-invocation: true
-argument-hint: "[PR-number] [--scoring categorical|simple] [guidance text...]"
+argument-hint: "[PR-number] [-i|--interactive] [--scoring categorical|simple] [guidance text...]"
 ---
 
 # Review Skill
@@ -32,9 +32,14 @@ Under Claude Code that resolves via `${CLAUDE_PLUGIN_ROOT}/orchestrator/cli.py`.
 From the arguments the skill was invoked with (`$ARGUMENTS` where the host substitutes it; otherwise the text the user typed after the skill name):
 
 - A leading all-digits token is the PR number → `--pr <N>`.
+- A `-i` or `--interactive` token enables the existing scoring and lens questions; remove it from the forwarded arguments.
 - A `--scoring categorical` or `--scoring simple` token passes through unchanged.
 - A `--skip-lenses <slugs>` token passes through unchanged.
 - Everything else is guidance → `--guidance "<text>"` (omit when empty).
+
+Without `-i`/`--interactive`, use categorical scoring by default, run every lens
+the selector reports, and ask no questions. Explicit `--scoring` and
+`--skip-lenses` arguments still take effect.
 
 ### 2. Lens Selection
 
@@ -48,9 +53,13 @@ It prints the lenses the selector matched for this scope, one per line as `lens:
 
 The selector does not depend on the scoring mode. Ask the user NOTHING here — its output is needed to build the lens question, and every question is asked together in Step 3.
 
-### 3. Ask Everything At Once
+### 3. Ask Everything At Once (interactive mode only)
 
-Exactly ONE AskUserQuestion call, carrying every decision still unanswered after Step 1's parse. Never two calls — the user answers one prompt per review, not one per decision. If neither question below applies, ask nothing and go to Step 4.
+Skip this step unless `-i`/`--interactive` was given. In interactive mode,
+make exactly ONE AskUserQuestion call, carrying every decision still unanswered
+after Step 1's parse. Never two calls — the user answers one prompt per review,
+not one per decision. If neither question below applies, ask nothing and go to
+Step 4.
 
 Use whichever structured-question tool the host provides — `AskUserQuestion` under Claude Code, `request_user_input` under Codex. Their shapes match closely enough to carry the same content: per-question header, prompt, and labelled options with one-sentence descriptions, recommended option first, and a free-form "Other" the client supplies (never author one).
 

@@ -6,7 +6,7 @@ A Claude Code plugin bundling a connected pipeline of review skills. Producer sk
 
 | Skill | Output files | Description |
 |-------|--------------|-------------|
-| `jewzaam-reviews:review` | `Findings-review[-<scope>].{json,md,-supplementary.md}` | Scope-aware multi-agent review via the script orchestrator |
+| `jewzaam-reviews:review` | `Findings-review[-<scope>].{json,md,-supplementary.md}` | Scope-aware multi-agent review via the script orchestrator; categorical with no skipped lenses by default |
 | `jewzaam-reviews:standards` | `Findings-standards.{json,md,-supplementary.md}` | Audit repos against `~/source/standards/` personal standards library |
 | `jewzaam-reviews:update-pr` | `Findings-update-pr-<number>.{json,md}` | Fetch GitHub PR review comments and supplementary feedback |
 | `jewzaam-reviews:c4-reverse-engineer` | `Findings-c4-reverse-engineer.{json,md}` | Reverse-engineer C4 architecture diagrams and behavioral spec from a codebase |
@@ -158,8 +158,10 @@ In simple mode, severity comes directly from the agents (validated for critical/
 From any project repo:
 
 ```
-/jewzaam-reviews:review                          # Full-repo review, scope-aware lens selection
+/jewzaam-reviews:review                          # Categorical review, no skipped lenses, no questions
+/jewzaam-reviews:review --interactive            # Restore scoring/lens questions
 /jewzaam-reviews:review 42                       # PR-scoped review (PR #42)
+/jewzaam-reviews:review 42 -i                    # PR review with interactive choices
 /jewzaam-reviews:review focus on auth            # Guided review
 /jewzaam-reviews:review 42 --scoring simple      # PR review with simple scoring
 /jewzaam-reviews:standards                       # Audit against ~/source/standards/
