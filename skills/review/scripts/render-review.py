@@ -303,6 +303,47 @@ def file_basename(scope_slug: str) -> str:
     return review_file_basename(scope_slug)
 
 
+def intent_file_basename(scope_slug: str) -> str:
+    """Return the filename stem ``Findings-intent[-<scope-slug>]``.
+
+    Carries the same slug as the findings files so reviews of two PRs in one
+    repo do not overwrite each other's record of what they were judged
+    against.
+    """
+    return f"Findings-intent-{scope_slug}" if scope_slug else "Findings-intent"
+
+
+def render_intent_markdown(rendered: dict, project_name: str) -> str:
+    """Render the intent the review ran with — including its absence.
+
+    A file that says "none supplied" is the point: intent missing is the
+    normal case today, and a review that silently invented a purpose for the
+    code is not distinguishable from one that was told the purpose unless
+    something writes it down.
+    """
+    parts = [f"# Review Intent: {project_name}\n"]
+    intent = rendered.get("intent")
+    if intent:
+        parts.append(
+            "What the lens and selector agents were told this change exists "
+            "for. Findings were judged against this.\n"
+        )
+        parts.append(intent.rstrip() + "\n")
+    else:
+        parts.append(
+            "**No intent was supplied.** Every lens judged this code against "
+            "a purpose it inferred from the code itself, so a finding may "
+            "contradict a deliberate decision this review never saw, and a "
+            "requirement the change silently dropped could not be detected.\n"
+        )
+        parts.append(
+            "Supply it by passing `--intent-file` to the orchestrator: the "
+            "PR or issue description, the acceptance criteria, or a sentence "
+            "saying what the change is for.\n"
+        )
+    return "\n".join(parts)
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -360,6 +401,17 @@ def main(argv: list[str]) -> int:
         ),
     )
     parser.add_argument(
+        "--intent-file",
+        type=Path,
+        default=None,
+        help=(
+            "file holding why the reviewed thing exists, as the agents were "
+            "given it; embedded in the envelope and rendered to "
+            "Findings-intent[-<scope-slug>].md. Omitted means none was "
+            "available, which that file then says"
+        ),
+    )
+    parser.add_argument(
         "--orchestrating-session-id",
         default="",
         help=(
@@ -402,6 +454,14 @@ def main(argv: list[str]) -> int:
         logger.error("could not read --run-report %s: %s", args.run_report, exc)
         return 1
 
+    intent = None
+    if args.intent_file is not None:
+        try:
+            intent = args.intent_file.read_text(encoding="utf-8").strip() or None
+        except OSError as exc:
+            logger.error("could not read --intent-file %s: %s", args.intent_file, exc)
+            return 1
+
     rendered_findings = assign_buckets_and_ids(findings, scoring=args.scoring)
     observations = envelope.get("cross_cutting_observations", [])
     rendered = build_envelope(
@@ -414,6 +474,7 @@ def main(argv: list[str]) -> int:
         run_id=args.run_id or None,
         orchestrating_session_id=args.orchestrating_session_id or None,
         run_report=run_report,
+        intent=intent,
         supplementary={"cross_cutting_observations": observations}
         if observations
         else None,
@@ -442,12 +503,17 @@ def main(argv: list[str]) -> int:
         render_supplementary_markdown(rendered, args.project_name, args.scope_slug),
         encoding="utf-8",
     )
+    md_intent_path = args.out_dir / f"{intent_file_basename(args.scope_slug)}.md"
+    md_intent_path.write_text(
+        render_intent_markdown(rendered, args.project_name),
+        encoding="utf-8",
+    )
 
     issues_count = len(rendered.get("issues") or [])
     if not args.quiet:
         print(
-            f"render: wrote {json_path}, {md_main_path}, {md_supp_path} "
-            f"({issues_count} issue(s) recorded)"
+            f"render: wrote {json_path}, {md_main_path}, {md_supp_path}, "
+            f"{md_intent_path} ({issues_count} issue(s) recorded)"
         )
     return 0
 

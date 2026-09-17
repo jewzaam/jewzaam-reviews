@@ -111,6 +111,7 @@ class Options:
     project_root: str
     pr_number: int | None = None
     guidance: str = ""
+    intent: str = ""  # why the thing under review exists; "" when unavailable
     scoring: str = "categorical"  # or "simple"
     harness: str = "claude"
     skip_lenses: tuple = ()  # lens slugs excluded before selection
@@ -465,6 +466,23 @@ def _bootstrap(state) -> None:
     )
     if proc.returncode != 0:
         raise PipelineError(f"bootstrap-tmp.sh failed: {proc.stderr.strip()}")
+
+
+INTENT_FILENAME = "intent.md"
+
+
+def _write_intent(state) -> Path | None:
+    """Persist the intent the agents were given, or None when there was none.
+
+    Written after the bootstrap wipe, beside costs.json and run-report.json,
+    so the run directory holds the input the review was judged against and
+    not just its outputs.
+    """
+    if not state.scope.intent:
+        return None
+    path = state.tmp_dir / INTENT_FILENAME
+    path.write_text(state.scope.intent, encoding="utf-8")
+    return path
 
 
 def _active_roster(state) -> tuple:
@@ -958,7 +976,7 @@ def run_select_only(options: Options, selection_file: Path) -> int:
     """
     try:
         review_scope = scope_mod.compute_scope(
-            options.project_root, options.pr_number, options.guidance
+            options.project_root, options.pr_number, options.guidance, options.intent
         )
     except scope_mod.ScopeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1039,7 +1057,7 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
     """Run the full review pipeline; returns a process exit code."""
     try:
         review_scope = scope_mod.compute_scope(
-            options.project_root, options.pr_number, options.guidance
+            options.project_root, options.pr_number, options.guidance, options.intent
         )
     except scope_mod.ScopeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1057,6 +1075,17 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
         ),
     )
 
+    # Intent is an input, not a stage, but it gets a row for the same reason
+    # every other row exists: a review run without it judged the code against
+    # a purpose it inferred, and the reader has to be told that happened.
+    state.record_step(
+        "intent",
+        "ok" if review_scope.intent else "skipped",
+        f"{len(review_scope.intent)} chars supplied"
+        if review_scope.intent
+        else "none supplied; lenses reviewed against inferred purpose",
+    )
+
     if options.dry_run:
         print(f"Project: {review_scope.project_name} ({review_scope.language})")
         print(f"Scope slug: {review_scope.scope_slug or '(full repo)'}")
@@ -1066,6 +1095,7 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
         return 0
 
     _bootstrap(state)
+    _write_intent(state)
 
     state.saved_selection = _load_saved_selection(state, selection_file)
     try:
@@ -1222,6 +1252,9 @@ def _run_stages(state: RunState) -> int:
             ]
         if review_scope.scope_slug:
             render_args += ["--scope-slug", review_scope.scope_slug]
+        intent_path = state.tmp_dir / INTENT_FILENAME
+        if intent_path.is_file():
+            render_args += ["--intent-file", str(intent_path)]
         stage_cli("render-review.py", *render_args, cwd=cwd)
     else:
         from orchestrator import simple_mode
