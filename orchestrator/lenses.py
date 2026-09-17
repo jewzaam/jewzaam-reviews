@@ -35,7 +35,24 @@ LENSES: tuple[Lens, ...] = (
         "architecture",
         "sonnet",
         "Project structure, module boundaries, coupling, data model, "
-        "configuration management, design pattern consistency.",
+        "configuration management, design pattern consistency.\n"
+        "REUSE BEFORE BUILD: new code that reimplements what the stdlib, an "
+        "already-installed dependency, or an existing module in this repo "
+        "already provides. Name the existing thing and where it is — a reuse "
+        "finding with no named alternative is not a finding. This is not the "
+        "maintainability lens's duplication check, which is about repetition "
+        "within the change; this is about rebuilding something that exists.\n"
+        "CONTRACT FIRST: whether a new component exposes a defined interface "
+        "(API, schema, typed boundary) or leaks its internals to callers. "
+        "Changes to an existing contract belong to the compatibility lens; "
+        "this is a contract being absent, not broken.\n"
+        "JUSTIFIED STRUCTURE: abstraction whose only justification is "
+        "anticipated future need — an interface with one implementation, a "
+        "factory for one product, a config key with one value, a parameter no "
+        "caller varies. Report the speculative generality, not the style.\n"
+        "IMPLICIT INTEGRATION CONTRACTS: what one component assumes about "
+        "another's behavior, shared state, ordering, or timing that nothing "
+        "states or enforces — the coupling an import graph does not show.",
         "Change touches module structure, interfaces between components, "
         "configuration, or introduces new files/packages.",
     ),
