@@ -842,3 +842,44 @@ class TestRunReport:
             assert "mostly-fine" in str(exc)
         else:
             raise AssertionError("expected ValueError for an unknown status")
+
+
+class TestIntentEndToEnd:
+    """Intent travels from Options to the agents and to a durable artifact.
+
+    The absent case matters as much as the present one: a review that
+    inferred the code's purpose from the code has to say so, or it reads
+    exactly like one that was told the purpose.
+    """
+
+    INTENT = "AC1: deleting a workspace must not delete its runs."
+
+    def test_intent_reaches_agents_and_artifacts(self, git_repo, monkeypatch):
+        calls = []
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
+        assert pipeline.run_review(_options(git_repo, intent=self.INTENT)) == 0
+
+        # Selector and lens agents were both told why the code exists.
+        selector = next(c for c in calls if "Select which review lenses" in c["prompt"])
+        lens = next(c for c in calls if "LENS SCOPE:" in c["prompt"])
+        for call in (selector, lens):
+            assert self.INTENT in call["prompt"]
+
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        assert findings["intent"] == self.INTENT
+        assert _steps(findings["run_report"])["intent"] == "ok"
+
+        # The run directory keeps the input, next to costs.json.
+        assert (git_repo / ".tmp-review" / pipeline.INTENT_FILENAME).read_text() == self.INTENT
+        intent_md = (git_repo / "Findings-intent.md").read_text()
+        assert self.INTENT in intent_md
+
+    def test_missing_intent_is_reported_not_hidden(self, git_repo, monkeypatch):
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_review(_options(git_repo)) == 0
+
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        assert "intent" not in findings
+        assert _steps(findings["run_report"])["intent"] == "skipped"
+        assert not (git_repo / ".tmp-review" / pipeline.INTENT_FILENAME).exists()
+        assert "No intent was supplied" in (git_repo / "Findings-intent.md").read_text()

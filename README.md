@@ -6,7 +6,7 @@ A Claude Code plugin bundling a connected pipeline of review skills. Producer sk
 
 | Skill | Output files | Description |
 |-------|--------------|-------------|
-| `jewzaam-reviews:review` | `Findings-review[-<scope>].{json,md,-supplementary.md}` | Scope-aware multi-agent review via the script orchestrator; categorical with no skipped lenses by default |
+| `jewzaam-reviews:review` | `Findings-review[-<scope>].{json,md,-supplementary.md}`, `Findings-intent[-<scope>].md` | Scope-aware multi-agent review via the script orchestrator; categorical with no skipped lenses by default |
 | `jewzaam-reviews:standards` | `Findings-standards.{json,md,-supplementary.md}` | Audit repos against `~/source/standards/` personal standards library |
 | `jewzaam-reviews:update-pr` | `Findings-update-pr-<number>.{json,md}` | Fetch GitHub PR review comments and supplementary feedback |
 | `jewzaam-reviews:c4-reverse-engineer` | `Findings-c4-reverse-engineer.{json,md}` | Reverse-engineer C4 architecture diagrams and behavioral spec from a codebase |
@@ -102,6 +102,8 @@ graph TD
 ```
 
 Key properties:
+
+- **Intent is an input, and its absence is reported.** The skill gathers why the change exists — acceptance criteria, the PR/issue description, or what the requester said — and passes it to the CLI with `--intent-file`; the orchestrator fetches nothing itself. Every lens and the selector receive it. When none was available, `Findings-intent[-<scope>].md` says so and the run report carries a `skipped` intent row, because a review that inferred the purpose of the code from the code is not the same review as one that was told.
 
 - **Scope-aware sizing.** A cheap selector agent reads the diff (or repo shape) and picks applicable lenses from a roster with `runs_when` descriptions. The `implementation` lens always runs; a broken selector falls back to all lenses rather than silently narrowing the review. A small PR typically runs 1 selector + 2–4 lens agents + a validator, instead of a fixed matrix.
 

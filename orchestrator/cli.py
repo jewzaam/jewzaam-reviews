@@ -151,6 +151,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pr", type=int, default=None, help="PR number to scope to")
     parser.add_argument("--guidance", default="", help="free-form review guidance")
     parser.add_argument(
+        "--intent-file",
+        type=Path,
+        default=None,
+        help="file holding why the thing under review exists (PR/issue "
+        "description, acceptance criteria, or what the requester said it is "
+        "for). The skill gathers it from whatever the session has and writes "
+        "it; nothing here fetches it. Omitted means no intent was available, "
+        "which the run reports rather than treating as an error",
+    )
+    parser.add_argument(
         "--scoring",
         choices=["categorical", "simple"],
         default="categorical",
@@ -248,10 +258,22 @@ def main(argv: list[str] | None = None) -> int:
                 if any(os.environ.get(key) for key in ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CODEX_CI"))
                 else "claude"
             )
+    intent = ""
+    if args.intent_file is not None:
+        try:
+            intent = args.intent_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            # Named but unreadable is a caller mistake, not "no intent": the
+            # review would silently run blind against the one input the caller
+            # took the trouble to supply.
+            print(f"error: could not read --intent-file: {exc}", file=sys.stderr)
+            return 2
+
     options = pipeline.Options(
         project_root=str(Path(args.project_root).resolve()),
         pr_number=args.pr,
         guidance=args.guidance,
+        intent=intent,
         scoring=args.scoring,
         harness=harness,
         skip_lenses=skip_lenses,

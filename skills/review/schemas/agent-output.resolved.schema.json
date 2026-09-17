@@ -9,7 +9,7 @@
       "type": "string"
     },
     "concern": {
-      "description": "Human-readable concern axis. One of the seven fixed axes the review skill dispatches per dimension.",
+      "description": "Human-readable concern axis. One of the eight fixed axes the review skill dispatches per dimension.",
       "enum": [
         "Architecture and Design",
         "Implementation Quality",

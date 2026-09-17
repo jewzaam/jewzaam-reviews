@@ -234,3 +234,29 @@ class TestWriteBatches:
         survivors, issues = simple_mode.apply_verdicts(vdir, [f1, f2])
         assert [f["title"] for f in survivors] == ["b"]
         assert len(issues) == 1
+
+
+class TestSimpleScoringIntent:
+    """Simple mode renders through the same script, so it must pass intent too.
+
+    Its render call is a separate code path from the categorical one; the
+    flag was added to both and only a run proves the second.
+    """
+
+    INTENT = "AC1: deleting a workspace must not delete its runs."
+
+    def test_intent_reaches_findings_and_artifact(self, git_repo, monkeypatch):
+        monkeypatch.setattr(backend, "run_agent", _fake_simple_backend([]))
+        rc = pipeline.run_review(
+            pipeline.Options(
+                project_root=str(git_repo),
+                parallel=2,
+                timeout_s=30,
+                scoring="simple",
+                intent=self.INTENT,
+            )
+        )
+        assert rc == 0
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        assert findings["intent"] == self.INTENT
+        assert self.INTENT in (git_repo / "Findings-intent.md").read_text()

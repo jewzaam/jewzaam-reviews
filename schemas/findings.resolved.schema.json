@@ -767,6 +767,10 @@
     "findings": {
       "type": "array"
     },
+    "intent": {
+      "description": "Why the reviewed thing exists \u2014 its PR/issue description, acceptance criteria, or what the person requesting the review stated it is for \u2014 exactly as the lens and selector agents were given it. Gathered by the review skill from whatever the invoking session has; the orchestrator fetches nothing. An absent key means no intent was available and every lens judged the code against a purpose it inferred, which the run report's `intent` step also records. Only meaningful for source: review.",
+      "type": "string"
+    },
     "issues": {
       "items": {
         "properties": {

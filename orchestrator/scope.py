@@ -34,6 +34,11 @@ class ReviewScope:
     guidance: str = ""
     standards: str = ""  # external + local standards text
     scope_slug: str = ""  # e.g. "pr-42"; empty when unconstrained
+    # Why the thing under review exists: PR/issue description, acceptance
+    # criteria, or what the person running the review said it is for. Gathered
+    # by the skill (which has the session's tools) and handed in as text —
+    # nothing here fetches it. Empty is normal and is reported as such.
+    intent: str = ""
 
 
 def _git(project_root: str, *args: str) -> str:
@@ -243,6 +248,7 @@ def compute_scope(
     project_root: str,
     pr_number: int | None,
     guidance: str,
+    intent: str = "",
 ) -> ReviewScope:
     """Build the full ReviewScope: git context, PR scope, standards, probe."""
     default_branch = check_git_context(project_root)
@@ -258,6 +264,7 @@ def compute_scope(
         pr_number=pr_number,
         guidance=guidance.strip(),
         standards=gather_standards(project_root),
+        intent=intent.strip(),
     )
     if pr_number is not None:
         scope.pr_scope_text, scope.merge_base = compute_pr_scope(

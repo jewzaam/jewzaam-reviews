@@ -799,3 +799,77 @@ class TestRunReport:
         assert result.returncode == 1
         assert "run-report" in result.stderr
         assert not (tmp_path / "out" / "Findings-review.json").exists()
+
+
+class TestIntentRender:
+    """The intent a review ran with becomes an artifact — including when absent.
+
+    Absent intent is the normal case today, so the file that says so is the
+    point of the feature: a review that inferred the code's purpose from the
+    code is otherwise indistinguishable from one that was told the purpose.
+    """
+
+    INTENT = "AC1: deleting a workspace must not delete its runs.\n"
+
+    def _render(self, tmp_path, intent=None, scope_slug=None):
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        args = [
+            "--input-dir", str(stage),
+            "--out-dir", str(tmp_path / "out"),
+            "--project-name", "myapp",
+        ]
+        if intent is not None:
+            intent_path = tmp_path / "intent.md"
+            intent_path.write_text(intent, encoding="utf-8")
+            args += ["--intent-file", str(intent_path)]
+        if scope_slug:
+            args += ["--scope-slug", scope_slug]
+        return _run(args)
+
+    def test_intent_embedded_in_envelope_and_validates(self, tmp_path):
+        result = self._render(tmp_path, intent=self.INTENT)
+        assert result.returncode == 0, result.stderr
+        rendered = _load(tmp_path / "out" / "Findings-review.json")
+        assert rendered["intent"] == self.INTENT.strip()
+        with SHARED_SCHEMA.open("r", encoding="utf-8") as fh:
+            jsonschema.Draft202012Validator(json.load(fh)).validate(rendered)
+
+    def test_intent_file_carries_the_text_verbatim(self, tmp_path):
+        result = self._render(tmp_path, intent=self.INTENT)
+        assert result.returncode == 0, result.stderr
+        md = (tmp_path / "out" / "Findings-intent.md").read_text(encoding="utf-8")
+        assert "AC1: deleting a workspace must not delete its runs." in md
+
+    def test_absent_intent_still_writes_the_file_and_says_so(self, tmp_path):
+        result = self._render(tmp_path)
+        assert result.returncode == 0, result.stderr
+        rendered = _load(tmp_path / "out" / "Findings-review.json")
+        assert "intent" not in rendered
+        md = (tmp_path / "out" / "Findings-intent.md").read_text(encoding="utf-8")
+        assert "No intent was supplied" in md
+
+    def test_empty_intent_file_counts_as_absent(self, tmp_path):
+        result = self._render(tmp_path, intent="   \n\n")
+        assert result.returncode == 0, result.stderr
+        assert "intent" not in _load(tmp_path / "out" / "Findings-review.json")
+        md = (tmp_path / "out" / "Findings-intent.md").read_text(encoding="utf-8")
+        assert "No intent was supplied" in md
+
+    def test_scope_slug_keeps_two_prs_from_overwriting_each_other(self, tmp_path):
+        result = self._render(tmp_path, intent=self.INTENT, scope_slug="pr-42")
+        assert result.returncode == 0, result.stderr
+        assert (tmp_path / "out" / "Findings-intent-pr-42.md").is_file()
+        assert not (tmp_path / "out" / "Findings-intent.md").exists()
+
+    def test_unreadable_intent_file_fails_the_render(self, tmp_path):
+        stage = tmp_path / "20-findings"
+        _create_stage_dir_from_fixture(stage, FIXTURES / "post-validation.sample.json")
+        result = _run([
+            "--input-dir", str(stage),
+            "--out-dir", str(tmp_path / "out"),
+            "--project-name", "myapp",
+            "--intent-file", str(tmp_path / "missing.md"),
+        ])
+        assert result.returncode == 1
+        assert "could not read --intent-file" in result.stderr

@@ -212,3 +212,33 @@ class TestSkipLenses:
         )
         assert cli.main(["--skip-lenses", "security, documentation", "--dry-run"]) == 0
         assert seen["skips"] == ("security", "documentation")
+
+
+class TestIntentFile:
+    def test_contents_reach_options(self, monkeypatch, tmp_path):
+        intent = tmp_path / "intent.md"
+        intent.write_text("AC1: runs survive workspace deletion.\n", encoding="utf-8")
+        seen = {}
+
+        def _capture(options, **kw):
+            seen["intent"] = options.intent
+            return 0
+
+        monkeypatch.setattr(cli.pipeline, "run_review", _capture)
+        assert cli.main(["--intent-file", str(intent), "--dry-run"]) == 0
+        assert seen["intent"] == "AC1: runs survive workspace deletion.\n"
+
+    def test_omitted_means_empty_not_error(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(
+            cli.pipeline, "run_review",
+            lambda options, **kw: seen.setdefault("intent", options.intent) and 0 or 0,
+        )
+        assert cli.main(["--dry-run"]) == 0
+        assert seen["intent"] == ""
+
+    def test_unreadable_file_is_an_error_not_silent_absence(self, capsys, tmp_path):
+        # A caller who supplied the flag meant it; reviewing blind instead
+        # would hide the one input they took the trouble to gather.
+        assert cli.main(["--intent-file", str(tmp_path / "gone.md"), "--dry-run"]) == 2
+        assert "could not read --intent-file" in capsys.readouterr().err

@@ -152,6 +152,17 @@ class TestComputeScope:
         assert s.scope_slug == "focus-on-aut"
         assert len(s.scope_slug) <= 12
 
+    def test_intent_defaults_to_empty(self, git_repo):
+        assert scope.compute_scope(str(git_repo), None, "").intent == ""
+
+    def test_intent_is_stripped_and_kept_out_of_the_slug(self, git_repo):
+        # Intent is a separate field precisely because the slug is derived
+        # from guidance: an issue description routed through guidance would
+        # name every output file after its first twelve characters.
+        s = scope.compute_scope(str(git_repo), None, "", "\n AC1: keep runs.\n")
+        assert s.intent == "AC1: keep runs."
+        assert s.scope_slug == ""
+
 
 class TestRemoteOwner:
     def test_https_simple(self):

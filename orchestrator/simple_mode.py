@@ -283,4 +283,7 @@ def run_simple_path(state) -> None:
         ]
     if review_scope.scope_slug:
         render_args += ["--scope-slug", review_scope.scope_slug]
+    intent_path = state.tmp_dir / pipeline.INTENT_FILENAME
+    if intent_path.is_file():
+        render_args += ["--intent-file", str(intent_path)]
     pipeline.stage_cli("render-review.py", *render_args, cwd=cwd)
