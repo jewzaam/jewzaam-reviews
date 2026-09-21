@@ -8,6 +8,7 @@ A Claude Code plugin bundling a connected pipeline of review skills. Producer sk
 |-------|--------------|-------------|
 | `jewzaam-reviews:review` | `Findings-review[-<scope>].{json,md,-supplementary.md}`, `Findings-intent[-<scope>].md` | Scope-aware multi-agent review via the script orchestrator; categorical with no skipped lenses by default |
 | `jewzaam-reviews:validate-supplementary` | rewrites `Findings-review[-<scope>].{json,md,-supplementary.md}` in place | Validate the findings the last review left unchallenged, reusing its `.tmp-review/10-merged/` |
+| `jewzaam-reviews:rewrite-findings` | rewrites `Findings-review[-<scope>].{json,md,-supplementary.md}` in place | Reframe, re-rate or drop findings from the last review after digging into them, then re-render from its `.tmp-review/20-findings/` |
 | `jewzaam-reviews:standards` | `Findings-standards.{json,md,-supplementary.md}` | Audit repos against `~/source/standards/` personal standards library |
 | `jewzaam-reviews:update-pr` | `Findings-update-pr-<number>.{json,md}` | Fetch GitHub PR review comments and supplementary feedback |
 | `jewzaam-reviews:c4-reverse-engineer` | `Findings-c4-reverse-engineer.{json,md}` | Reverse-engineer C4 architecture diagrams and behavioral spec from a codebase |
@@ -171,6 +172,7 @@ From any project repo:
 /jewzaam-reviews:review --validate-buckets critical,important,suggestion,needs-review
                                                  # validate the supplementary buckets too (replaces the default)
 /jewzaam-reviews:validate-supplementary          # validate what the LAST run left unchallenged (no re-review)
+/jewzaam-reviews:rewrite-findings                # reframe/re-rate/drop findings of the LAST run, then re-render
 /jewzaam-reviews:standards                       # Audit against ~/source/standards/
 /jewzaam-reviews:update-pr                       # Pull PR review comments
 /jewzaam-reviews:c4-reverse-engineer             # Generate C4 diagrams + spec
@@ -184,6 +186,7 @@ python <plugin-root>/orchestrator/cli.py --pr 42 --scoring simple
 python <plugin-root>/orchestrator/cli.py --dry-run     # scope + selector prompt, no agents
 python <plugin-root>/orchestrator/cli.py --detach ...  # long runs: start detached, survives the caller
 python <plugin-root>/orchestrator/cli.py --wait --wait-timeout-s 3600  # block until done; exit 3 = timed out, rerun
+python <plugin-root>/orchestrator/cli.py --rerender     # re-render a hand-edited .tmp-review/20-findings/
 ```
 
 The orchestrator needs either `claude` or `codex` on PATH with working auth. Select explicitly with `--harness claude|codex`, or leave the default `--harness auto` to use Codex when running under Codex and Claude otherwise.

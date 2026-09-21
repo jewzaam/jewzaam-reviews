@@ -214,6 +214,13 @@ def main(argv: list[str] | None = None) -> int:
         "Takes no bucket argument: it picks up every finding with no verdict "
         "yet. Fails if that directory is gone. Combines with --detach/--wait",
     )
+    parser.add_argument(
+        "--rerender",
+        action="store_true",
+        help="re-render the findings files from a hand-edited "
+        f"./{pipeline.TMP_DIR_NAME}/20-findings/ — no agents, no re-derivation "
+        "beyond severity buckets and ids. Fails if that directory is gone",
+    )
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument(
         "--dry-run",
@@ -290,6 +297,15 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    if args.rerender and (args.dry_run or args.select_only or args.resume_validation):
+        print(
+            "error: --rerender cannot be combined with --dry-run, --select-only "
+            "or --resume-validation; it renders what those stages produce, and "
+            "re-running validation would discard the edits it renders",
+            file=sys.stderr,
+        )
+        return 2
+
     harness = args.harness
     if harness == "auto":
         harness = os.environ.get("REVIEW_ORCHESTRATOR_HARNESS", "")
@@ -342,11 +358,12 @@ def main(argv: list[str] | None = None) -> int:
         files["pid"].write_text(str(os.getpid()), encoding="utf-8")
         claimed = True
     try:
-        code = (
-            pipeline.run_resume_validation(options)
-            if args.resume_validation
-            else pipeline.run_review(options, selection_file=files["selection"])
-        )
+        if args.rerender:
+            code = pipeline.run_rerender(options)
+        elif args.resume_validation:
+            code = pipeline.run_resume_validation(options)
+        else:
+            code = pipeline.run_review(options, selection_file=files["selection"])
     except pipeline.PipelineError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         code = 1
