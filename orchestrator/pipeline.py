@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+import dataclasses
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
@@ -25,7 +26,7 @@ if str(PLUGIN_ROOT) not in sys.path:
 import jsonschema  # noqa: E402
 
 from orchestrator import backend, lenses, prompts, scope as scope_mod  # noqa: E402
-from scripts.envelope import assign_bucket, load_stage_dir, review_file_basename  # noqa: E402
+from scripts.envelope import assign_bucket, load_stage_dir, review_file_basename, SEVERITY_BUCKETS  # noqa: E402
 
 REVIEW_SCRIPTS = PLUGIN_ROOT / "skills" / "review" / "scripts"
 TMP_DIR_NAME = ".tmp-review"
@@ -115,6 +116,13 @@ class Options:
     scoring: str = "categorical"  # or "simple"
     harness: str = "claude"
     skip_lenses: tuple = ()  # lens slugs excluded before selection
+    # Comma-separated severity buckets to send to the validators. "" keeps the
+    # automatic choice in _validation_buckets; set it to reach the supplementary
+    # buckets (suggestion, needs-review), which the automatic choice never does.
+    validate_buckets: str = ""
+    # Re-run only the validation tail against an existing .tmp-review/10-merged/,
+    # challenging the findings the first run left unvalidated.
+    resume_validation: bool = False
     max_agents: int = 16
     parallel: int = 4
     # Latency backstop only. Spend is capped per agent by BUDGET_USD_BY_MODEL,
@@ -158,6 +166,9 @@ class RunState:
         default_factory=lambda: os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     )
     saved_selection: dict | None = None  # selector output from --select-only
+    # Which buckets this run actually sent to the validators. Read by
+    # _print_summary to name what was left unchallenged.
+    validated_buckets: str = ""
     costs: list[CostEntry] = field(default_factory=list)
     issues: list[dict] = field(default_factory=list)
     issues_merged: int = 0  # how many of `issues` already reached an envelope
@@ -469,6 +480,35 @@ def _bootstrap(state) -> None:
 
 
 INTENT_FILENAME = "intent.md"
+SCOPE_FILENAME = "scope.json"
+
+
+def _write_scope(state) -> None:
+    """Persist the computed scope so --resume-validation need not recompute it.
+
+    Resume happens in a later process with no arguments: without this the
+    caller would have to re-supply --pr and --guidance exactly, which is the
+    kind of recall the resume path exists to avoid. Recomputing instead is
+    not equivalent either — the PR merge base moves when the branch does, so
+    a resume would validate against a base the findings were never taken from.
+    """
+    (state.tmp_dir / SCOPE_FILENAME).write_text(
+        json.dumps(
+            {"scope": dataclasses.asdict(state.scope), "scoring": state.options.scoring},
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def _load_scope(tmp_dir: Path) -> tuple[scope_mod.ReviewScope, str]:
+    """Read back what _write_scope stored. Raises PipelineError if unusable."""
+    path = tmp_dir / SCOPE_FILENAME
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        return scope_mod.ReviewScope(**saved["scope"]), saved["scoring"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise PipelineError(f"cannot read the saved scope at {path}: {exc}") from exc
 
 
 def _write_intent(state) -> Path | None:
@@ -696,7 +736,16 @@ def _merge_issues_into_envelope(state, stage_dir: Path) -> None:
 def run_validators(state) -> None:
     """Dispatch one validator agent per batch input file."""
     validation_dir = state.tmp_dir / "15-validation"
-    batch_files = sorted(validation_dir.glob("batch-*-input.json"))
+    # A batch that already has a verdict file is not re-dispatched. On a normal
+    # run 15-validation was just bootstrapped empty, so nothing is skipped;
+    # --resume-validation appends new batch files beside the first run's and
+    # relies on this to avoid paying for those verdicts twice. A batch whose
+    # validator failed has no output file, so it is retried, which is wanted.
+    batch_files = [
+        path
+        for path in sorted(validation_dir.glob("batch-*-input.json"))
+        if not (validation_dir / path.name.replace("-input", "-output")).exists()
+    ]
     if not batch_files:
         state.record_step(
             "validate", "skipped", "no findings were batched for validation"
@@ -872,7 +921,7 @@ def _write_costs(state) -> dict:
 DEFAULT_VALIDATION_BUCKETS = "critical,important"
 
 
-def _validation_buckets(merged_dir: Path) -> str:
+def _validation_buckets(merged_dir: Path, override: str = "") -> str:
     """Which severity buckets go to the validators.
 
     Bucketing happens before validation, so a finding scored too low never
@@ -881,7 +930,13 @@ def _validation_buckets(merged_dir: Path) -> str:
     running no validators at all — the spend was budgeted for this run
     either way, and an all-suggestion result is the shape systematic
     under-scoring produces.
+
+    `override` (from --validate-buckets) replaces the whole choice, including
+    the fallback: it is the only way to put needs-review findings in front of
+    a validator. The CLI has already checked the bucket names.
     """
+    if override:
+        return override
     try:
         _envelope, findings = load_stage_dir(merged_dir)
     except (OSError, ValueError, json.JSONDecodeError):
@@ -921,6 +976,22 @@ def _print_summary(state, cost_report) -> None:
     print("\nFiles:")
     for suffix in (".json", ".md", "-supplementary.md"):
         print(f"- {base}{suffix}")
+
+    validated = {b for b in state.validated_buckets.split(",") if b}
+    # Only buckets that actually hold something: counts always has all four
+    # keys, and naming an empty bucket as unchallenged reads as a finding.
+    left = {b: n for b, n in counts.items() if n and b not in validated}
+    unchallenged = sum(left.values())
+    if unchallenged:
+        # Printed rather than documented: the flags that reach this path are
+        # rare enough that nobody remembers them, and SKILL.md relays this
+        # output verbatim, so the offer arrives exactly when it is relevant.
+        print(
+            f"\n{unchallenged} finding(s) were never adversarially validated "
+            f"({', '.join(sorted(left))}). To challenge "
+            f"them, run /jewzaam-reviews:validate-supplementary before the "
+            f"next review wipes {TMP_DIR_NAME}/."
+        )
 
     _print_run_report(state)
 
@@ -1053,6 +1124,87 @@ def _load_saved_selection(state, selection_file: Path | None):
     return output if isinstance(output, dict) else None
 
 
+def run_resume_validation(options: Options) -> int:
+    """Validate the findings an earlier run left unchallenged.
+
+    Reuses that run's .tmp-review/10-merged/ rather than reviewing again:
+    lens agents are not deterministic, so a second full review produces a
+    different finding set, and the supplementary findings the caller just
+    read might not appear in it at all. Cheaper is a side effect; validating
+    *these* findings is the point.
+    """
+    tmp_dir = Path(options.project_root) / TMP_DIR_NAME
+    merged_dir = tmp_dir / "10-merged"
+    if not merged_dir.is_dir():
+        print(
+            f"ERROR: no {TMP_DIR_NAME}/10-merged/ under {options.project_root} — "
+            "the findings from that run are gone (the next review wipes it). "
+            "Re-run the review.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        review_scope, scoring = _load_scope(tmp_dir)
+    except PipelineError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if scoring != "categorical":
+        # simple mode batches and applies verdicts in Python inside
+        # run_simple_path rather than through the stage CLIs, so the tail this
+        # function reuses does not exist there. Re-running the review is the
+        # answer until that path is split the same way.
+        print(
+            f"ERROR: that run used --scoring {scoring}; resume only supports "
+            "categorical scoring. Re-run the review with "
+            "--validate-buckets critical,important,suggestion,needs-review.",
+            file=sys.stderr,
+        )
+        return 2
+
+    options.scoring = scoring
+    state = RunState(options=options, scope=review_scope)
+    state.record_step(
+        "scope", "ok", f"reused the saved scope from {TMP_DIR_NAME}/{SCOPE_FILENAME}"
+    )
+    validation_dir = tmp_dir / "15-validation"
+    validation_dir.mkdir(parents=True, exist_ok=True)
+    offset = len(list(validation_dir.glob("batch-*-input.json")))
+    batch_args = [
+        "--input-dir",
+        f"./{TMP_DIR_NAME}/10-merged/",
+        "--output-dir",
+        f"./{TMP_DIR_NAME}/15-validation/",
+        "--verdicts-dir",
+        f"./{TMP_DIR_NAME}/15-validation/",
+        "--batch-offset",
+        str(offset),
+    ]
+    detail = "findings with no verdict yet"
+    if options.validate_buckets:
+        batch_args += ["--only-buckets", options.validate_buckets]
+        detail = f"unvalidated findings in: {options.validate_buckets}"
+    state.validated_buckets = options.validate_buckets or ",".join(SEVERITY_BUCKETS)
+    try:
+        stage_cli(
+            "batch-findings.py",
+            *batch_args,
+            cwd=options.project_root,
+            state=state,
+            step="batch",
+            detail=detail,
+        )
+        run_validators(state)
+        _apply_and_render(state)
+    except BaseException:
+        _write_run_report(state)
+        _write_costs(state)
+        _print_run_report(state)
+        raise
+    cost_report = _write_costs(state)
+    _print_summary(state, cost_report)
+    return 0
+
+
 def run_review(options: Options, selection_file: Path | None = None) -> int:
     """Run the full review pipeline; returns a process exit code."""
     try:
@@ -1095,6 +1247,7 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
         return 0
 
     _bootstrap(state)
+    _write_scope(state)
     _write_intent(state)
 
     state.saved_selection = _load_saved_selection(state, selection_file)
@@ -1109,6 +1262,53 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
         _write_costs(state)
         _print_run_report(state)
         raise
+
+
+def _apply_and_render(state: RunState) -> None:
+    """The stages after validation: verdicts -> findings -> rendered files.
+
+    Split out because --resume-validation runs exactly these and nothing
+    before them; a second copy would be the thing that drifts.
+    """
+    cwd = state.options.project_root
+    stage_cli(
+        "apply-verdicts.py",
+        "--input-dir",
+        f"./{TMP_DIR_NAME}/10-merged/",
+        "--verdicts-dir",
+        f"./{TMP_DIR_NAME}/15-validation/",
+        "--output-dir",
+        f"./{TMP_DIR_NAME}/20-findings/",
+        cwd=cwd,
+        state=state,
+        step="apply-verdicts",
+    )
+    # Validator failures were recorded after the 10-merged merge;
+    # fold them into the post-verdict envelope.
+    _merge_issues_into_envelope(state, state.tmp_dir / "20-findings")
+    render_args = [
+        "--input-dir",
+        f"./{TMP_DIR_NAME}/20-findings/",
+        "--out-dir",
+        ".",
+        "--project-name",
+        state.scope.project_name,
+        "--run-id",
+        state.run_id,
+        "--run-report",
+        str(_write_run_report(state)),
+    ]
+    if state.orchestrating_session_id:
+        render_args += [
+            "--orchestrating-session-id",
+            state.orchestrating_session_id,
+        ]
+    if state.scope.scope_slug:
+        render_args += ["--scope-slug", state.scope.scope_slug]
+    intent_path = state.tmp_dir / INTENT_FILENAME
+    if intent_path.is_file():
+        render_args += ["--intent-file", str(intent_path)]
+    stage_cli("render-review.py", *render_args, cwd=cwd)
 
 
 def _run_stages(state: RunState) -> int:
@@ -1203,7 +1403,10 @@ def _run_stages(state: RunState) -> int:
 
         maybe_diff_scope_filter(state, cwd)
 
-        buckets = _validation_buckets(state.tmp_dir / "10-merged")
+        buckets = _validation_buckets(
+            state.tmp_dir / "10-merged", state.options.validate_buckets
+        )
+        state.validated_buckets = buckets
         stage_cli(
             "batch-findings.py",
             "--input-dir",
@@ -1218,44 +1421,7 @@ def _run_stages(state: RunState) -> int:
             detail=f"buckets sent to validation: {buckets}",
         )
         run_validators(state)
-        stage_cli(
-            "apply-verdicts.py",
-            "--input-dir",
-            f"./{TMP_DIR_NAME}/10-merged/",
-            "--verdicts-dir",
-            f"./{TMP_DIR_NAME}/15-validation/",
-            "--output-dir",
-            f"./{TMP_DIR_NAME}/20-findings/",
-            cwd=cwd,
-            state=state,
-            step="apply-verdicts",
-        )
-        # Validator failures were recorded after the 10-merged merge;
-        # fold them into the post-verdict envelope.
-        _merge_issues_into_envelope(state, state.tmp_dir / "20-findings")
-        render_args = [
-            "--input-dir",
-            f"./{TMP_DIR_NAME}/20-findings/",
-            "--out-dir",
-            ".",
-            "--project-name",
-            review_scope.project_name,
-            "--run-id",
-            state.run_id,
-            "--run-report",
-            str(_write_run_report(state)),
-        ]
-        if state.orchestrating_session_id:
-            render_args += [
-                "--orchestrating-session-id",
-                state.orchestrating_session_id,
-            ]
-        if review_scope.scope_slug:
-            render_args += ["--scope-slug", review_scope.scope_slug]
-        intent_path = state.tmp_dir / INTENT_FILENAME
-        if intent_path.is_file():
-            render_args += ["--intent-file", str(intent_path)]
-        stage_cli("render-review.py", *render_args, cwd=cwd)
+        _apply_and_render(state)
     else:
         from orchestrator import simple_mode
 

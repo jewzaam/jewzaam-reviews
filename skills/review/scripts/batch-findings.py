@@ -82,6 +82,27 @@ def _project_to_batch_finding(finding: dict) -> dict:
     return out
 
 
+def _validated_hashes(verdicts_dir: Path) -> set[str]:
+    """content_hash values that already carry a verdict.
+
+    Unreadable or malformed verdict files are treated as no verdict: the cost
+    of re-validating a finding is one more validator slot, and the cost of
+    wrongly skipping it is a finding that silently never gets challenged.
+    """
+    hashes: set[str] = set()
+    for path in sorted(verdicts_dir.glob("batch-*-output.json")):
+        try:
+            data = safe_load_json(path)
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        for verdict in data.get("verdicts") or []:
+            try:
+                hashes.add(verdict["finding_ref"]["content_hash"])
+            except (TypeError, KeyError):
+                continue
+    return hashes
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -112,6 +133,16 @@ def main(argv: list[str]) -> int:
             "comma-separated severity buckets to include in validation "
             f"({','.join(SEVERITY_BUCKETS)}). "
             "Omit to include all findings."
+        ),
+    )
+    parser.add_argument(
+        "--verdicts-dir",
+        type=Path,
+        default=None,
+        help=(
+            "exclude findings that already have a verdict in this directory's "
+            "batch-*-output.json files. Use when appending batches to a run "
+            "that has already been partly validated."
         ),
     )
     parser.add_argument(
@@ -160,6 +191,20 @@ def main(argv: list[str]) -> int:
     if not findings:
         print("OK: no findings to batch")
         return 0
+
+    if args.verdicts_dir is not None:
+        validated = _validated_hashes(args.verdicts_dir)
+        before = len(findings)
+        findings = [f for f in findings if f["content_hash"] not in validated]
+        if before != len(findings):
+            print(
+                f"  --verdicts-dir: {before - len(findings)} finding(s) excluded "
+                "(already validated)",
+                file=sys.stderr,
+            )
+        if not findings:
+            print(f"OK: all {before} finding(s) already have a verdict")
+            return 0
 
     if bucket_filter is not None:
         before = len(findings)

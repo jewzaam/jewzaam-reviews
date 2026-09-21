@@ -7,6 +7,7 @@ A Claude Code plugin bundling a connected pipeline of review skills. Producer sk
 | Skill | Output files | Description |
 |-------|--------------|-------------|
 | `jewzaam-reviews:review` | `Findings-review[-<scope>].{json,md,-supplementary.md}`, `Findings-intent[-<scope>].md` | Scope-aware multi-agent review via the script orchestrator; categorical with no skipped lenses by default |
+| `jewzaam-reviews:validate-supplementary` | rewrites `Findings-review[-<scope>].{json,md,-supplementary.md}` in place | Validate the findings the last review left unchallenged, reusing its `.tmp-review/10-merged/` |
 | `jewzaam-reviews:standards` | `Findings-standards.{json,md,-supplementary.md}` | Audit repos against `~/source/standards/` personal standards library |
 | `jewzaam-reviews:update-pr` | `Findings-update-pr-<number>.{json,md}` | Fetch GitHub PR review comments and supplementary feedback |
 | `jewzaam-reviews:c4-reverse-engineer` | `Findings-c4-reverse-engineer.{json,md}` | Reverse-engineer C4 architecture diagrams and behavioral spec from a codebase |
@@ -167,6 +168,9 @@ From any project repo:
 /jewzaam-reviews:review 42 -i                    # PR review with interactive choices
 /jewzaam-reviews:review focus on auth            # Guided review
 /jewzaam-reviews:review 42 --scoring simple      # PR review with simple scoring
+/jewzaam-reviews:review --validate-buckets critical,important,suggestion,needs-review
+                                                 # validate the supplementary buckets too (replaces the default)
+/jewzaam-reviews:validate-supplementary          # validate what the LAST run left unchallenged (no re-review)
 /jewzaam-reviews:standards                       # Audit against ~/source/standards/
 /jewzaam-reviews:update-pr                       # Pull PR review comments
 /jewzaam-reviews:c4-reverse-engineer             # Generate C4 diagrams + spec

@@ -8,6 +8,7 @@ diff-scope-filter.py and render-review.py (--scoring simple) reused as-is.
 """
 
 import json
+import operator
 import sys
 from pathlib import Path
 
@@ -145,19 +146,43 @@ def load_stage(stage_dir: Path) -> tuple[dict, list[dict]]:
     return load_stage_dir(stage_dir)
 
 
-def write_batches(validation_dir: Path, findings: list[dict]) -> int:
+def _rendered_bucket(finding: dict) -> str:
+    """The bucket render-review.py will print this finding under.
+
+    Simple mode has no needs-review severity: the renderer derives that
+    bucket from low confidence. Matching on severity alone therefore cannot
+    name the supplementary half of the report.
+    """
+    return "needs-review" if finding.get("confidence") == "low" else finding["severity"]
+
+
+def write_batches(
+    validation_dir: Path, findings: list[dict], override: str = ""
+) -> int:
     """Slice critical/important findings into validator batch input files.
 
     When nothing is critical or important, validate suggestions instead —
     same rationale as `pipeline._validation_buckets`: severity is assigned
     before validation, so an under-scored finding otherwise never reaches
     the stage that would challenge its rating.
+
+    `override` (from --validate-buckets) replaces that choice and matches on
+    the rendered bucket rather than raw severity, so `needs-review` selects
+    what the supplementary file actually holds. The default path keeps
+    matching on severity: a low-confidence critical renders as needs-review
+    but is still worth validating by default, and moving it out would quietly
+    narrow existing runs.
     """
-    wanted = ("critical", "important")
-    if not any(f["severity"] in wanted for f in findings):
-        wanted = ("suggestion",)
+    if override:
+        wanted = tuple(b.strip() for b in override.split(",") if b.strip())
+        matches = _rendered_bucket
+    else:
+        matches = operator.itemgetter("severity")
+        wanted = ("critical", "important")
+        if not any(matches(f) in wanted for f in findings):
+            wanted = ("suggestion",)
     to_validate = sorted(
-        (f for f in findings if f["severity"] in wanted),
+        (f for f in findings if matches(f) in wanted),
         key=lambda f: (SEVERITY_ORDER[f["severity"]], f["content_hash"]),
     )
     batches = [
@@ -239,7 +264,9 @@ def run_simple_path(state) -> None:
     pipeline.maybe_diff_scope_filter(state, cwd)
 
     envelope, findings = load_stage(tmp / "10-merged")
-    batch_count = write_batches(tmp / "15-validation", findings)
+    batch_count = write_batches(
+        tmp / "15-validation", findings, state.options.validate_buckets
+    )
     state.record_step("batch", "ok", f"{batch_count} validator batch(es)")
     pipeline.run_validators(state)
 

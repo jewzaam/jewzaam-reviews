@@ -338,3 +338,78 @@ class TestBatchFindings:
         batch1 = _load(out / "batch-1-input.json")
         titles = [f["title"] for f in batch1["findings"]]
         assert titles == ["a", "b", "c"]
+
+
+class TestVerdictsDirExclusion:
+    """--verdicts-dir skips findings an earlier validation pass already judged."""
+
+    def _setup(self, tmp_path, validated_hashes: list[str]):
+        stage = tmp_path / "10-merged"
+        _write_stage_dir(
+            stage,
+            [
+                _finding(chash="a" * 16, title="a"),
+                _finding(chash="b" * 16, title="b"),
+            ],
+        )
+        verdicts = tmp_path / "15-validation"
+        verdicts.mkdir()
+        if validated_hashes:
+            (verdicts / "batch-1-output.json").write_text(
+                json.dumps(
+                    {
+                        "batch_number": 1,
+                        "verdicts": [
+                            {
+                                "finding_ref": {"content_hash": h},
+                                "action": "confirm",
+                                "reasoning": "r",
+                            }
+                            for h in validated_hashes
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return stage, verdicts
+
+    def _titles(self, verdicts: Path) -> set[str]:
+        titles = set()
+        for path in verdicts.glob("batch-*-input.json"):
+            titles |= {f["title"] for f in _load(path)["findings"]}
+        return titles
+
+    def test_already_validated_findings_are_excluded(self, tmp_path):
+        stage, verdicts = self._setup(tmp_path, ["a" * 16])
+        result = _run([
+            "--input-dir", str(stage), "--output-dir", str(verdicts),
+            "--verdicts-dir", str(verdicts), "--batch-offset", "1",
+        ])
+        assert result.returncode == 0, result.stderr
+        assert self._titles(verdicts) == {"b"}
+
+    def test_offset_does_not_overwrite_the_existing_batch(self, tmp_path):
+        stage, verdicts = self._setup(tmp_path, ["a" * 16])
+        (verdicts / "batch-1-input.json").write_text(
+            json.dumps({"batch_number": 1, "findings": []}), encoding="utf-8"
+        )
+        _run([
+            "--input-dir", str(stage), "--output-dir", str(verdicts),
+            "--verdicts-dir", str(verdicts), "--batch-offset", "1",
+        ])
+        assert (verdicts / "batch-2-input.json").is_file()
+        assert _load(verdicts / "batch-1-input.json")["findings"] == []
+
+    def test_nothing_left_to_validate_exits_clean(self, tmp_path):
+        stage, verdicts = self._setup(tmp_path, ["a" * 16, "b" * 16])
+        result = _run([
+            "--input-dir", str(stage), "--output-dir", str(verdicts),
+            "--verdicts-dir", str(verdicts), "--batch-offset", "1",
+        ])
+        assert result.returncode == 0
+        assert "already have a verdict" in result.stdout
+
+    def test_omitting_the_flag_batches_everything(self, tmp_path):
+        stage, verdicts = self._setup(tmp_path, ["a" * 16])
+        _run(["--input-dir", str(stage), "--output-dir", str(verdicts)])
+        assert self._titles(verdicts) == {"a", "b"}

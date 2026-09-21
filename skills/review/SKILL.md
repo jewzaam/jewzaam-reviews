@@ -2,7 +2,7 @@
 name: review
 description: Perform a scope-aware multi-agent codebase review via the script orchestrator. A selector agent picks applicable review lenses from the diff or repo shape, lens agents review in parallel, validators adversarially check critical/important findings, and deterministic scripts handle everything else. Use when the user asks to review, assess, audit, or evaluate a codebase or project. Defaults to categorical scoring with no skipped lenses; pass -i or --interactive to choose options.
 disable-model-invocation: true
-argument-hint: "[PR-number] [-i|--interactive] [--scoring categorical|simple] [guidance text...]"
+argument-hint: "[PR-number] [-i|--interactive] [--scoring categorical|simple] [--validate-buckets buckets] [guidance text...]"
 ---
 
 # Review Skill
@@ -35,11 +35,12 @@ From the arguments the skill was invoked with (`$ARGUMENTS` where the host subst
 - A `-i` or `--interactive` token enables the existing scoring and lens questions; remove it from the forwarded arguments.
 - A `--scoring categorical` or `--scoring simple` token passes through unchanged.
 - A `--skip-lenses <slugs>` token passes through unchanged.
+- A `--validate-buckets <buckets>` token passes through unchanged.
 - Everything else is guidance → `--guidance "<text>"` (omit when empty).
 
 Without `-i`/`--interactive`, use categorical scoring by default, run every lens
-the selector reports, and ask no questions. Explicit `--scoring` and
-`--skip-lenses` arguments still take effect.
+the selector reports, and ask no questions. Explicit `--scoring`,
+`--skip-lenses` and `--validate-buckets` arguments still take effect.
 
 ### 2. Gather Intent
 
@@ -107,10 +108,10 @@ Selected slugs become `--skip-lenses <comma-separated>`. Nothing selected → om
 Run this via foreground Bash from the project root, EXACTLY ONCE:
 
 ```
-python <ORCH> --harness <HARNESS> --detach [--pr N] [--intent-file PATH] [--scoring MODE] [--skip-lenses slugs] [--guidance "..."]
+python <ORCH> --harness <HARNESS> --detach [--pr N] [--intent-file PATH] [--scoring MODE] [--skip-lenses slugs] [--validate-buckets buckets] [--guidance "..."]
 ```
 
-The bracketed flags come from Step 1's parse: include `--pr` only when a leading PR number was given, `--scoring` and `--skip-lenses` from the argument or Step 4's answers (omit `--skip-lenses` when none), `--guidance` only when non-empty, `--intent-file` whenever Step 2 produced one. `<ORCH>` is the absolute path resolved above; a relative `python orchestrator/cli.py ...` runs from the project root and will not find the CLI.
+The bracketed flags come from Step 1's parse: include `--pr` only when a leading PR number was given, `--scoring` and `--skip-lenses` from the argument or Step 4's answers (omit `--skip-lenses` when none), `--validate-buckets` only when it was given in the arguments, `--guidance` only when non-empty, `--intent-file` whenever Step 2 produced one. `<ORCH>` is the absolute path resolved above; a relative `python orchestrator/cli.py ...` runs from the project root and will not find the CLI.
 
 It returns immediately; the review runs as a detached process that survives this session.
 
@@ -139,6 +140,8 @@ On a host that cannot both background a command and wake the session when it exi
 The run writes four files at the project root: `Findings-review[-<scope>].json` (structured findings), `.md` (critical/important detail, plus a concern-by-severity table linking the rest), `-supplementary.md` (every finding grouped by concern then severity, decomposition, cross-cutting observations), and `Findings-intent[-<scope>].md` (what the review was told the change exists for, or that it was told nothing). Critical and important findings appear in both markdown files by design — the main file is the severity read, the supplementary is the per-concern read.
 
 Relay the final `--wait` output verbatim: severity counts, output filenames, the run-report step table, the operational issue list, and the cost plus normalized-token tables. If it reports a non-zero finish, show that output and stop — do not attempt to reconstruct findings yourself.
+
+If the output says findings were never adversarially validated, that line names `/jewzaam-reviews:validate-supplementary` — relay it. If the user then asks for those findings to be challenged, invoke that skill; do not re-run this one, which reviews again from scratch and produces a different finding set.
 
 The run report is the answer to "did the whole pipeline run?" — one row per step with `ok`, `degraded`, `skipped` or `failed`. Relay it as printed; do not summarize a `degraded` row away. The same table and the issue list are rendered into `Findings-review*.md` under `## Run Report`, and the structured form is `run_report` in the JSON, so nothing here has to be dug out of `.tmp-review/` logs.
 
