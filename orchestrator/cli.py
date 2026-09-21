@@ -32,6 +32,7 @@ if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
 from orchestrator import pipeline  # noqa: E402
+from scripts.envelope import SEVERITY_BUCKETS  # noqa: E402
 
 EXIT_STILL_RUNNING = 3
 _EXIT_FILE_ENV = "REVIEW_ORCHESTRATOR_EXIT_FILE"
@@ -196,6 +197,23 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-separated lens slugs to exclude before selection "
         "(an explicit skip beats the implementation lens's always-run)",
     )
+    parser.add_argument(
+        "--validate-buckets",
+        default="",
+        help="comma-separated severity buckets to send to the validators "
+        f"({','.join(SEVERITY_BUCKETS)}). Omit for the default: "
+        "critical,important, or suggestion when neither is present. The "
+        "default never validates needs-review, so this is how the "
+        "supplementary file's contents get challenged",
+    )
+    parser.add_argument(
+        "--resume-validation",
+        action="store_true",
+        help="validate the findings the last run left unchallenged, reusing "
+        f"its ./{pipeline.TMP_DIR_NAME}/10-merged/ instead of reviewing again. "
+        "Takes no bucket argument: it picks up every finding with no verdict "
+        "yet. Fails if that directory is gone. Combines with --detach/--wait",
+    )
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument(
         "--dry-run",
@@ -249,6 +267,29 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    # Checked here rather than at the batch stage: that stage runs after the
+    # lens agents have already been paid for, and rejecting a typo then wastes
+    # the whole run.
+    validate_buckets = ",".join(
+        bucket.strip() for bucket in args.validate_buckets.split(",") if bucket.strip()
+    )
+    unknown_buckets = sorted(set(validate_buckets.split(",")) - set(SEVERITY_BUCKETS))
+    if validate_buckets and unknown_buckets:
+        print(
+            f"error: unknown bucket(s) in --validate-buckets: "
+            f"{', '.join(unknown_buckets)}; known: {', '.join(SEVERITY_BUCKETS)}",
+            file=sys.stderr,
+        )
+        return 2
+
+    if args.resume_validation and (args.dry_run or args.select_only):
+        print(
+            "error: --resume-validation cannot be combined with --dry-run or "
+            "--select-only; those precede the stage it resumes",
+            file=sys.stderr,
+        )
+        return 2
+
     harness = args.harness
     if harness == "auto":
         harness = os.environ.get("REVIEW_ORCHESTRATOR_HARNESS", "")
@@ -277,6 +318,8 @@ def main(argv: list[str] | None = None) -> int:
         scoring=args.scoring,
         harness=harness,
         skip_lenses=skip_lenses,
+        validate_buckets=validate_buckets,
+        resume_validation=args.resume_validation,
         max_agents=args.max_agents,
         parallel=args.parallel,
         timeout_s=args.timeout,
@@ -299,7 +342,11 @@ def main(argv: list[str] | None = None) -> int:
         files["pid"].write_text(str(os.getpid()), encoding="utf-8")
         claimed = True
     try:
-        code = pipeline.run_review(options, selection_file=files["selection"])
+        code = (
+            pipeline.run_resume_validation(options)
+            if args.resume_validation
+            else pipeline.run_review(options, selection_file=files["selection"])
+        )
     except pipeline.PipelineError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         code = 1

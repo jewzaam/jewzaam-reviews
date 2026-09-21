@@ -218,6 +218,35 @@ class TestWriteBatches:
         titles = [f["title"] for f in batch1["findings"] + batch2["findings"]]
         assert "sugg" not in titles
 
+    def test_override_selects_rendered_buckets(self, tmp_path):
+        vdir = tmp_path / "15-validation"
+        vdir.mkdir()
+        findings = []
+        for title, severity, confidence in (
+            ("crit", "critical", "high"),
+            ("sugg", "suggestion", "high"),
+            ("speculative", "important", "low"),
+        ):
+            f = _finding(title, severity=severity, confidence=confidence, line="1")
+            f["concern_slug"] = "implementation"
+            f["content_hash"] = title.ljust(16, "0")
+            findings.append(f)
+        count = simple_mode.write_batches(vdir, findings, "suggestion,needs-review")
+        assert count == 1
+        batch = json.loads((vdir / "batch-1-input.json").read_text())
+        titles = {f["title"] for f in batch["findings"]}
+        # "speculative" is severity=important but renders as needs-review,
+        # so the bucket name the report shows is what selects it.
+        assert titles == {"sugg", "speculative"}
+
+    def test_default_still_batches_a_low_confidence_critical(self, tmp_path):
+        vdir = tmp_path / "15-validation"
+        vdir.mkdir()
+        f = _finding("crit", severity="critical", confidence="low", line="1")
+        f["concern_slug"] = "implementation"
+        f["content_hash"] = "a" * 16
+        assert simple_mode.write_batches(vdir, [f]) == 1
+
     def test_verdicts_merged_across_batch_files(self, tmp_path):
         vdir = tmp_path / "15-validation"
         vdir.mkdir()

@@ -214,6 +214,62 @@ class TestSkipLenses:
         assert seen["skips"] == ("security", "documentation")
 
 
+class TestValidateBuckets:
+    def test_unknown_bucket_rejected(self, capsys):
+        assert cli.main(["--validate-buckets", "nope,critical", "--dry-run"]) == 2
+        assert "unknown bucket(s) in --validate-buckets" in capsys.readouterr().err
+
+    def test_valid_buckets_reach_options(self, monkeypatch):
+        seen = {}
+
+        def _capture(options, **kw):
+            seen["buckets"] = options.validate_buckets
+            return 0
+
+        monkeypatch.setattr(cli.pipeline, "run_review", _capture)
+        assert cli.main(["--validate-buckets", "suggestion, needs-review", "--dry-run"]) == 0
+        assert seen["buckets"] == "suggestion,needs-review"
+
+    def test_omitted_leaves_options_empty(self, monkeypatch):
+        seen = {}
+
+        def _capture(options, **kw):
+            seen["buckets"] = options.validate_buckets
+            return 0
+
+        monkeypatch.setattr(cli.pipeline, "run_review", _capture)
+        assert cli.main(["--dry-run"]) == 0
+        assert seen["buckets"] == ""
+
+
+class TestResumeValidationFlag:
+    def test_routes_to_the_resume_entry_point(self, monkeypatch, tmp_path):
+        seen = {}
+
+        def _capture(options):
+            seen["root"] = options.project_root
+            return 0
+
+        monkeypatch.setattr(cli.pipeline, "run_resume_validation", _capture)
+        monkeypatch.setattr(
+            cli.pipeline, "run_review",
+            lambda *a, **kw: pytest.fail("resume must not run a full review"),
+        )
+        assert cli.main(["--resume-validation", "--project-root", str(tmp_path)]) == 0
+        assert seen["root"] == str(tmp_path.resolve())
+
+    @pytest.mark.parametrize("other", ["--dry-run", "--select-only"])
+    def test_rejected_with_earlier_stage_modes(self, other, capsys):
+        assert cli.main(["--resume-validation", other]) == 2
+        assert "--resume-validation cannot be combined" in capsys.readouterr().err
+
+    def test_combines_with_detach(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(cli, "_detach", lambda args, passthrough: seen.setdefault("args", passthrough) and 0 or 0)
+        assert cli.main(["--detach", "--resume-validation"]) == 0
+        assert seen["args"] == ["--resume-validation"]
+
+
 class TestIntentFile:
     def test_contents_reach_options(self, monkeypatch, tmp_path):
         intent = tmp_path / "intent.md"

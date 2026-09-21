@@ -1,0 +1,13 @@
+interface:
+  display_name: "Validate Supplementary"
+  short_description: "Validate the review findings the last run left unchallenged"
+  # Plugin-bundled skills are namespaced by the plugin's manifest name, so this
+  # is $jewzaam-reviews:validate-supplementary, not $validate-supplementary.
+  default_prompt: "Use $jewzaam-reviews:validate-supplementary to validate the findings the last review left unchallenged."
+
+# Mirrors disable-model-invocation in SKILL.md, which Codex does not read.
+# This dispatches paid validator agents and rewrites the findings files at the
+# project root — it starts when asked for, never because a prompt sounded
+# review-shaped.
+policy:
+  allow_implicit_invocation: false
