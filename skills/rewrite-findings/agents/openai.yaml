@@ -1,0 +1,13 @@
+interface:
+  display_name: "Rewrite Findings"
+  short_description: "Rewrite or drop findings from the last review, then re-render"
+  # Plugin-bundled skills are namespaced by the plugin's manifest name, so this
+  # is $jewzaam-reviews:rewrite-findings, not $rewrite-findings.
+  default_prompt: "Use $jewzaam-reviews:rewrite-findings to rewrite the findings from the last review."
+
+# Mirrors disable-model-invocation in SKILL.md, which Codex does not read.
+# This edits the last run's findings and rewrites the findings files at the
+# project root — it starts when asked for, never because a prompt mentioned a
+# finding.
+policy:
+  allow_implicit_invocation: false

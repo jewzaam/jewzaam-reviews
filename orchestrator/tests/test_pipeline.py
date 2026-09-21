@@ -7,6 +7,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 from orchestrator import backend, pipeline, scope as scope_mod  # noqa: E402
@@ -1081,3 +1083,140 @@ class TestIntentEndToEnd:
         assert _steps(findings["run_report"])["intent"] == "skipped"
         assert not (git_repo / ".tmp-review" / pipeline.INTENT_FILENAME).exists()
         assert "No intent was supplied" in (git_repo / "Findings-intent.md").read_text()
+
+
+class TestRerender:
+    """--rerender renders hand edits to 20-findings/ and nothing else."""
+
+    def _reviewed(self, git_repo, monkeypatch):
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_review(_options(git_repo)) == 0
+        return git_repo / ".tmp-review" / "20-findings"
+
+    def _staged(self, stage_dir):
+        path = next(p for p in stage_dir.glob("*.json") if p.name != "_envelope.json")
+        return path, json.loads(path.read_text())
+
+    def _no_agents(self, monkeypatch):
+        def explode(*args, **kwargs):
+            raise AssertionError("agent dispatched during rerender")
+
+        monkeypatch.setattr(backend, "run_agent", explode)
+
+    def test_edited_title_reaches_the_rendered_files(self, git_repo, monkeypatch):
+        stage = self._reviewed(git_repo, monkeypatch)
+        before = json.loads((git_repo / "Findings-review.json").read_text())
+        path, finding = self._staged(stage)
+        finding["title"] = "empty input crashes the CLI entry point"
+        path.write_text(json.dumps(finding))
+        self._no_agents(monkeypatch)
+
+        assert pipeline.run_rerender(_options(git_repo)) == 0
+
+        after = json.loads((git_repo / "Findings-review.json").read_text())
+        assert after["findings"][0]["title"] == "empty input crashes the CLI entry point"
+        assert "empty input crashes the CLI entry point" in (
+            git_repo / "Findings-review.md"
+        ).read_text()
+        # Identity, bucket and id are not re-derived from a fresh run.
+        assert after["run_id"] == before["run_id"]
+        assert after["findings"][0]["id"] == before["findings"][0]["id"]
+        assert after["findings"][0]["severity"] == before["findings"][0]["severity"]
+        # The review's own steps survive; the rewrite row is appended to them,
+        # not substituted for them — this file is their only surviving copy.
+        steps = _steps(after["run_report"])
+        assert steps["rewrite"] == "ok"
+        assert set(_steps(before["run_report"])) <= set(steps)
+        assert after["run_report"]["harness"] == before["run_report"]["harness"]
+
+    def test_edited_dimension_rebuckets_the_finding(self, git_repo, monkeypatch):
+        stage = self._reviewed(git_repo, monkeypatch)
+        path, finding = self._staged(stage)
+        finding["evidence_quality"] = "speculative"
+        finding["evidence_quality_justification"] = "The caller was never traced."
+        path.write_text(json.dumps(finding))
+        self._no_agents(monkeypatch)
+
+        assert pipeline.run_rerender(_options(git_repo)) == 0
+
+        after = json.loads((git_repo / "Findings-review.json").read_text())
+        assert after["findings"][0]["severity"] == "needs-review"
+        assert after["findings"][0]["id"].startswith("N")
+
+    def test_removal_needs_the_deletion_and_the_record(self, git_repo, monkeypatch):
+        stage = self._reviewed(git_repo, monkeypatch)
+        path, finding = self._staged(stage)
+        path.unlink()
+        envelope_path = stage / "_envelope.json"
+        envelope = json.loads(envelope_path.read_text())
+        envelope["issues"].append(
+            {
+                "severity": "warning",
+                "kind": "finding_removed",
+                "message": f"I0 \"{finding['title']}\" removed: guard clause already exists",
+                "source_component": "rewrite",
+            }
+        )
+        envelope_path.write_text(json.dumps(envelope))
+        self._no_agents(monkeypatch)
+
+        assert pipeline.run_rerender(_options(git_repo)) == 0
+
+        after = json.loads((git_repo / "Findings-review.json").read_text())
+        assert after["findings"] == []
+        # Recorded as a decision, not a failure: the report has to say a
+        # finding was pulled, or it vanishes without a trace.
+        markdown = (git_repo / "Findings-review.md").read_text()
+        assert "Pipeline Decisions" in markdown
+        assert "guard clause already exists" in markdown
+
+    def test_overlong_title_fails_before_anything_is_written(
+        self, git_repo, monkeypatch
+    ):
+        stage = self._reviewed(git_repo, monkeypatch)
+        rendered = git_repo / "Findings-review.json"
+        before = rendered.read_text()
+        path, finding = self._staged(stage)
+        finding["title"] = "x" * 121
+        path.write_text(json.dumps(finding))
+        self._no_agents(monkeypatch)
+
+        with pytest.raises(pipeline.PipelineError) as exc:
+            pipeline.run_rerender(_options(git_repo))
+        assert "title" in str(exc.value)
+        # The renderer validates before it writes, so the previous findings
+        # are still there to rebuild the stage file from.
+        assert rendered.read_text() == before
+
+    def test_broken_stage_json_reports_instead_of_rendering(
+        self, git_repo, monkeypatch, capsys
+    ):
+        stage = self._reviewed(git_repo, monkeypatch)
+        path, _finding = self._staged(stage)
+        path.write_text("{ not json")
+        self._no_agents(monkeypatch)
+
+        assert pipeline.run_rerender(_options(git_repo)) == 2
+        assert "ERROR" in capsys.readouterr().err
+
+    def test_missing_stage_dir_errors_without_reviewing(self, git_repo, monkeypatch):
+        self._no_agents(monkeypatch)
+        assert pipeline.run_rerender(_options(git_repo)) == 2
+
+    def test_scoring_is_read_back_from_the_run_not_the_flag(
+        self, git_repo, monkeypatch
+    ):
+        self._reviewed(git_repo, monkeypatch)
+        self._no_agents(monkeypatch)
+        seen = {}
+        monkeypatch.setattr(
+            pipeline,
+            "stage_cli",
+            lambda script, *a, **kw: seen.update(args=a),
+        )
+        assert pipeline.run_rerender(_options(git_repo, scoring="simple")) == 0
+        args = seen["args"]
+        assert args[args.index("--scoring") + 1] == "categorical"
+        # apply-verdicts is never re-run: it rebuilds 20-findings/ from
+        # 10-merged/ and would discard the edits being rendered.
+        assert args[args.index("--input-dir") + 1].endswith("20-findings/")

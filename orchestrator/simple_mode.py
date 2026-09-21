@@ -289,28 +289,4 @@ def run_simple_path(state) -> None:
         envelope.get("cross_cutting_observations"),
     )
 
-    render_args = [
-        "--input-dir",
-        f"./{pipeline.TMP_DIR_NAME}/20-findings/",
-        "--out-dir",
-        ".",
-        "--project-name",
-        review_scope.project_name,
-        "--scoring",
-        "simple",
-        "--run-id",
-        state.run_id,
-        "--run-report",
-        str(pipeline._write_run_report(state)),
-    ]
-    if state.orchestrating_session_id:
-        render_args += [
-            "--orchestrating-session-id",
-            state.orchestrating_session_id,
-        ]
-    if review_scope.scope_slug:
-        render_args += ["--scope-slug", review_scope.scope_slug]
-    intent_path = state.tmp_dir / pipeline.INTENT_FILENAME
-    if intent_path.is_file():
-        render_args += ["--intent-file", str(intent_path)]
-    pipeline.stage_cli("render-review.py", *render_args, cwd=cwd)
+    pipeline._render(state)

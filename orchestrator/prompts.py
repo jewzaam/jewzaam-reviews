@@ -136,6 +136,7 @@ Your output is defined by the enforced JSON output schema. Read that schema — 
 
 - Set agent_id to "{lens.slug}/{dimension["slug"]}"
 - Set concern to "{lens.concern}", concern_slug to "{lens.slug}", dimension_name to "{dimension["name"]}", dimension_slug to "{dimension["slug"]}"
+- Keep `title` under 120 characters — it is a heading, not a sentence. Name the short symbol (`_clip_title`), never its full signature, qualified path or argument list; put the detail in `issue` and the code position in `locations`. A longer title is clipped mid-word by the pipeline, so the reader sees half a thought and the rest is gone.
 {rating_lines}
 - Emit fields directly as root-level properties — do NOT wrap them in a container key like "json_data", "output", or "parameter".
 

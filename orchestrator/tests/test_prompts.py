@@ -58,6 +58,19 @@ class TestLensPrompt:
         text = prompts.build_lens_prompt(_BY_SLUG["implementation"], dim, _scope())
         assert "shared infrastructure" in text
 
+    def test_title_length_rule_in_both_scorings(self):
+        """The bound the agent schema cannot carry, in the one place it reads.
+
+        `agent-output.schema.json` cannot state `maxLength` (OpenAI strict
+        rejects it), so the prompt is the only instruction the agent gets
+        before consolidate-findings clips the title mid-word.
+        """
+        for scoring in ("categorical", "simple"):
+            text = prompts.build_lens_prompt(
+                _BY_SLUG["implementation"], DIM, _scope(), scoring=scoring
+            )
+            assert "under 120 characters" in text
+
     def test_categorical_vs_simple_rating_lines(self):
         cat = prompts.build_lens_prompt(_BY_SLUG["implementation"], DIM, _scope())
         assert "_justification" in cat

@@ -270,6 +270,34 @@ class TestResumeValidationFlag:
         assert seen["args"] == ["--resume-validation"]
 
 
+class TestRerenderFlag:
+    def test_routes_to_the_rerender_entry_point(self, monkeypatch, tmp_path):
+        seen = {}
+
+        def _capture(options):
+            seen["root"] = options.project_root
+            return 0
+
+        monkeypatch.setattr(cli.pipeline, "run_rerender", _capture)
+        monkeypatch.setattr(
+            cli.pipeline, "run_review",
+            lambda *a, **kw: pytest.fail("rerender must not run a review"),
+        )
+        monkeypatch.setattr(
+            cli.pipeline, "run_resume_validation",
+            lambda *a, **kw: pytest.fail("rerender must not validate"),
+        )
+        assert cli.main(["--rerender", "--project-root", str(tmp_path)]) == 0
+        assert seen["root"] == str(tmp_path.resolve())
+
+    @pytest.mark.parametrize(
+        "other", ["--dry-run", "--select-only", "--resume-validation"]
+    )
+    def test_rejected_with_the_modes_that_would_discard_the_edits(self, other, capsys):
+        assert cli.main(["--rerender", other]) == 2
+        assert "--rerender cannot be combined" in capsys.readouterr().err
+
+
 class TestIntentFile:
     def test_contents_reach_options(self, monkeypatch, tmp_path):
         intent = tmp_path / "intent.md"

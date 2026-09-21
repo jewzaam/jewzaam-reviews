@@ -1205,6 +1205,65 @@ def run_resume_validation(options: Options) -> int:
     return 0
 
 
+def run_rerender(options: Options) -> int:
+    """Re-render the findings files from a hand-edited 20-findings/.
+
+    The rewrite skill reframes findings there after the digging that followed
+    a review, then calls this. No agents run and nothing is re-derived except
+    severity buckets and ids, which the renderer owns — so an edited dimension
+    re-buckets exactly as the original run would have. Ids are reassigned, not
+    preserved: they follow (path, line, title), so a retitle can renumber a
+    bucket when two of its findings cite the same file and line.
+    """
+    tmp_dir = Path(options.project_root) / TMP_DIR_NAME
+    findings_dir = tmp_dir / "20-findings"
+    if not findings_dir.is_dir():
+        print(
+            f"ERROR: no {TMP_DIR_NAME}/20-findings/ under {options.project_root} — "
+            "the findings from that run are gone (the next review wipes it). "
+            "Re-run the review.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        review_scope, scoring = _load_scope(tmp_dir)
+        _envelope, staged = load_stage_dir(findings_dir)
+    except (PipelineError, OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    options.scoring = scoring
+    state = RunState(options=options, scope=review_scope)
+    # The original run's id and steps, so the re-rendered envelope still
+    # traces back to the agents that produced the findings and still reports
+    # the stage that degraded. A rerender writes the only surviving copy of
+    # that report — its own row is appended, never substituted.
+    saved = tmp_dir / RUN_REPORT_FILENAME
+    try:
+        report = json.loads(saved.read_text(encoding="utf-8"))
+        state.run_id = report.get("run_id") or state.run_id
+        # Restored, not re-derived: state.run_report() reads it off options, so
+        # a rerender under a different harness would relabel a run it did not
+        # make the agent calls for.
+        options.harness = report.get("harness") or options.harness
+        state.steps.extend(report.get("steps", []))
+    except (OSError, ValueError) as exc:
+        state.record_step("run-report", "degraded", f"prior report unusable: {exc}")
+    state.record_step(
+        "rewrite", "ok", f"re-rendered {len(staged)} hand-edited finding(s)"
+    )
+
+    _render(state)
+
+    base = review_file_basename(state.scope.scope_slug)
+    print(f"rerender: {len(staged)} finding(s) from {TMP_DIR_NAME}/20-findings/")
+    print("\nFiles:")
+    for suffix in (".json", ".md", "-supplementary.md"):
+        print(f"- {base}{suffix}")
+    _print_run_report(state)
+    return 0
+
+
 def run_review(options: Options, selection_file: Path | None = None) -> int:
     """Run the full review pipeline; returns a process exit code."""
     try:
@@ -1286,6 +1345,16 @@ def _apply_and_render(state: RunState) -> None:
     # Validator failures were recorded after the 10-merged merge;
     # fold them into the post-verdict envelope.
     _merge_issues_into_envelope(state, state.tmp_dir / "20-findings")
+    _render(state)
+
+
+def _render(state: RunState) -> None:
+    """Render 20-findings/ to the findings files at the project root.
+
+    Public to the simple path and to --rerender, which runs this and nothing
+    else: apply-verdicts rebuilds 20-findings from 10-merged, so re-running it
+    would discard the hand edits --rerender exists to render.
+    """
     render_args = [
         "--input-dir",
         f"./{TMP_DIR_NAME}/20-findings/",
@@ -1293,6 +1362,8 @@ def _apply_and_render(state: RunState) -> None:
         ".",
         "--project-name",
         state.scope.project_name,
+        "--scoring",
+        state.options.scoring,
         "--run-id",
         state.run_id,
         "--run-report",
@@ -1308,7 +1379,7 @@ def _apply_and_render(state: RunState) -> None:
     intent_path = state.tmp_dir / INTENT_FILENAME
     if intent_path.is_file():
         render_args += ["--intent-file", str(intent_path)]
-    stage_cli("render-review.py", *render_args, cwd=cwd)
+    stage_cli("render-review.py", *render_args, cwd=state.options.project_root)
 
 
 def _run_stages(state: RunState) -> int:
