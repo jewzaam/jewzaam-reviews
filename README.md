@@ -4,6 +4,8 @@ A Claude Code plugin bundling a connected pipeline of review skills. Producer sk
 
 ## Skills
 
+See the [review skill guide](docs/review/README.md) for usage and harness-specific settings.
+
 | Skill | Output files | Description |
 |-------|--------------|-------------|
 | `jewzaam-reviews:review` | `Findings-review[-<scope>].{json,md,-supplementary.md}`, `Findings-intent[-<scope>].md` | Scope-aware multi-agent review via the script orchestrator; categorical with no skipped lenses by default |
