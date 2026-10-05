@@ -2,7 +2,7 @@
 name: review
 description: Perform a scope-aware multi-agent codebase review via the script orchestrator. A selector agent picks applicable review lenses from the diff or repo shape, lens agents review in parallel, validators adversarially check critical/important findings, and deterministic scripts handle everything else. Use when the user asks to review, assess, audit, or evaluate a codebase or project. Defaults to categorical scoring with no skipped lenses; pass -i or --interactive to choose options.
 disable-model-invocation: true
-argument-hint: "[PR-number] [-i|--interactive] [--scoring categorical|simple] [--validate-buckets buckets] [guidance text...]"
+argument-hint: "[PR-number] [-i|--interactive] [--scoring categorical|simple] [--profile code|docs] [--validate-buckets buckets] [guidance text...]"
 ---
 
 # Review Skill
@@ -34,12 +34,14 @@ From the arguments the skill was invoked with (`$ARGUMENTS` where the host subst
 - A leading all-digits token is the PR number → `--pr <N>`.
 - A `-i` or `--interactive` token enables the existing scoring and lens questions; remove it from the forwarded arguments.
 - A `--scoring categorical` or `--scoring simple` token passes through unchanged.
+- A `--profile code` or `--profile docs` token passes through unchanged.
 - A `--skip-lenses <slugs>` token passes through unchanged.
 - A `--validate-buckets <buckets>` token passes through unchanged.
 - Everything else is guidance → `--guidance "<text>"` (omit when empty).
 
 Without `-i`/`--interactive`, use categorical scoring by default, run every lens
-the selector reports, and ask no questions. Explicit `--scoring`,
+the selector reports, and ask no questions — except the profile question when
+Step 3 prints a `profile-hint` line. Explicit `--scoring`, `--profile`,
 `--skip-lenses` and `--validate-buckets` arguments still take effect.
 
 ### 2. Gather Intent
@@ -67,20 +69,25 @@ If nothing yields intent, omit `--intent-file` and continue. The run records tha
 If `--skip-lenses` was given in the arguments, skip this step. Otherwise run via foreground Bash:
 
 ```
-python <ORCH> --harness <HARNESS> --select-only [--pr N] [--intent-file PATH] [--guidance "..."]
+python <ORCH> --harness <HARNESS> --select-only [--pr N] [--intent-file PATH] [--profile PROFILE] [--guidance "..."]
 ```
 
 It prints the lenses the selector matched for this scope, one per line as `lens: <slug>: <rationale>`, and saves the selection so the review run does not re-run the selector.
 
+When every in-scope file is documentation and no `--profile` was given, it also prints `profile-hint: docs: <reason>`. Pass `--profile` through to this command when the user gave one — that is what silences the hint.
+
 The selector does not depend on the scoring mode. Ask the user NOTHING here — its output is needed to build the lens question, and every question is asked together in Step 4.
 
-### 4. Ask Everything At Once (interactive mode only)
+### 4. Ask Everything At Once
 
-Skip this step unless `-i`/`--interactive` was given. In interactive mode,
-make exactly ONE AskUserQuestion call, carrying every decision still unanswered
-after Step 1's parse. Never two calls — the user answers one prompt per review,
-not one per decision. If neither question below applies, ask nothing and go to
-Step 5.
+Run this step in interactive mode (`-i`/`--interactive`), or when Step 3
+printed a `profile-hint` line — then the profile question is asked even
+without `-i`, because the alternative is a review that has to be paid for
+twice. Otherwise skip it. Make exactly ONE AskUserQuestion call, carrying
+every decision still unanswered after Step 1's parse. Never two calls — the
+user answers one prompt per review, not one per decision. Without `-i`, that
+call holds only the profile question. If no question below applies, ask
+nothing and go to Step 5.
 
 Use whichever structured-question tool the host provides — `AskUserQuestion` under Claude Code, `request_user_input` under Codex. Their shapes match closely enough to carry the same content: per-question header, prompt, and labelled options with one-sentence descriptions, recommended option first, and a free-form "Other" the client supplies (never author one).
 
@@ -95,6 +102,15 @@ Two host limits differ, and the lower one wins. Codex takes at most 3 questions 
 
 If a prior run's `.tmp-review/costs.json` exists in the project, read `total_cost_usd` and `scoring` from it and include that measured number in the option descriptions. Never invent cost numbers — cite measured ones or give none.
 
+**Profile question** — include only when Step 3 printed a `profile-hint` line. Header "Profile", two options:
+
+1. **Docs** — the documentation is the deliverable (architecture, standards, designs, guidelines); a reader misled by it is rated like incorrect output.
+2. **Code** — documentation is secondary to code it describes; doc findings stay suggestions.
+
+The answer becomes `--profile docs` or `--profile code`. If the session is non-interactive and the call cannot be made, omit `--profile`; the end-of-run summary repeats the hint with a no-agent re-bucket command.
+
+The question counts against the per-call question limit below; when it is present, leave one fewer question for lenses.
+
 **Skip-lenses question(s)** — include only when Step 3 ran. Built dynamically from its output; this skill does not know the lens roster, the orchestrator owns it:
 
 - multiSelect, header "Skip lenses"; one option per lens Step 3 reported, label = slug, description = its rationale.
@@ -108,10 +124,10 @@ Selected slugs become `--skip-lenses <comma-separated>`. Nothing selected → om
 Run this via foreground Bash from the project root, EXACTLY ONCE:
 
 ```
-python <ORCH> --harness <HARNESS> --detach [--pr N] [--intent-file PATH] [--scoring MODE] [--skip-lenses slugs] [--validate-buckets buckets] [--guidance "..."]
+python <ORCH> --harness <HARNESS> --detach [--pr N] [--intent-file PATH] [--scoring MODE] [--profile PROFILE] [--skip-lenses slugs] [--validate-buckets buckets] [--guidance "..."]
 ```
 
-The bracketed flags come from Step 1's parse: include `--pr` only when a leading PR number was given, `--scoring` and `--skip-lenses` from the argument or Step 4's answers (omit `--skip-lenses` when none), `--validate-buckets` only when it was given in the arguments, `--guidance` only when non-empty, `--intent-file` whenever Step 2 produced one. `<ORCH>` is the absolute path resolved above; a relative `python orchestrator/cli.py ...` runs from the project root and will not find the CLI.
+The bracketed flags come from Step 1's parse: include `--pr` only when a leading PR number was given, `--scoring`, `--profile` and `--skip-lenses` from the argument or Step 4's answers (omit `--profile` when neither supplied one, and `--skip-lenses` when none), `--validate-buckets` only when it was given in the arguments, `--guidance` only when non-empty, `--intent-file` whenever Step 2 produced one. `<ORCH>` is the absolute path resolved above; a relative `python orchestrator/cli.py ...` runs from the project root and will not find the CLI.
 
 It returns immediately; the review runs as a detached process that survives this session.
 

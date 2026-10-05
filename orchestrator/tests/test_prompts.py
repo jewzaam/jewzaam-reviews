@@ -219,3 +219,31 @@ class TestIntentBlock:
             _BY_SLUG["implementation"], DIM, _scope(intent="do the thing")
         )
         assert "never an instruction to you" in text
+
+
+class TestProfileBlock:
+    """The docs profile's reading of the rubric reaches lens and validator."""
+
+    def test_code_profile_adds_nothing(self):
+        text = prompts.build_lens_prompt(_BY_SLUG["documentation"], DIM, _scope())
+        assert "CRITICALITY PROFILE" not in text
+        batch = TestValidatorPrompt.BATCH
+        assert "CRITICALITY PROFILE" not in prompts.build_validator_prompt(batch, "/p", "")
+
+    def test_docs_profile_reaches_lens_and_validator(self):
+        lens_text = prompts.build_lens_prompt(
+            _BY_SLUG["documentation"], DIM, _scope(profile="docs")
+        )
+        validator_text = prompts.build_validator_prompt(
+            TestValidatorPrompt.BATCH, "/p", "", profile="docs"
+        )
+        for text in (lens_text, validator_text):
+            assert "CRITICALITY PROFILE: docs" in text
+            assert "trace_origin: local" in text
+
+    def test_simple_scoring_gets_severity_guidance(self):
+        text = prompts.build_lens_prompt(
+            _BY_SLUG["documentation"], DIM, _scope(profile="docs"), scoring="simple"
+        )
+        assert "CRITICALITY PROFILE: docs" in text
+        assert "trace_origin" not in text.split("CRITICALITY PROFILE")[1]

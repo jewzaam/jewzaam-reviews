@@ -22,6 +22,7 @@ $jewzaam-reviews:review
 $jewzaam-reviews:review 42
 $jewzaam-reviews:review focus on authentication and session handling
 $jewzaam-reviews:review 42 --scoring simple
+$jewzaam-reviews:review --profile docs
 $jewzaam-reviews:review --interactive
 $jewzaam-reviews:review --skip-lenses documentation,observability
 $jewzaam-reviews:review --validate-buckets critical,important,suggestion,needs-review
@@ -31,6 +32,13 @@ Use `--scoring simple` for direct severity and confidence ratings. The default
 `categorical` mode scores findings across five dimensions. `--interactive`
 asks which scoring mode and lenses to use. Otherwise the selector chooses
 lenses and all selected lenses run.
+
+Use `--profile docs` when the documentation is the deliverable, as in an
+architecture, standards, or design repository. Without it, documentation
+findings cap at suggestion. When every in-scope file is documentation and no
+profile was given, the skill asks which profile to use before the review runs.
+To re-bucket a finished review without running agents, use
+`cli.py --rerender --profile docs`.
 
 The normal validation pass challenges critical and important findings. If the
 review has none, it validates suggestions instead. It skips `needs-review` by

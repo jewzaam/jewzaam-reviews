@@ -29,7 +29,7 @@ SCHEMAS_DIR = REPO_ROOT / "schemas"
 PLUGIN_ROOT = REPO_ROOT.parent.parent
 
 sys.path.insert(0, str(PLUGIN_ROOT))
-from scripts.envelope import assign_bucket, load_stage_dir, safe_load_json, schema_registry, SEVERITY_BUCKETS  # noqa: E402
+from scripts.envelope import PROFILES, assign_bucket, load_stage_dir, safe_load_json, schema_registry, SEVERITY_BUCKETS  # noqa: E402
 
 # Keep this in sync with validation-input.schema.json $defs/batch_finding.required
 BATCH_FINDING_FIELDS = (
@@ -136,6 +136,12 @@ def main(argv: list[str]) -> int:
         ),
     )
     parser.add_argument(
+        "--profile",
+        choices=list(PROFILES),
+        default="code",
+        help="criticality profile that --only-buckets buckets findings under",
+    )
+    parser.add_argument(
         "--verdicts-dir",
         type=Path,
         default=None,
@@ -208,7 +214,7 @@ def main(argv: list[str]) -> int:
 
     if bucket_filter is not None:
         before = len(findings)
-        findings = [f for f in findings if assign_bucket(f) in bucket_filter]
+        findings = [f for f in findings if assign_bucket(f, args.profile) in bucket_filter]
         excluded = before - len(findings)
         if excluded:
             print(

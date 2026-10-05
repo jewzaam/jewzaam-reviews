@@ -1220,3 +1220,101 @@ class TestRerender:
         # apply-verdicts is never re-run: it rebuilds 20-findings/ from
         # 10-merged/ and would discard the edits being rendered.
         assert args[args.index("--input-dir") + 1].endswith("20-findings/")
+
+
+class TestCriticalityProfile:
+    """--profile reaches agents and bucketing; docs-only scopes get a hint."""
+
+    def _docs_only(self, monkeypatch):
+        monkeypatch.setattr(scope_mod, "is_docs_only", lambda paths: True)
+
+    def test_select_only_hints_when_no_profile_given(
+        self, git_repo, monkeypatch, tmp_path, capsys
+    ):
+        self._docs_only(monkeypatch)
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_select_only(_options(git_repo), tmp_path / "sel.json") == 0
+        assert "profile-hint: docs:" in capsys.readouterr().out
+
+    @pytest.mark.parametrize("profile", ["code", "docs"])
+    def test_select_only_silent_once_a_profile_is_chosen(
+        self, git_repo, monkeypatch, tmp_path, capsys, profile
+    ):
+        self._docs_only(monkeypatch)
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        options = _options(git_repo, profile=profile)
+        assert pipeline.run_select_only(options, tmp_path / "sel.json") == 0
+        assert "profile-hint" not in capsys.readouterr().out
+
+    def test_select_only_silent_for_code_scopes(self, git_repo, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_select_only(_options(git_repo), tmp_path / "sel.json") == 0
+        assert "profile-hint" not in capsys.readouterr().out
+
+    def test_summary_hint_names_the_rerender_command(self, git_repo, monkeypatch, capsys):
+        self._docs_only(monkeypatch)
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_review(_options(git_repo)) == 0
+        out = capsys.readouterr().out
+        assert "--rerender --profile docs" in out
+        findings = json.loads((git_repo / "Findings-review.json").read_text())
+        assert _steps(findings["run_report"])["profile"] == "ok"
+
+    def test_docs_profile_reaches_agents_without_a_hint(self, git_repo, monkeypatch, capsys):
+        self._docs_only(monkeypatch)
+        calls = []
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
+        assert pipeline.run_review(_options(git_repo, profile="docs")) == 0
+        assert "--rerender --profile docs" not in capsys.readouterr().out
+        agent_prompts = [
+            c["prompt"] for c in calls if "Select which review lenses" not in c["prompt"]
+        ]
+        assert agent_prompts
+        assert all("CRITICALITY PROFILE: docs" in p for p in agent_prompts)
+
+    def test_rerender_profile_override_rebuckets_and_persists(self, git_repo, monkeypatch):
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_review(_options(git_repo)) == 0
+        stage = git_repo / ".tmp-review" / "20-findings"
+        path = next(p for p in stage.glob("*.json") if p.name != "_envelope.json")
+        finding = json.loads(path.read_text())
+        finding.update(runtime_scope="documentation", failure_mode="confusion")
+        path.write_text(json.dumps(finding))
+
+        def explode(*args, **kwargs):
+            raise AssertionError("agent dispatched during rerender")
+
+        monkeypatch.setattr(backend, "run_agent", explode)
+
+        def severity():
+            rendered = json.loads((git_repo / "Findings-review.json").read_text())
+            return rendered["findings"][0]["severity"], rendered["run_report"]
+
+        assert pipeline.run_rerender(_options(git_repo)) == 0
+        assert severity()[0] == "suggestion"
+
+        assert pipeline.run_rerender(_options(git_repo, profile="docs")) == 0
+        bucket, report = severity()
+        assert bucket == "important"
+        assert any(
+            s["step"] == "profile" and s["detail"].startswith("docs (overrides code")
+            for s in report["steps"]
+        )
+        # Stored, so a later resume or rerender without the flag keeps it.
+        assert pipeline._load_scope(git_repo / ".tmp-review")[0].profile == "docs"
+        assert pipeline.run_rerender(_options(git_repo)) == 0
+        assert severity()[0] == "important"
+
+    def test_explicit_code_override_is_stored_without_a_step(self, git_repo, monkeypatch):
+        self._docs_only(monkeypatch)
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        assert pipeline.run_review(_options(git_repo)) == 0
+        tmp_dir = git_repo / ".tmp-review"
+        assert pipeline._docs_hint(pipeline._load_scope(tmp_dir)[0])
+
+        assert pipeline.run_rerender(_options(git_repo, profile="code")) == 0
+        stored = pipeline._load_scope(tmp_dir)[0]
+        assert stored.profile == "code"
+        assert not pipeline._docs_hint(stored)
+        rendered = json.loads((git_repo / "Findings-review.json").read_text())
+        assert not any("overrides" in s["detail"] for s in rendered["run_report"]["steps"])

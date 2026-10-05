@@ -224,3 +224,48 @@ class TestProbeFallback:
         (repo / "sub" / "thing.py").write_text("x\n")
         name, language, build, test = scope.probe_project(str(repo))
         assert language == "Python"  # found via rglob, no git
+
+
+class TestDocsOnly:
+    """is_docs_only decides the docs-profile hint from the file list alone."""
+
+    def test_docs_with_repo_plumbing(self):
+        assert scope.is_docs_only([
+            "README.md", "standards/naming.rst", "img/flow.svg",
+            "Makefile", "LICENSE", ".github/workflows/lint.yml",
+            ".markdownlint.yaml",
+        ])
+
+    def test_any_code_file_disqualifies(self):
+        assert not scope.is_docs_only(["README.md", "tool.py"])
+
+    def test_unknown_file_counts_as_code(self):
+        assert not scope.is_docs_only(["README.md", "deploy.yaml"])
+
+    def test_plumbing_alone_is_not_docs(self):
+        assert not scope.is_docs_only(["Makefile", ".gitignore"])
+        assert not scope.is_docs_only([])
+
+    def test_extension_match_ignores_case(self):
+        assert scope.is_docs_only(["docs/Design.MD", "diagram.PNG"])
+
+    def test_pr_scope_uses_the_diff_not_the_repo(self, git_repo):
+        # The fixture repo holds code; a docs-only change to it is docs-only.
+        (git_repo / "GUIDE.md").write_text("# guide\n")
+        _git(git_repo, "add", ".")
+        _git(git_repo, "commit", "-m", "docs")
+        base = _git_out(git_repo, "rev-parse", "HEAD~1")
+        assert scope.in_scope_files(str(git_repo), base) == ["GUIDE.md"]
+        assert not scope.compute_scope(str(git_repo), None, "").docs_only
+
+    def test_compute_scope_records_docs_only_and_profile(self, git_repo):
+        s = scope.compute_scope(str(git_repo), None, "", profile="docs")
+        assert s.profile == "docs"
+        assert s.effective_profile == "docs"
+        assert scope.compute_scope(str(git_repo), None, "").effective_profile == "code"
+
+
+def _git_out(cwd, *args):
+    return subprocess.run(
+        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()

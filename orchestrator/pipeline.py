@@ -123,6 +123,10 @@ class Options:
     # Re-run only the validation tail against an existing .tmp-review/10-merged/,
     # challenging the findings the first run left unvalidated.
     resume_validation: bool = False
+    # Criticality profile from --profile; "" when not given. A review stores
+    # it in the scope; resume and rerender reuse the stored one unless this
+    # overrides it.
+    profile: str = ""
     max_agents: int = 16
     parallel: int = 4
     # Latency backstop only. Spend is capped per agent by BUDGET_USD_BY_MODEL,
@@ -501,6 +505,48 @@ def _write_scope(state) -> None:
     )
 
 
+def _apply_profile_override(state) -> None:
+    """Let --profile on resume/rerender replace the profile the review stored.
+
+    Saves re-running a review that was started without the profile it
+    needed. Re-bucketing is exact; the dimensions themselves were rated under
+    the old profile's guidance, which the step row says.
+    """
+    new_profile = state.options.profile
+    if not new_profile:
+        return
+    old_profile = state.scope.effective_profile
+    if new_profile == old_profile:
+        if not state.scope.profile:
+            # Buckets unchanged, but the choice is now explicit: stored so the
+            # docs-only hint stops treating it as forgotten.
+            state.scope.profile = new_profile
+            _write_scope(state)
+        return
+    state.scope.profile = new_profile
+    _write_scope(state)
+    state.record_step(
+        "profile",
+        "ok",
+        f"{new_profile} (overrides {old_profile}; dimensions not re-validated "
+        f"were rated under {old_profile} guidance)",
+    )
+
+
+def _docs_hint(review_scope) -> str:
+    """One line naming the forgotten --profile docs, or "" when not needed.
+
+    Only when nobody chose a profile: an explicit --profile code on a docs-only
+    scope is a decision, not an oversight.
+    """
+    if review_scope.profile or not review_scope.docs_only:
+        return ""
+    return (
+        "every in-scope file is documentation and no --profile was given, so "
+        "documentation is rated as secondary to code"
+    )
+
+
 def _load_scope(tmp_dir: Path) -> tuple[scope_mod.ReviewScope, str]:
     """Read back what _write_scope stored. Raises PipelineError if unusable."""
     path = tmp_dir / SCOPE_FILENAME
@@ -758,7 +804,11 @@ def run_validators(state) -> None:
 
     def run_batch(batch):
         prompt = prompts.build_validator_prompt(
-            batch, state.options.project_root, state.scope.merge_base, simple=simple
+            batch,
+            state.options.project_root,
+            state.scope.merge_base,
+            simple=simple,
+            profile=state.scope.effective_profile,
         )
         return _run_with_retry(
             state,
@@ -921,7 +971,9 @@ def _write_costs(state) -> dict:
 DEFAULT_VALIDATION_BUCKETS = "critical,important"
 
 
-def _validation_buckets(merged_dir: Path, override: str = "") -> str:
+def _validation_buckets(
+    merged_dir: Path, override: str = "", profile: str = "code"
+) -> str:
     """Which severity buckets go to the validators.
 
     Bucketing happens before validation, so a finding scored too low never
@@ -943,7 +995,7 @@ def _validation_buckets(merged_dir: Path, override: str = "") -> str:
         return DEFAULT_VALIDATION_BUCKETS
     if not findings:
         return DEFAULT_VALIDATION_BUCKETS
-    if any(assign_bucket(f) in ("critical", "important") for f in findings):
+    if any(assign_bucket(f, profile) in ("critical", "important") for f in findings):
         return DEFAULT_VALIDATION_BUCKETS
     return "suggestion"
 
@@ -976,6 +1028,21 @@ def _print_summary(state, cost_report) -> None:
     print("\nFiles:")
     for suffix in (".json", ".md", "-supplementary.md"):
         print(f"- {base}{suffix}")
+
+    hint = _docs_hint(state.scope)
+    if hint:
+        # The run-time half of the hint --select-only prints up front; this
+        # one reaches runs that skipped that step (--skip-lenses, plain CLI).
+        rebucket = (
+            f"python {ORCHESTRATOR_ROOT / 'cli.py'} --rerender --profile docs"
+        )
+        print(
+            f"\nNote: {hint}. To re-bucket these findings with documentation as "
+            f"the deliverable, without running agents: {rebucket}. The "
+            "dimensions were rated under code guidance; a new review with "
+            "--profile docs re-rates all of them, --resume-validation "
+            "--profile docs only those not yet validated."
+        )
 
     validated = {b for b in state.validated_buckets.split(",") if b}
     # Only buckets that actually hold something: counts always has all four
@@ -1047,7 +1114,11 @@ def run_select_only(options: Options, selection_file: Path) -> int:
     """
     try:
         review_scope = scope_mod.compute_scope(
-            options.project_root, options.pr_number, options.guidance, options.intent
+            options.project_root,
+            options.pr_number,
+            options.guidance,
+            options.intent,
+            options.profile,
         )
     except scope_mod.ScopeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1088,6 +1159,11 @@ def run_select_only(options: Options, selection_file: Path) -> int:
     print(f"selection source: {source}")
     for lens in selected:
         print(f"lens: {lens.slug}: {rationales.get(lens.slug, '')}")
+    # Before any lens agent runs, so the caller can still ask — choosing the
+    # profile after the review means paying for a second one.
+    hint = _docs_hint(review_scope)
+    if hint:
+        print(f"profile-hint: docs: {hint}")
     return 0
 
 
@@ -1166,6 +1242,7 @@ def run_resume_validation(options: Options) -> int:
     state.record_step(
         "scope", "ok", f"reused the saved scope from {TMP_DIR_NAME}/{SCOPE_FILENAME}"
     )
+    _apply_profile_override(state)
     validation_dir = tmp_dir / "15-validation"
     validation_dir.mkdir(parents=True, exist_ok=True)
     offset = len(list(validation_dir.glob("batch-*-input.json")))
@@ -1178,6 +1255,8 @@ def run_resume_validation(options: Options) -> int:
         f"./{TMP_DIR_NAME}/15-validation/",
         "--batch-offset",
         str(offset),
+        "--profile",
+        review_scope.effective_profile,
     ]
     detail = "findings with no verdict yet"
     if options.validate_buckets:
@@ -1249,6 +1328,7 @@ def run_rerender(options: Options) -> int:
         state.steps.extend(report.get("steps", []))
     except (OSError, ValueError) as exc:
         state.record_step("run-report", "degraded", f"prior report unusable: {exc}")
+    _apply_profile_override(state)
     state.record_step(
         "rewrite", "ok", f"re-rendered {len(staged)} hand-edited finding(s)"
     )
@@ -1268,7 +1348,11 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
     """Run the full review pipeline; returns a process exit code."""
     try:
         review_scope = scope_mod.compute_scope(
-            options.project_root, options.pr_number, options.guidance, options.intent
+            options.project_root,
+            options.pr_number,
+            options.guidance,
+            options.intent,
+            options.profile,
         )
     except scope_mod.ScopeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1296,6 +1380,12 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
         if review_scope.intent
         else "none supplied; lenses reviewed against inferred purpose",
     )
+    profile_detail = review_scope.effective_profile + (
+        "" if review_scope.profile else " (default)"
+    )
+    if options.scoring == "simple" and review_scope.effective_profile != "code":
+        profile_detail += "; simple scoring: changes agent guidance only, not bucketing"
+    state.record_step("profile", "ok", profile_detail)
 
     if options.dry_run:
         print(f"Project: {review_scope.project_name} ({review_scope.language})")
@@ -1364,6 +1454,8 @@ def _render(state: RunState) -> None:
         state.scope.project_name,
         "--scoring",
         state.options.scoring,
+        "--profile",
+        state.scope.effective_profile,
         "--run-id",
         state.run_id,
         "--run-report",
@@ -1475,7 +1567,9 @@ def _run_stages(state: RunState) -> int:
         maybe_diff_scope_filter(state, cwd)
 
         buckets = _validation_buckets(
-            state.tmp_dir / "10-merged", state.options.validate_buckets
+            state.tmp_dir / "10-merged",
+            state.options.validate_buckets,
+            review_scope.effective_profile,
         )
         state.validated_buckets = buckets
         stage_cli(
@@ -1486,6 +1580,8 @@ def _run_stages(state: RunState) -> int:
             f"./{TMP_DIR_NAME}/15-validation/",
             "--only-buckets",
             buckets,
+            "--profile",
+            review_scope.effective_profile,
             cwd=cwd,
             state=state,
             step="batch",

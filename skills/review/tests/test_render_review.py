@@ -540,6 +540,78 @@ class TestAssignBucket:
         assert mod.assign_bucket(f) == "suggestion"
 
 
+class TestAssignBucketDocsProfile:
+    """The docs profile weighs documentation as the deliverable."""
+
+    def _finding(self, **overrides) -> dict:
+        base = {
+            "runtime_scope": "documentation",
+            "failure_mode": "confusion",
+            "evidence_quality": "demonstrated",
+            "trace_origin": "entry-point",
+            "effort_to_fix": "small",
+        }
+        base.update(overrides)
+        return base
+
+    def _assign(self, finding, profile):
+        sys.path.insert(0, str(PLUGIN_ROOT))
+        from scripts.envelope import assign_bucket
+
+        return assign_bucket(finding, profile)
+
+    def test_misleading_reachable_doc_is_important(self):
+        assert self._assign(self._finding(), "code") == "suggestion"
+        assert self._assign(self._finding(), "docs") == "important"
+
+    def test_doc_that_weakens_security_is_critical(self):
+        f = self._finding(failure_mode="data-loss-or-security")
+        assert self._assign(f, "code") == "suggestion"
+        assert self._assign(f, "docs") == "critical"
+
+    def test_local_trace_still_caps_at_suggestion(self):
+        assert self._assign(self._finding(trace_origin="local"), "docs") == "suggestion"
+
+    def test_unclear_stays_suggestion(self):
+        assert self._assign(self._finding(failure_mode="unclear"), "docs") == "suggestion"
+
+    def test_speculative_stays_needs_review(self):
+        f = self._finding(evidence_quality="speculative")
+        assert self._assign(f, "docs") == "needs-review"
+
+    def test_code_findings_keep_the_code_rubric(self):
+        # Misleading log text in production code is not promoted: only
+        # documentation-scoped findings are remapped.
+        f = self._finding(runtime_scope="service-internal")
+        assert self._assign(f, "docs") == "suggestion"
+
+    def test_renderer_buckets_under_the_profile(self, tmp_path):
+        stage = tmp_path / "20-findings"
+        stage.mkdir()
+        sample = _load(FIXTURES / "post-validation.sample.json")
+        (stage / "_envelope.json").write_text(json.dumps({
+            "project": {"name": "myapp"},
+            "decomposition": sample["decomposition"],
+            "issues": [],
+        }))
+        doc = {**sample["findings"][0], **self._finding(), "content_hash": "d0c5d0c5d0c5d0c5"}
+        for key in ("runtime_scope", "failure_mode", "evidence_quality", "trace_origin"):
+            doc[f"{key}_justification"] = "set by the test"
+        (stage / "d0c5d0c5d0c5d0c5.json").write_text(json.dumps(doc))
+
+        severities = {}
+        for profile in ("code", "docs"):
+            out_dir = tmp_path / profile
+            result = _run([
+                "--input-dir", str(stage), "--out-dir", str(out_dir),
+                "--project-name", "myapp", "--profile", profile,
+            ])
+            assert result.returncode == 0, result.stderr
+            rendered = _load(out_dir / "Findings-review.json")
+            severities[profile] = rendered["findings"][0]["severity"]
+        assert severities == {"code": "suggestion", "docs": "important"}
+
+
 class TestRenderReviewSimpleScoring:
     def _stage(self, tmp_path):
         stage = tmp_path / "20-findings"

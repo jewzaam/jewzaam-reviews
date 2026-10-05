@@ -326,3 +326,33 @@ class TestIntentFile:
         # would hide the one input they took the trouble to gather.
         assert cli.main(["--intent-file", str(tmp_path / "gone.md"), "--dry-run"]) == 2
         assert "could not read --intent-file" in capsys.readouterr().err
+
+
+class TestProfileFlag:
+    def test_reaches_options(self, monkeypatch):
+        seen = {}
+
+        def _capture(options, **kw):
+            seen["profile"] = options.profile
+            return 0
+
+        monkeypatch.setattr(cli.pipeline, "run_review", _capture)
+        assert cli.main(["--profile", "docs", "--dry-run"]) == 0
+        assert seen["profile"] == "docs"
+
+    def test_omitted_is_unset_not_code(self, monkeypatch):
+        # "" is what lets the docs-only hint tell a forgotten flag from a
+        # deliberate --profile code.
+        seen = {}
+
+        def _capture(options, **kw):
+            seen["profile"] = options.profile
+            return 0
+
+        monkeypatch.setattr(cli.pipeline, "run_review", _capture)
+        assert cli.main(["--dry-run"]) == 0
+        assert seen["profile"] == ""
+
+    def test_unknown_profile_rejected(self):
+        with pytest.raises(SystemExit):
+            cli.main(["--profile", "changelog", "--dry-run"])
