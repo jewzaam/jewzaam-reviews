@@ -5,7 +5,8 @@
 Usage (typically via the review skill wrapper, but works standalone):
 
     python orchestrator/cli.py [--pr N] [--guidance "text"]
-        [--scoring categorical|simple] [--harness auto|claude|codex]
+        [--scoring categorical|simple] [--profile code|docs]
+        [--harness auto|claude|codex]
         [--project-root PATH]
         [--max-agents 16] [--parallel 4] [--timeout 600] [--dry-run]
 
@@ -32,7 +33,7 @@ if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
 from orchestrator import pipeline  # noqa: E402
-from scripts.envelope import SEVERITY_BUCKETS  # noqa: E402
+from scripts.envelope import PROFILES, SEVERITY_BUCKETS  # noqa: E402
 
 EXIT_STILL_RUNNING = 3
 _EXIT_FILE_ENV = "REVIEW_ORCHESTRATOR_EXIT_FILE"
@@ -168,6 +169,16 @@ def main(argv: list[str] | None = None) -> int:
         help="categorical: five-dimension rubric with justifications "
         "(more output tokens per finding, stronger noise filtering); "
         "simple: severity+confidence (cheaper, lighter)",
+    )
+    parser.add_argument(
+        "--profile",
+        choices=list(PROFILES),
+        default="",
+        help="criticality profile. code (the default when omitted) treats "
+        "documentation as secondary to code; docs treats it as the "
+        "deliverable, for architecture/standards/design repos. With "
+        "--rerender or --resume-validation, replaces the profile the review "
+        "ran with",
     )
     parser.add_argument(
         "--harness",
@@ -336,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         skip_lenses=skip_lenses,
         validate_buckets=validate_buckets,
         resume_validation=args.resume_validation,
+        profile=args.profile,
         max_agents=args.max_agents,
         parallel=args.parallel,
         timeout_s=args.timeout,

@@ -160,6 +160,12 @@ Findings carry five categorical dimensions. The renderer maps them deterministic
 
 In simple mode, severity comes directly from the agents (validated for critical/important), and `confidence = low` maps to Needs-review.
 
+### Criticality profile
+
+`--profile code|docs` sets how documentation is weighed. `code` (the default) treats it as secondary, so a documentation finding caps at Suggestion. `docs` is for repos where the documents are the deliverable (architecture, standards, designs): before the table above is applied, a finding with `runtime_scope = documentation` is weighed as `service-external`, and its `confusion` failure mode as `degraded-behavior`. A misleading document a reader reaches from an entry point is then Important; one that weakens security when followed is Critical. Code findings in the same run keep the code rubric. Lens and validator prompts carry a docs reading of each dimension (rated by what happens to a reader who follows the document). In simple mode the profile changes only that prompt guidance.
+
+The mapping stays deterministic: the bucket is a function of the dimensions and the profile, which is recorded as a `profile` row in the run report and stored with the run's scope. When every in-scope file is documentation (or repo plumbing: dotfiles, `.github/`, `Makefile`, `LICENSE`) and no `--profile` was given, `--select-only` prints a `profile-hint` line — the skill asks before any lens runs — and the end-of-run summary prints a re-bucket command. `--rerender --profile docs` re-buckets an existing run without agents; its dimensions keep the ratings they were given under the original profile.
+
 ## Usage
 
 From any project repo:
@@ -171,6 +177,7 @@ From any project repo:
 /jewzaam-reviews:review 42 -i                    # PR review with interactive choices
 /jewzaam-reviews:review focus on auth            # Guided review
 /jewzaam-reviews:review 42 --scoring simple      # PR review with simple scoring
+/jewzaam-reviews:review --profile docs           # Docs repo: documentation is the deliverable
 /jewzaam-reviews:review --validate-buckets critical,important,suggestion,needs-review
                                                  # validate the supplementary buckets too (replaces the default)
 /jewzaam-reviews:validate-supplementary          # validate what the LAST run left unchallenged (no re-review)

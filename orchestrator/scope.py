@@ -39,6 +39,17 @@ class ReviewScope:
     # by the skill (which has the session's tools) and handed in as text —
     # nothing here fetches it. Empty is normal and is reported as such.
     intent: str = ""
+    # Criticality profile (scripts.envelope.PROFILES). "" means the caller
+    # never chose one, which is what lets the docs-only hint tell "forgot" from
+    # a deliberate --profile code; everything that buckets reads it through
+    # effective_profile.
+    profile: str = ""
+    # Every in-scope file is documentation or repo plumbing (is_docs_only).
+    docs_only: bool = False
+
+    @property
+    def effective_profile(self) -> str:
+        return self.profile or "code"
 
 
 def _git(project_root: str, *args: str) -> str:
@@ -198,6 +209,49 @@ _LANGUAGE_EXTENSIONS = {
 }
 
 
+_DOC_EXTENSIONS = frozenset({
+    ".md", ".markdown", ".rst", ".adoc", ".asciidoc", ".txt", ".pdf",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp",
+})
+# Files every repo carries regardless of what it delivers. Dotfiles and
+# dot-directories (.github/, .gitignore, lint configs) are matched separately.
+_PLUMBING_NAMES = frozenset({"Makefile", "LICENSE"})
+
+
+def is_docs_only(paths: list[str]) -> bool:
+    """True when every path is documentation or repo plumbing, and at least
+    one is documentation.
+
+    Deterministic on the file list alone. Anything unrecognized counts as
+    code, so an unfamiliar file suppresses the docs hint rather than
+    triggering it.
+    """
+    saw_doc = False
+    for path in paths:
+        parts = Path(path).parts
+        if any(part.startswith(".") for part in parts):
+            continue
+        if parts and parts[-1] in _PLUMBING_NAMES:
+            continue
+        if Path(path).suffix.lower() in _DOC_EXTENSIONS:
+            saw_doc = True
+            continue
+        return False
+    return saw_doc
+
+
+def in_scope_files(project_root: str, merge_base: str) -> list[str]:
+    """Files the review covers: the PR diff, or every tracked file."""
+    try:
+        if merge_base:
+            out = _git(project_root, "diff", "--name-only", f"{merge_base}..HEAD")
+        else:
+            out = _git(project_root, "ls-files")
+    except (subprocess.CalledProcessError, OSError):
+        return []
+    return out.splitlines()
+
+
 def probe_project(project_root: str) -> tuple[str, str, str, str]:
     """Return (name, language, build_system, test_framework) deterministically."""
     root = Path(project_root)
@@ -249,6 +303,7 @@ def compute_scope(
     pr_number: int | None,
     guidance: str,
     intent: str = "",
+    profile: str = "",
 ) -> ReviewScope:
     """Build the full ReviewScope: git context, PR scope, standards, probe."""
     default_branch = check_git_context(project_root)
@@ -265,6 +320,7 @@ def compute_scope(
         guidance=guidance.strip(),
         standards=gather_standards(project_root),
         intent=intent.strip(),
+        profile=profile,
     )
     if pr_number is not None:
         scope.pr_scope_text, scope.merge_base = compute_pr_scope(
@@ -275,4 +331,5 @@ def compute_scope(
         # Slug from guidance: max 12 chars, lowercase, hyphens (SKILL.md rule).
         slug = re.sub(r"[^a-z0-9]+", "-", scope.guidance.lower()).strip("-")[:12]
         scope.scope_slug = slug.strip("-")
+    scope.docs_only = is_docs_only(in_scope_files(project_root, scope.merge_base))
     return scope

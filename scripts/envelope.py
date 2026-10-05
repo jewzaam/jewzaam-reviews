@@ -345,16 +345,34 @@ def _default_sort_key(finding: dict) -> tuple:
 
 SEVERITY_BUCKETS = ("critical", "important", "suggestion", "needs-review")
 
+# Criticality profiles. "code" treats documentation as secondary to the code
+# it describes; "docs" treats it as the deliverable (architecture, standards,
+# design repos), where a reader acting on a wrong document is the failure.
+PROFILES = ("code", "docs")
 
-def assign_bucket(finding: dict) -> str:
+
+def assign_bucket(finding: dict, profile: str = "code") -> str:
     """Map categorical dimensions to a severity bucket.
 
     Returns one of: critical, important, suggestion, needs-review.
+
+    Under the "docs" profile a documentation finding is weighed like
+    externally exposed production code, and misleading its reader
+    (confusion) like incorrect output (degraded-behavior). Only
+    documentation-scoped findings are remapped, so code in the same scope
+    keeps the code rubric. The stored dimensions are never rewritten — the
+    remap exists only here, so the same finding re-buckets under either
+    profile.
     """
     rs = finding["runtime_scope"]
     fm = finding["failure_mode"]
     eq = finding["evidence_quality"]
     to = finding["trace_origin"]
+
+    if profile == "docs" and rs == "documentation":
+        rs = "service-external"
+        if fm == "confusion":
+            fm = "degraded-behavior"
 
     if eq == "speculative":
         return "needs-review"

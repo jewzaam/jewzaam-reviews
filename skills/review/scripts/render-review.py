@@ -29,6 +29,7 @@ SCHEMAS_DIR = SKILL_ROOT / "schemas"
 # script runs as a subprocess.
 sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.envelope import (  # noqa: E402
+    PROFILES,
     SEVERITY_BUCKETS,
     review_file_basename,
     assign_bucket,
@@ -53,7 +54,9 @@ BUCKET_PREFIX = {
 BUCKET_ORDER = list(SEVERITY_BUCKETS)
 
 
-def assign_buckets_and_ids(findings: list[dict], scoring: str = "categorical") -> list[dict]:
+def assign_buckets_and_ids(
+    findings: list[dict], scoring: str = "categorical", profile: str = "code"
+) -> list[dict]:
     if scoring == "simple":
         # Simple mode: severity comes directly from the agents/verdicts;
         # low confidence lands in needs-review instead of a rubric mapping.
@@ -67,7 +70,7 @@ def assign_buckets_and_ids(findings: list[dict], scoring: str = "categorical") -
             for f in findings
         ]
     else:
-        annotated = [{**f, "severity": assign_bucket(f)} for f in findings]
+        annotated = [{**f, "severity": assign_bucket(f, profile)} for f in findings]
     return assign_ids_per_bucket(
         annotated,
         bucket_order=BUCKET_ORDER,
@@ -373,6 +376,13 @@ def main(argv: list[str]) -> int:
         help="scoring mode of the pipeline that produced the input findings",
     )
     parser.add_argument(
+        "--profile",
+        choices=list(PROFILES),
+        default="code",
+        help="criticality profile for bucketing categorical findings; docs "
+        "weighs documentation as the deliverable (ignored for simple scoring)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="verbose diagnostic logging to stderr",
@@ -462,7 +472,9 @@ def main(argv: list[str]) -> int:
             logger.error("could not read --intent-file %s: %s", args.intent_file, exc)
             return 1
 
-    rendered_findings = assign_buckets_and_ids(findings, scoring=args.scoring)
+    rendered_findings = assign_buckets_and_ids(
+        findings, scoring=args.scoring, profile=args.profile
+    )
     observations = envelope.get("cross_cutting_observations", [])
     rendered = build_envelope(
         source=SOURCE,
