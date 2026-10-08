@@ -268,6 +268,23 @@ class TestConsolidateBasic:
         keys = {(loc["path"], loc["line"]) for loc in locs}
         assert keys == {("src/a.py", "10"), ("src/b.py", "5"), ("src/c.py", "20")}
 
+    def test_null_role_written_as_primary(self, tmp_path: Path):
+        """Agent schema allows role: null; merged schema rejects it, so the
+        consolidator must normalize null to 'primary' before validation."""
+        raw = tmp_path / "raw"
+        raw.mkdir()
+        finding = _make_finding(title="X", path="src/a.py", line="10")
+        finding["locations"][0]["role"] = None
+        _write_agent_output(raw, concern_slug="test", dimension_slug="full-scope", findings=[finding])
+        out_dir = tmp_path / "10-merged"
+        out_dir.mkdir()
+        result = _run(
+            ["--raw-dir", str(raw), "--output-dir", str(out_dir), "--project-name", "myapp"]
+        )
+        assert result.returncode == 0, result.stderr
+        _, findings = _load_stage(out_dir)
+        assert findings[0]["locations"][0]["role"] == "primary"
+
     def test_cross_cutting_merge_by_title_similarity(self, tmp_path: Path):
         """Within the same concern, near-duplicate titles at different
         locations are merged."""
