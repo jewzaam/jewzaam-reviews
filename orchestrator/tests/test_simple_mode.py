@@ -90,6 +90,17 @@ class TestCollectFindings:
         assert findings[0]["severity"] == "critical"
         assert len(findings[0]["locations"]) == 2
 
+    def test_null_role_written_as_primary(self, tmp_path):
+        raw = tmp_path / "00-raw"
+        raw.mkdir()
+        f = _finding("f")
+        f["locations"][0]["role"] = None
+        (raw / "implementation-full-scope.json").write_text(
+            json.dumps(_simple_output("implementation", [f]))
+        )
+        findings, _, _, _ = simple_mode.collect_findings(raw)
+        assert findings[0]["locations"][0]["role"] == "primary"
+
 
 class TestApplyVerdicts:
     def _setup(self, tmp_path, verdicts):

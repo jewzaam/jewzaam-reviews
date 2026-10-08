@@ -144,7 +144,8 @@ def _merge_findings(group: list[dict]) -> dict:
             if key in seen_keys:
                 continue
             seen_keys.add(key)
-            locations.append(loc)
+            # Agent schema allows role: null (= primary); merged schema does not.
+            locations.append({**loc, "role": loc.get("role") or "primary"})
 
     fixes_with_dim = sorted(
         (

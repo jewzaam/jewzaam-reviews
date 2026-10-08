@@ -79,6 +79,10 @@ def collect_findings(raw_dir: Path) -> tuple[list[dict], list[dict], list[dict],
         for finding in output["findings"]:
             entry = dict(finding)
             entry["concern_slug"] = output["concern_slug"]
+            # Agent schema allows role: null (= primary); shared schema does not.
+            entry["locations"] = [
+                {**loc, "role": loc.get("role") or "primary"} for loc in entry["locations"]
+            ]
             # Same bound and the same reason as the categorical path; see
             # consolidate-findings.MAX_TITLE_LENGTH.
             if len(entry["title"]) > MAX_TITLE_LENGTH:
