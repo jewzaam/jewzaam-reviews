@@ -100,6 +100,15 @@ class TestBaseBranch:
         assert "WARNING: Could not determine merge base against origin/gone" in s.pr_scope_text
         assert s.merge_base == ""
 
+    def test_closer_branch_found(self, devel_repo):
+        assert scope.closer_branches(str(devel_repo), "origin/main") == [("origin/devel", 1)]
+
+    def test_nothing_closer_than_true_base(self, devel_repo):
+        assert scope.closer_branches(str(devel_repo), "origin/devel") == []
+
+    def test_unknown_base_ref_yields_nothing(self, devel_repo):
+        assert scope.closer_branches(str(devel_repo), "origin/gone") == []
+
     def test_full_repo_has_no_base(self, devel_repo):
         s = scope.compute_scope(str(devel_repo), None, "")
         assert (s.base_branch, s.base_source) == ("", "")

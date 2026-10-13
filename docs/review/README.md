@@ -14,7 +14,9 @@ Without a PR number, it reviews the whole repository. A PR number scopes
 findings to files changed since the PR's merge base with the branch it
 merges into: `--base <branch>` when given, else `gh pr view`, else the
 default branch — that last fallback marks the run report's scope row
-`degraded`.
+`degraded`. Before that fallback is used, the skill checks whether HEAD sits
+closer to another remote branch (a PR cut from a feature branch) and asks
+which base to use.
 Free-form guidance gives the review an additional focus. It does not restrict
 findings to particular files.
 

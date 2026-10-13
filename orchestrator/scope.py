@@ -128,6 +128,40 @@ def _base_from_gh(project_root: str, pr_number: int) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
+def closer_branches(project_root: str, base_branch: str) -> list[tuple[str, int]]:
+    """Remote branches HEAD has fewer own commits over than base_branch.
+
+    A PR cut from a feature branch shows up here: diffed against main it
+    carries the feature branch's commits too, so the feature branch is
+    "closer". Returns (ref, commits HEAD has beyond it), nearest first;
+    empty when nothing is closer or git cannot say. Refs already containing
+    HEAD (the PR's own branch) are skipped.
+    """
+    # ponytail: %(ahead-behind) needs git >= 2.41; older git yields no hint
+    # rather than one rev-list per remote branch.
+    try:
+        out = _git(
+            project_root,
+            "for-each-ref",
+            "--format=%(refname) %(ahead-behind:HEAD)",
+            "refs/remotes/origin/",
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return []
+    counts: dict[str, int] = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[2].isdigit() and parts[0] != "refs/remotes/origin/HEAD":
+            counts[parts[0].removeprefix("refs/remotes/")] = int(parts[2])
+    if base_branch not in counts:
+        return []
+    limit = counts[base_branch]
+    return sorted(
+        ((ref, n) for ref, n in counts.items() if 0 < n < limit),
+        key=lambda item: item[1],
+    )
+
+
 def compute_pr_scope(
     project_root: str, pr_number: int, base_branch: str
 ) -> tuple[str, str]:

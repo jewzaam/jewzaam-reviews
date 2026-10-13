@@ -77,6 +77,8 @@ python <ORCH> --harness <HARNESS> --select-only [--pr N [--base BRANCH]] [--inte
 
 It prints the lenses the selector matched for this scope, one per line as `lens: <slug>: <rationale>`, and saves the selection so the review run does not re-run the selector.
 
+**Base pre-check.** If it prints `base-hint:` lines instead of lenses, it stopped before selecting: the PR's target branch is unknown (no `--base`, and `gh` could not say) and HEAD sits closer to another remote branch than to the default — the PR was likely cut from, and probably merges into, that branch. Reviewing against the default would report that branch's commits as the PR's own. Ask ONE question now, before anything else — the only question outside Step 4, because lens selection depends on the answer: header "Base", one option per `base-hint: closer:` ref (nearest first, recommended), plus the `base-hint: default:` ref. Then rerun this step with `--base <answer>` added, and pass the same `--base` in Step 5. If no question can be asked, stop and relay the `base-hint` lines; do not review against a guessed base.
+
 When every in-scope file is documentation and no `--profile` was given, it also prints `profile-hint: docs: <reason>`. Pass `--profile` through to this command when the user gave one — that is what silences the hint.
 
 The selector does not depend on the scoring mode. Ask the user NOTHING here — its output is needed to build the lens question, and every question is asked together in Step 4.

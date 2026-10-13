@@ -462,6 +462,42 @@ class TestSelectOnly:
         assert len(replayed) == 1  # valid keys replayed, bogus dropped
 
 
+class TestBasePreCheck:
+    """Unknown PR base + a closer remote branch stops select-only before the selector."""
+
+    @pytest.fixture
+    def stacked_repo(self, git_repo, monkeypatch):
+        import subprocess
+
+        def git(*args):
+            subprocess.run(["git", *args], cwd=git_repo, check=True, capture_output=True)
+
+        # feature has 2 commits over main; origin/devel holds the first.
+        git("update-ref", "refs/remotes/origin/devel", "HEAD")
+        (git_repo / "second.py").write_text("y = 2\n")
+        git("add", ".")
+        git("commit", "-m", "second")
+        monkeypatch.setattr(scope_mod, "_base_from_gh", lambda root, pr: "")
+        return git_repo
+
+    def test_hint_and_no_selector(self, stacked_repo, monkeypatch, tmp_path, capsys):
+        calls = []
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
+        sel = tmp_path / "sel.json"
+        assert pipeline.run_select_only(_options(stacked_repo, pr_number=3), sel) == 0
+        out = capsys.readouterr().out
+        assert "base-hint: default: origin/main" in out
+        assert "base-hint: closer: origin/devel: 1 commit(s) ahead" in out
+        assert "lens:" not in out
+        assert calls == [] and not sel.exists()
+
+    def test_explicit_base_silences_hint(self, stacked_repo, monkeypatch, tmp_path, capsys):
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
+        options = _options(stacked_repo, pr_number=3, base="main")
+        assert pipeline.run_select_only(options, tmp_path / "sel.json") == 0
+        assert "base-hint" not in capsys.readouterr().out
+
+
 class TestValidationBuckets:
     """Which buckets reach the validators (pipeline._validation_buckets)."""
 
