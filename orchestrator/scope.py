@@ -29,6 +29,11 @@ class ReviewScope:
     build_system: str
     test_framework: str
     pr_number: int | None = None
+    # What the PR merges into (e.g. "origin/devel"), and where that came from
+    # (see resolve_base_branch). Empty for full-repo reviews. Defaulted so a
+    # scope.json written before these fields existed still loads on resume.
+    base_branch: str = ""
+    base_source: str = ""
     merge_base: str = ""  # empty for full-repo reviews
     pr_scope_text: str = ""  # "## PR Scope" block for agent prompts
     guidance: str = ""
@@ -85,8 +90,46 @@ def check_git_context(project_root: str) -> str:
     return ref.removeprefix("refs/remotes/")
 
 
+BASE_SOURCE_DEFAULT = "default branch (PR base unknown)"
+
+
+def resolve_base_branch(
+    project_root: str, pr_number: int, explicit: str, default_branch: str
+) -> tuple[str, str]:
+    """Return (base ref, source) for the PR: what it actually merges into.
+
+    Precedence: --base, `gh pr view`, then the repo default branch. A PR into a feature branch diffed against main
+    reports every commit that branch carries as the PR's own, so the
+    fallback is labelled for the run report rather than taken silently.
+    A base that is found but has no local ref is NOT replaced by the default
+    branch — compute_pr_scope then warns naming the missing ref.
+    """
+    if explicit:
+        name, source = explicit, "--base"
+    else:
+        name, source = _base_from_gh(project_root, pr_number), "gh pr view"
+    if not name:
+        return default_branch, BASE_SOURCE_DEFAULT
+    return (name if name.startswith("origin/") else f"origin/{name}"), source
+
+
+def _base_from_gh(project_root: str, pr_number: int) -> str:
+    """Base branch name via the gh CLI, or "" when gh is absent/offline."""
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "baseRefName", "--jq", ".baseRefName"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
 def compute_pr_scope(
-    project_root: str, pr_number: int, default_branch: str
+    project_root: str, pr_number: int, base_branch: str
 ) -> tuple[str, str]:
     """Return (PR scope text block, merge base hash).
 
@@ -95,11 +138,11 @@ def compute_pr_scope(
     """
     header = f"## PR Scope: #{pr_number}\n"
     try:
-        base = _git(project_root, "merge-base", "HEAD", default_branch)
+        base = _git(project_root, "merge-base", "HEAD", base_branch)
     except subprocess.CalledProcessError:
         return (
             header
-            + f"\nWARNING: Could not determine merge base against {default_branch}.",
+            + f"\nWARNING: Could not determine merge base against {base_branch}.",
             "",
         )
     try:
@@ -116,7 +159,7 @@ def compute_pr_scope(
             "",
         )
     text = f"""{header}
-Merge base: {base[:12]} (against {default_branch})
+Merge base: {base[:12]} (against {base_branch})
 
 ### Diff Stats
 
@@ -304,6 +347,7 @@ def compute_scope(
     guidance: str,
     intent: str = "",
     profile: str = "",
+    base: str = "",
 ) -> ReviewScope:
     """Build the full ReviewScope: git context, PR scope, standards, probe."""
     default_branch = check_git_context(project_root)
@@ -323,8 +367,11 @@ def compute_scope(
         profile=profile,
     )
     if pr_number is not None:
+        scope.base_branch, scope.base_source = resolve_base_branch(
+            project_root, pr_number, base, default_branch
+        )
         scope.pr_scope_text, scope.merge_base = compute_pr_scope(
-            project_root, pr_number, default_branch
+            project_root, pr_number, scope.base_branch
         )
         scope.scope_slug = f"pr-{pr_number}"
     elif scope.guidance:
