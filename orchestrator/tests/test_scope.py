@@ -56,6 +56,55 @@ class TestPrScope:
         assert base == ""
 
 
+class TestBaseBranch:
+    """PRs into a non-default branch diff against that branch, not main."""
+
+    @pytest.fixture
+    def devel_repo(self, git_repo, monkeypatch):
+        # origin/devel is ahead of main; the feature branch forks from devel.
+        _git(git_repo, "checkout", "-b", "devel", "main")
+        (git_repo / "devel_only.py").write_text("d = 1\n")
+        _git(git_repo, "add", ".")
+        _git(git_repo, "commit", "-m", "devel work")
+        _git(git_repo, "update-ref", "refs/remotes/origin/devel", "HEAD")
+        _git(git_repo, "checkout", "-b", "pr", "devel")
+        (git_repo / "pr_change.py").write_text("p = 1\n")
+        _git(git_repo, "add", ".")
+        _git(git_repo, "commit", "-m", "pr change")
+        # No network gh in tests: make the gh fallback deterministic.
+        monkeypatch.setattr(scope, "_base_from_gh", lambda root, pr: "")
+        return git_repo
+
+    def test_gh_base_used(self, devel_repo, monkeypatch):
+        monkeypatch.setattr(scope, "_base_from_gh", lambda root, pr: "devel")
+        s = scope.compute_scope(str(devel_repo), 9, "")
+        assert (s.base_branch, s.base_source) == ("origin/devel", "gh pr view")
+        assert "against origin/devel" in s.pr_scope_text
+        assert "pr_change.py" in s.pr_scope_text
+        assert "devel_only.py" not in s.pr_scope_text
+
+    def test_explicit_base_wins(self, devel_repo, monkeypatch):
+        monkeypatch.setattr(scope, "_base_from_gh", lambda root, pr: "main")
+        s = scope.compute_scope(str(devel_repo), 9, "", base="devel")
+        assert (s.base_branch, s.base_source) == ("origin/devel", "--base")
+
+    def test_falls_back_to_default_and_says_so(self, devel_repo):
+        s = scope.compute_scope(str(devel_repo), 9, "")
+        assert s.base_branch == "origin/main"
+        assert s.base_source == scope.BASE_SOURCE_DEFAULT
+        assert "devel_only.py" in s.pr_scope_text
+
+    def test_missing_base_ref_warns_not_main(self, devel_repo):
+        s = scope.compute_scope(str(devel_repo), 9, "", base="gone")
+        assert s.base_branch == "origin/gone"
+        assert "WARNING: Could not determine merge base against origin/gone" in s.pr_scope_text
+        assert s.merge_base == ""
+
+    def test_full_repo_has_no_base(self, devel_repo):
+        s = scope.compute_scope(str(devel_repo), None, "")
+        assert (s.base_branch, s.base_source) == ("", "")
+
+
 class TestStandards:
     def test_local_claude_md_included(self, git_repo):
         (git_repo / "CLAUDE.md").write_text("Use tabs.\n")

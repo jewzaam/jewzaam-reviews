@@ -111,6 +111,7 @@ class Options:
 
     project_root: str
     pr_number: int | None = None
+    base: str = ""  # --base: PR target branch; "" lets scope detect it
     guidance: str = ""
     intent: str = ""  # why the thing under review exists; "" when unavailable
     scoring: str = "categorical"  # or "simple"
@@ -1119,6 +1120,7 @@ def run_select_only(options: Options, selection_file: Path) -> int:
             options.guidance,
             options.intent,
             options.profile,
+            options.base,
         )
     except scope_mod.ScopeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -1353,19 +1355,25 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
             options.guidance,
             options.intent,
             options.profile,
+            options.base,
         )
     except scope_mod.ScopeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
     state = RunState(options=options, scope=review_scope)
+    # A PR diffed against a guessed base can report a whole feature branch as
+    # the PR's own changes, so the guess is degraded, not ok.
+    base_guessed = review_scope.base_source == scope_mod.BASE_SOURCE_DEFAULT
     state.record_step(
         "scope",
-        "ok",
+        "degraded" if base_guessed or (options.pr_number and not review_scope.merge_base) else "ok",
         f"{review_scope.project_name} ({review_scope.language}); "
         + (
-            f"PR #{options.pr_number}, merge base {review_scope.merge_base}"
-            if review_scope.merge_base
+            f"PR #{options.pr_number}, base {review_scope.base_branch} "
+            f"(from {review_scope.base_source}), "
+            f"merge base {review_scope.merge_base or '(none; diff-scope filter skipped)'}"
+            if options.pr_number is not None
             else "full repo"
         ),
     )
@@ -1390,6 +1398,8 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
     if options.dry_run:
         print(f"Project: {review_scope.project_name} ({review_scope.language})")
         print(f"Scope slug: {review_scope.scope_slug or '(full repo)'}")
+        if review_scope.base_branch:
+            print(f"Base: {review_scope.base_branch} (from {review_scope.base_source})")
         print(f"Merge base: {review_scope.merge_base or '(none)'}")
         print("\n--- selector prompt ---\n")
         print(prompts.build_selector_prompt(review_scope, _active_roster(state)))

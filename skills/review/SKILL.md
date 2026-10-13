@@ -2,7 +2,7 @@
 name: review
 description: Perform a scope-aware multi-agent codebase review via the script orchestrator. A selector agent picks applicable review lenses from the diff or repo shape, lens agents review in parallel, validators adversarially check critical/important findings, and deterministic scripts handle everything else. Use when the user asks to review, assess, audit, or evaluate a codebase or project. Defaults to categorical scoring with no skipped lenses; pass -i or --interactive to choose options.
 disable-model-invocation: true
-argument-hint: "[PR-number] [-i|--interactive] [--scoring categorical|simple] [--profile code|docs] [--validate-buckets buckets] [guidance text...]"
+argument-hint: "[PR-number] [--base branch] [-i|--interactive] [--scoring categorical|simple] [--profile code|docs] [--validate-buckets buckets] [guidance text...]"
 ---
 
 # Review Skill
@@ -35,6 +35,7 @@ From the arguments the skill was invoked with (`$ARGUMENTS` where the host subst
 - A `-i` or `--interactive` token enables the existing scoring and lens questions; remove it from the forwarded arguments.
 - A `--scoring categorical` or `--scoring simple` token passes through unchanged.
 - A `--profile code` or `--profile docs` token passes through unchanged.
+- A `--base <branch>` token passes through unchanged. Without it the orchestrator asks `gh pr view` for the PR's target branch, falling back to the default branch.
 - A `--skip-lenses <slugs>` token passes through unchanged.
 - A `--validate-buckets <buckets>` token passes through unchanged.
 - Everything else is guidance → `--guidance "<text>"` (omit when empty).
@@ -60,6 +61,8 @@ Where those live is per-setup, so look at what this session already has rather t
 
 Comments on an issue are not intent. They contradict each other and go stale; criteria and descriptions are the record.
 
+If what you read for a PR names the branch it merges into and `--base` was not given, pass `--base <branch>` on every `<ORCH>` invocation below — without `gh` the orchestrator can only fall back to the default branch, which reports a feature-branch PR's inherited commits as its own.
+
 Write what you found verbatim — not a summary — to a file, and pass `--intent-file <path>` on every `<ORCH>` invocation below. Put the file in your host's scratch directory, never in the project. Do not paraphrase, do not fill gaps, and do not invent intent when you found none: a review that says it had none is useful, and one that ran against a plausible-sounding fabrication is worse than useless.
 
 If nothing yields intent, omit `--intent-file` and continue. The run records that it had none, in its run report and in `Findings-intent[-<scope>].md`.
@@ -69,7 +72,7 @@ If nothing yields intent, omit `--intent-file` and continue. The run records tha
 If `--skip-lenses` was given in the arguments, skip this step. Otherwise run via foreground Bash:
 
 ```
-python <ORCH> --harness <HARNESS> --select-only [--pr N] [--intent-file PATH] [--profile PROFILE] [--guidance "..."]
+python <ORCH> --harness <HARNESS> --select-only [--pr N [--base BRANCH]] [--intent-file PATH] [--profile PROFILE] [--guidance "..."]
 ```
 
 It prints the lenses the selector matched for this scope, one per line as `lens: <slug>: <rationale>`, and saves the selection so the review run does not re-run the selector.
@@ -124,10 +127,10 @@ Selected slugs become `--skip-lenses <comma-separated>`. Nothing selected → om
 Run this via foreground Bash from the project root, EXACTLY ONCE:
 
 ```
-python <ORCH> --harness <HARNESS> --detach [--pr N] [--intent-file PATH] [--scoring MODE] [--profile PROFILE] [--skip-lenses slugs] [--validate-buckets buckets] [--guidance "..."]
+python <ORCH> --harness <HARNESS> --detach [--pr N [--base BRANCH]] [--intent-file PATH] [--scoring MODE] [--profile PROFILE] [--skip-lenses slugs] [--validate-buckets buckets] [--guidance "..."]
 ```
 
-The bracketed flags come from Step 1's parse: include `--pr` only when a leading PR number was given, `--scoring`, `--profile` and `--skip-lenses` from the argument or Step 4's answers (omit `--profile` when neither supplied one, and `--skip-lenses` when none), `--validate-buckets` only when it was given in the arguments, `--guidance` only when non-empty, `--intent-file` whenever Step 2 produced one. `<ORCH>` is the absolute path resolved above; a relative `python orchestrator/cli.py ...` runs from the project root and will not find the CLI.
+The bracketed flags come from Step 1's parse: include `--pr` only when a leading PR number was given, `--base` when given in the arguments or found in Step 2, `--scoring`, `--profile` and `--skip-lenses` from the argument or Step 4's answers (omit `--profile` when neither supplied one, and `--skip-lenses` when none), `--validate-buckets` only when it was given in the arguments, `--guidance` only when non-empty, `--intent-file` whenever Step 2 produced one. `<ORCH>` is the absolute path resolved above; a relative `python orchestrator/cli.py ...` runs from the project root and will not find the CLI.
 
 It returns immediately; the review runs as a detached process that survives this session.
 

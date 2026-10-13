@@ -4,7 +4,7 @@
 
 Usage (typically via the review skill wrapper, but works standalone):
 
-    python orchestrator/cli.py [--pr N] [--guidance "text"]
+    python orchestrator/cli.py [--pr N [--base BRANCH]] [--guidance "text"]
         [--scoring categorical|simple] [--profile code|docs]
         [--harness auto|claude|codex]
         [--project-root PATH]
@@ -151,6 +151,13 @@ def main(argv: list[str] | None = None) -> int:
         prog="review-orchestrator", description=__doc__
     )
     parser.add_argument("--pr", type=int, default=None, help="PR number to scope to")
+    parser.add_argument(
+        "--base",
+        default="",
+        help="branch the PR merges into (e.g. devel or origin/devel). Only "
+        "with --pr. Omitted: read from `gh pr view`, else the repo default "
+        "branch (reported as degraded)",
+    )
     parser.add_argument("--guidance", default="", help="free-form review guidance")
     parser.add_argument(
         "--intent-file",
@@ -340,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     options = pipeline.Options(
         project_root=str(Path(args.project_root).resolve()),
         pr_number=args.pr,
+        base=args.base,
         guidance=args.guidance,
         intent=intent,
         scoring=args.scoring,
