@@ -31,6 +31,14 @@ class TestRunFiles:
         assert a["log"] != c["log"]
         assert set(a) == {"log", "exit", "pid", "selection"}
 
+    def test_works_without_getuid(self, run_dir, monkeypatch):
+        """Windows has no os.getuid; the run dir falls back to the user name."""
+        monkeypatch.delattr(os, "getuid", raising=False)
+        monkeypatch.setattr("getpass.getuser", lambda: "someone")
+        files = cli._run_files("/some/project")
+        assert files["log"].parent.name == "review-orchestrator-someone"
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
     def test_run_dir_is_owner_only(self, run_dir):
         files = cli._run_files("/some/project")
         mode = files["log"].parent.stat().st_mode & 0o777

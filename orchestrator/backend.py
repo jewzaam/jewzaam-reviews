@@ -360,6 +360,16 @@ def _codex_result(events: list[dict], returncode: int, stderr: str) -> dict:
     return result
 
 
+def _kill_tree(pid: int) -> None:
+    """Kill an agent and every tool process it spawned."""
+    if os.name == "nt":
+        # No process groups (start_new_session is ignored); taskkill /T walks
+        # the child tree instead.
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+    else:
+        os.killpg(pid, signal.SIGKILL)
+
+
 def run_agent(
     prompt: str,
     *,
@@ -565,7 +575,7 @@ def run_agent(
         if codex_home is not None:
             shutil.rmtree(codex_home, ignore_errors=True)
         try:
-            os.killpg(popen.pid, signal.SIGKILL)
+            _kill_tree(popen.pid)
         except OSError:
             pass
         popen.wait()

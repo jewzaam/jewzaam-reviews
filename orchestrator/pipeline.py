@@ -411,6 +411,16 @@ def _record_agent_failure(state, component: str, result) -> None:
         )
 
 
+def utf8_env() -> dict[str, str]:
+    """Environment for a Python child whose output is piped or logged.
+
+    Windows encodes a redirected stdout as the ANSI code page (cp1252), so a
+    stage script printing an arrow or a finding title outside it crashes.
+    UTF-8 mode makes the child write UTF-8; the caller must decode it so.
+    """
+    return {**os.environ, "PYTHONUTF8": "1"}
+
+
 def stage_cli(
     script_name: str,
     *args: str,
@@ -427,7 +437,9 @@ def stage_cli(
     aborted run still says which stage ended it.
     """
     argv = [sys.executable, str(REVIEW_SCRIPTS / script_name), *args]
-    proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+    proc = subprocess.run(
+        argv, cwd=cwd, capture_output=True, encoding="utf-8", env=utf8_env()
+    )
     if proc.stdout.strip():
         print(proc.stdout.strip(), file=sys.stderr)
     name = step or script_name
@@ -736,7 +748,8 @@ def _revalidate_raw(state) -> None:
                 schema_arg,
             ],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            env=utf8_env(),
         )
         if proc.returncode != 0:
             path.unlink()

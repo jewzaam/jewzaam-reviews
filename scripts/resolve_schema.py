@@ -36,7 +36,7 @@ SCHEMA_PAIRS = discover_schema_pairs()
 
 
 def load_schema(path: Path) -> dict:
-    return json.loads(path.read_text())
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def resolve_ref(ref: str, source_path: Path, cache: dict) -> dict:
