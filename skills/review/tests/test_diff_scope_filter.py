@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -356,7 +357,8 @@ class TestDownstreamCompatibility:
                 "--output-dir", str(out),
             ],
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            env={**os.environ, "PYTHONUTF8": "1"},
         )
         assert result.returncode == 0, result.stderr
         envelope, findings = _read_stage_dir(out)

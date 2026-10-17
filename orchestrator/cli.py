@@ -19,6 +19,7 @@ the wrapper repeats until it stops returning exit code 3:
 """
 
 import argparse
+import getpass
 import hashlib
 import os
 import subprocess
@@ -48,8 +49,11 @@ _POLL_INTERVAL_S = 5
 def _run_files(project_root: str) -> dict[str, Path]:
     """Per-project runtime files, outside the repo and outside .tmp-review
     (which the run itself wipes). Kept in an owner-only directory so the
-    predictable names in the shared temp dir are not attackable."""
-    run_dir = Path(tempfile.gettempdir()) / f"review-orchestrator-{os.getuid()}"
+    predictable names in the shared temp dir are not attackable. Windows has
+    no getuid; its temp dir is already per-user, so the name only needs to
+    be stable."""
+    owner = os.getuid() if hasattr(os, "getuid") else getpass.getuser()
+    run_dir = Path(tempfile.gettempdir()) / f"review-orchestrator-{owner}"
     run_dir.mkdir(mode=0o700, exist_ok=True)
     key = hashlib.sha256(str(Path(project_root).resolve()).encode()).hexdigest()[:12]
     base = run_dir / key
@@ -65,10 +69,30 @@ def _pid_alive(pid_file: Path) -> int | None:
     """Return the recorded child pid if it is still running, else None."""
     try:
         pid = int(pid_file.read_text().strip())
-        os.kill(pid, 0)
-        return pid
     except (OSError, ValueError):
         return None
+    return pid if _process_running(pid) else None
+
+
+def _process_running(pid: int) -> bool:
+    if os.name == "nt":
+        # os.kill(pid, 0) on Windows is TerminateProcess, not a probe: it
+        # would kill the run it is checking on.
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        exit_code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+        kernel32.CloseHandle(handle)
+        return bool(ok) and exit_code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def _claim_run(files: dict[str, Path]) -> bool:
@@ -101,7 +125,7 @@ def _detach(args, passthrough: list[str]) -> int:
     files["log"].unlink(missing_ok=True)
     files["exit"].unlink(missing_ok=True)
     log_fh = files["log"].open("w", encoding="utf-8")
-    env = dict(os.environ)
+    env = pipeline.utf8_env()
     env[_EXIT_FILE_ENV] = str(files["exit"])
     proc = subprocess.Popen(
         [sys.executable, str(Path(__file__).resolve()), *passthrough],
@@ -147,6 +171,9 @@ def _wait(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The log tail, summary and finding titles are UTF-8; a piped stdout on
+    # Windows would otherwise encode them as cp1252 and raise.
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(
         prog="review-orchestrator", description=__doc__
     )

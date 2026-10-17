@@ -57,7 +57,7 @@ def _patch_run(monkeypatch, response, capture=None):
         return response
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
-    monkeypatch.setattr("os.killpg", lambda pid, sig: None)
+    monkeypatch.setattr(backend, "_kill_tree", lambda pid: None)
 
 
 class TestArgvConstruction:
@@ -370,7 +370,8 @@ class TestRedactPrompt:
         )
         content = trace.read_text()
         assert "topsecret" not in content
-        assert (trace.stat().st_mode & 0o777) == 0o600
+        if sys.platform != "win32":  # Windows ignores POSIX permission bits
+            assert (trace.stat().st_mode & 0o777) == 0o600
 
 
 class TestErrorCategories:
