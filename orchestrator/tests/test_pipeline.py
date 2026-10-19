@@ -578,6 +578,7 @@ class TestUnvalidatedNudge:
 
     _EMPTY_COST = {
         "scoring": "categorical", "by_stage": {"x": 0.0}, "seconds_by_stage": {},
+        "cost_basis": "reported by Claude",
         "normalized_tokens_by_stage": {}, "total_cost_usd": 0.0,
         "total_normalized_tokens": 0.0, "denials_by_tool": {},
     }

@@ -15,6 +15,7 @@ normalized comparison.
 
 import json
 import os
+import queue
 import re
 import signal
 import shutil
@@ -281,9 +282,9 @@ def _is_budget_stop(result: dict) -> bool:
 def _codex_usage(events: list[dict]) -> dict:
     """Token usage from the last `turn.completed`, in Claude's field names.
 
-    Codex reports no dollar cost at all, so normalized tokens are the only
-    cross-harness comparison available for a Codex run — dropping them, as
-    this did before, left the ledger reading 0 for a review that really ran.
+    Codex reports no dollar cost, so normalized tokens remain the only
+    backend-independent comparison — dropping them, as this did before, left
+    the ledger reading 0 for a review that really ran.
 
     The vocabularies differ: Codex splits reasoning out as
     `reasoning_output_tokens`, which is billed and weighted as output, and
@@ -313,6 +314,107 @@ def _codex_usage(events: list[dict]) -> dict:
         "cache_creation_input_tokens": 0,
         "output_tokens": count("output_tokens") + count("reasoning_output_tokens"),
     }
+
+
+def _codex_thread_cost(
+    thread_id: str, cwd: str, env: dict, timeout_s: float = 15
+) -> float | None:
+    """Read Codex's Enterprise thread estimate through its app-server API."""
+    if not thread_id:
+        return None
+    try:
+        proc = subprocess.Popen(
+            ["codex", "app-server"],
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            start_new_session=True,
+        )
+    except OSError:
+        return None
+    if not getattr(proc, "stdin", None) or not getattr(proc, "stdout", None):
+        return None
+
+    lines = queue.Queue()
+
+    def read_lines():
+        for line in proc.stdout:
+            lines.put(line)
+        lines.put(None)
+
+    threading.Thread(target=read_lines, daemon=True).start()
+
+    def send(message):
+        proc.stdin.write(json.dumps(message) + "\n")
+        proc.stdin.flush()
+
+    def response(request_id):
+        deadline = time.monotonic() + timeout_s
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            try:
+                line = lines.get(timeout=remaining)
+            except queue.Empty:
+                return None
+            if line is None:
+                return None
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if message.get("id") == request_id:
+                return message
+
+    try:
+        send({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "clientInfo": {
+                    "name": "jewzaam-reviews",
+                    "title": "Review cost lookup",
+                    "version": "1",
+                },
+                "capabilities": {"experimentalApi": True},
+            },
+        })
+        if not response(1) or proc.poll() is not None:
+            return None
+        send({"jsonrpc": "2.0", "method": "initialized"})
+        send({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "account/usage/read",
+            "params": {"threadId": thread_id},
+        })
+        result = response(2)
+        micros = (result or {}).get("result", {}).get("threadUsage", {}).get(
+            "estimatedUsageUsdMicros"
+        )
+        return round(int(micros) / 1_000_000, 6) if micros is not None else None
+    except (OSError, TypeError, ValueError):
+        return None
+    finally:
+        if proc.stdin and not proc.stdin.closed:
+            try:
+                proc.stdin.close()
+            except OSError:
+                pass
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try:
+                proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
 
 
 def _codex_result(events: list[dict], returncode: int, stderr: str) -> dict:
@@ -345,7 +447,6 @@ def _codex_result(events: list[dict], returncode: int, stderr: str) -> dict:
     result = {
         "is_error": returncode != 0 or error is not None,
         "session_id": thread_id,
-        # Codex reports no cost; 0.0 means "unavailable", not "free".
         "total_cost_usd": 0.0,
         "permission_denials": [],
         "result": error or text or stderr.strip(),
@@ -596,8 +697,6 @@ def run_agent(
 
     if schema_file is not None:
         Path(schema_file.name).unlink(missing_ok=True)
-    if codex_home is not None:
-        shutil.rmtree(codex_home, ignore_errors=True)
 
     if harness == "codex":
         events = []
@@ -607,12 +706,21 @@ def run_agent(
             except json.JSONDecodeError:
                 continue
         result = _codex_result(events, proc.returncode, proc.stderr)
+        cost = _codex_thread_cost(
+            str(result.get("session_id") or ""), cwd, child_env
+        )
+        if cost is not None:
+            result["total_cost_usd"] = cost
+        if codex_home is not None:
+            shutil.rmtree(codex_home, ignore_errors=True)
     else:
         try:
             result = json.loads(proc.stdout)
         except json.JSONDecodeError:
             result = None
     if not isinstance(result, dict):
+        if codex_home is not None:
+            shutil.rmtree(codex_home, ignore_errors=True)
         stderr_tail = (proc.stderr or "").strip()[-2000:]
         return _finish(
             AgentResult(
