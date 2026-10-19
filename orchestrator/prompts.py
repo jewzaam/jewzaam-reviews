@@ -289,7 +289,7 @@ PROJECT ROOT: {project_root}
 
 For each finding:
 1. Open the cited locations and verify the code exists as described
-2. Challenge the premise — a finding may cite real code but be wrong because its assumptions are invalid (e.g., framework-level validation already handles it, auth middleware prevents the attack path, behavior is tested indirectly). Auth middleware does not answer a finding about a carve-out, exception, or path around that middleware — check whether the cited path actually goes through it
+2. Challenge the premise — a finding may cite real code but be wrong because its assumptions are invalid (e.g., framework-level validation already handles it, auth middleware prevents the attack path, behavior is tested indirectly). Auth middleware does not answer a finding about a carve-out, exception, or path around that middleware — check whether the cited path actually goes through it. A security finding about a risk the artifact is not expected to address (a document silent on a security topic outside its stated purpose) is not a defect in that artifact — remove it as not_real
 {challenge_3}{challenge_4}
 {build_profile_block(profile, "simple" if simple else "categorical")}
 For each finding, produce a verdict:
