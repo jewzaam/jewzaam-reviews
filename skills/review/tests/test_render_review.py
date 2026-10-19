@@ -463,11 +463,36 @@ class TestAssignBucket:
         mod = self._module()
         f = self._finding(
             runtime_scope="service-external",
-            failure_mode="data-loss-or-security",
+            failure_mode="crash-or-outage",
             evidence_quality="demonstrated",
             trace_origin="local",
         )
         assert mod.assign_bucket(f) == "suggestion"
+
+    def test_data_loss_or_security_is_always_critical(self):
+        mod = self._module()
+        for evidence_quality in ("demonstrated", "inferred", "speculative"):
+            for trace_origin in ("entry-point", "component", "local"):
+                f = self._finding(
+                    runtime_scope="service-internal",
+                    failure_mode="data-loss-or-security",
+                    evidence_quality=evidence_quality,
+                    trace_origin=trace_origin,
+                )
+                assert mod.assign_bucket(f) == "critical", (evidence_quality, trace_origin)
+
+    def test_security_concern_is_always_critical(self):
+        mod = self._module()
+        f = {
+            **self._finding(
+                runtime_scope="ci",
+                failure_mode="unclear",
+                evidence_quality="speculative",
+                trace_origin="local",
+            ),
+            "concern_slug": "security",
+        }
+        assert mod.assign_bucket(f) == "critical"
 
     def test_important_demonstrated_entry_point_degraded(self):
         mod = self._module()
@@ -489,11 +514,11 @@ class TestAssignBucket:
         )
         assert mod.assign_bucket(f) == "important"
 
-    def test_important_inferred_component_data_loss(self):
+    def test_important_inferred_component_crash(self):
         mod = self._module()
         f = self._finding(
             runtime_scope="service-external",
-            failure_mode="data-loss-or-security",
+            failure_mode="crash-or-outage",
             evidence_quality="inferred",
             trace_origin="component",
         )
@@ -566,7 +591,7 @@ class TestAssignBucketDocsProfile:
 
     def test_doc_that_weakens_security_is_critical(self):
         f = self._finding(failure_mode="data-loss-or-security")
-        assert self._assign(f, "code") == "suggestion"
+        assert self._assign(f, "code") == "critical"
         assert self._assign(f, "docs") == "critical"
 
     def test_local_trace_still_caps_at_suggestion(self):
@@ -594,7 +619,12 @@ class TestAssignBucketDocsProfile:
             "decomposition": sample["decomposition"],
             "issues": [],
         }))
-        doc = {**sample["findings"][0], **self._finding(), "content_hash": "d0c5d0c5d0c5d0c5"}
+        doc = {
+            **sample["findings"][0],
+            **self._finding(),
+            "concern_slug": "documentation",
+            "content_hash": "d0c5d0c5d0c5d0c5",
+        }
         for key in ("runtime_scope", "failure_mode", "evidence_quality", "trace_origin"):
             doc[f"{key}_justification"] = "set by the test"
         (stage / "d0c5d0c5d0c5d0c5.json").write_text(json.dumps(doc))

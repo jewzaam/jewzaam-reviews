@@ -142,8 +142,10 @@ class TestCategoricalEndToEnd:
 
         findings = json.loads((git_repo / "Findings-review.json").read_text())
         assert findings["source"] == "review"
-        assert len(findings["findings"]) == 1
-        assert findings["findings"][0]["severity"] in ("critical", "important")
+        assert len(findings["findings"]) == 2
+        assert all(f["severity"] in ("critical", "important") for f in findings["findings"])
+        security = [f for f in findings["findings"] if f["concern_slug"] == "security"]
+        assert [f["severity"] for f in security] == ["critical"]
         assert (git_repo / "Findings-review.md").is_file()
         assert (git_repo / "Findings-review-supplementary.md").is_file()
 
@@ -159,9 +161,9 @@ class TestCategoricalEndToEnd:
         assert "select/haiku" in costs["by_stage"]
         assert "validate/sonnet" in costs["by_stage"]
         assert set(costs["seconds_by_stage"]) == set(costs["by_stage"])
-        # Only the selected lens ran (selector picked implementation only).
+        # Selector picked implementation only; security always runs too.
         lens_calls = [c for c in calls if "axis within the dimension" in c["prompt"]]
-        assert len(lens_calls) == 1
+        assert len(lens_calls) == 2
         assert lens_calls[0]["allowed"] == list(pipeline.LENS_TOOLS.allowed)
         assert lens_calls[0]["tools"] == pipeline.LENS_TOOLS.tools  # no Bash
 
@@ -186,9 +188,9 @@ class TestCategoricalEndToEnd:
         monkeypatch.setattr(
             backend,
             "run_agent",
-            _fake_run_agent_factory(calls, fail_labels={"implementation"}),
+            _fake_run_agent_factory(calls, fail_labels={"implementation", "security"}),
         )
-        # Selector picks implementation only; its agent fails every retry.
+        # Only the always-run lenses are selected; both fail every retry.
         rc = pipeline.run_review(_options(git_repo))
         assert rc == 1  # no lens output at all
         costs = json.loads((git_repo / ".tmp-review" / "costs.json").read_text())
@@ -206,8 +208,8 @@ class TestCategoricalEndToEnd:
         rc = pipeline.run_review(_options(git_repo))
         assert rc == 0  # run completes despite validator failure
         findings = json.loads((git_repo / "Findings-review.json").read_text())
-        # Finding survives unvalidated (apply-verdicts passthrough).
-        assert len(findings["findings"]) == 1
+        # Findings survive unvalidated (apply-verdicts passthrough).
+        assert len(findings["findings"]) == 2
         kinds = [issue["kind"] for issue in findings["issues"]]
         assert "subagent_failure" in kinds
 
@@ -1032,7 +1034,7 @@ class TestRunReport:
         monkeypatch.setattr(
             backend,
             "run_agent",
-            _fake_run_agent_factory([], fail_labels={"implementation"}),
+            _fake_run_agent_factory([], fail_labels={"implementation", "security"}),
         )
         assert pipeline.run_review(_options(git_repo)) == 1
         assert not (git_repo / "Findings-review.json").exists()
@@ -1126,7 +1128,8 @@ class TestRerender:
 
     def _reviewed(self, git_repo, monkeypatch):
         monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
-        assert pipeline.run_review(_options(git_repo)) == 0
+        # One finding to edit: the security lens would add a second.
+        assert pipeline.run_review(_options(git_repo, skip_lenses=("security",))) == 0
         return git_repo / ".tmp-review" / "20-findings"
 
     def _staged(self, stage_dir):
@@ -1310,7 +1313,7 @@ class TestCriticalityProfile:
 
     def test_rerender_profile_override_rebuckets_and_persists(self, git_repo, monkeypatch):
         monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
-        assert pipeline.run_review(_options(git_repo)) == 0
+        assert pipeline.run_review(_options(git_repo, skip_lenses=("security",))) == 0
         stage = git_repo / ".tmp-review" / "20-findings"
         path = next(p for p in stage.glob("*.json") if p.name != "_envelope.json")
         finding = json.loads(path.read_text())

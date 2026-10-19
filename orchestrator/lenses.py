@@ -81,12 +81,36 @@ LENSES: tuple[Lens, ...] = (
         "sonnet",
         "Authn/authz, input validation, injection vectors, credential/secret "
         "handling, path traversal, deserialization, supply chain (deps), "
-        "TLS/crypto, auth-related error leakage. Auth chain rule: before "
-        "reporting filter-level or data-level access control issues (IDOR, "
-        "horizontal privilege escalation), verify the full auth chain — "
-        "endpoint-level guards may already prevent the attack.",
-        "Change touches auth, crypto, secrets, input parsing, subprocess/"
-        "network/file I/O at trust boundaries, or dependencies.",
+        "TLS/crypto, auth-related error leakage.\n"
+        "SENSITIVE DATA EXPOSURE: the test is the outcome, not the mechanism "
+        "— does anyone end up able to see data they are not entitled to? "
+        "Personal data (PII, anything GDPR covers: names, emails, addresses, "
+        "IPs, identifiers, user or account lists), secrets (credentials, "
+        "tokens, keys, connection strings), and internal data (other "
+        "tenants' records, internal IDs, config). The way it reaches them "
+        "can be anything that presents, sends or stores data, and need not "
+        "involve a new or unusual request: a UI that renders data it already "
+        "holds to a user who should not see it, CLI output, API responses, "
+        "exports, notifications, emails or chat messages, error text, logs, "
+        "metrics, traces, caches, files, data sent to third parties. These "
+        "are examples, not a checklist — a path not named here is still in "
+        "scope.\n"
+        "PRIVILEGE ESCALATION PATHS: vertical (gaining a higher role or "
+        "admin action) and horizontal (reaching another user's or tenant's "
+        "data). For every authorization decision the change touches, ask "
+        "what a user could not do before the change that they can do now.\n"
+        "CARVE-OUTS ARE THE FINDING: a special case, exception, role or "
+        "flag conditional, allowlist, feature-specific permission, or "
+        "widened query scope that grants access the normal path denies — "
+        "for example letting a user list users when they otherwise could "
+        "not. Report it even when it looks intentional; state who gains "
+        "access to what. Before reporting a data-level access issue (IDOR, "
+        "horizontal escalation) in code the change did not alter, verify the "
+        "full auth chain — endpoint-level guards may already prevent it. "
+        "That check does not apply when the change itself adds an exception "
+        "to, or a path around, those guards.\n"
+        "Every finding from this lens is rated critical.",
+        "Always — every change can expose data or widen access.",
     ),
     Lens(
         "Backwards Compatibility",
@@ -182,7 +206,9 @@ LENSES: tuple[Lens, ...] = (
 )
 
 _BY_SLUG = {lens.slug: lens for lens in LENSES}
-ALWAYS_RUN_SLUG = "implementation"
+# Security always runs: a selector that misreads the diff must not be able
+# to drop the lens that catches data exposure and privilege escalation.
+ALWAYS_RUN_SLUGS = ("implementation", "security")
 
 
 def resolve_selection(
@@ -193,8 +219,8 @@ def resolve_selection(
     Returns (lenses, source, rationales). source is "selector" or
     "all-lenses-fallback". Unknown or out-of-roster lens names are dropped;
     empty/invalid selection falls back to the whole roster; the always-run
-    lens is force-included only when the roster still contains it (a user
-    skip beats always-run).
+    lenses are force-included only when the roster still contains them (a
+    user skip beats always-run).
     """
     roster_by_slug = {lens.slug: lens for lens in roster}
     selected: list[Lens] = []
@@ -210,10 +236,11 @@ def resolve_selection(
     if not selected:
         return list(roster), "all-lenses-fallback", {}
 
-    always = roster_by_slug.get(ALWAYS_RUN_SLUG)
-    if always is not None and always not in selected:
-        selected.insert(0, always)
-        rationales[ALWAYS_RUN_SLUG] = "General correctness always runs."
+    for position, slug in enumerate(ALWAYS_RUN_SLUGS):
+        always = roster_by_slug.get(slug)
+        if always is not None and always not in selected:
+            selected.insert(min(position, len(selected)), always)
+            rationales[slug] = f"{always.concern} always runs."
     return selected, "selector", rationales
 
 

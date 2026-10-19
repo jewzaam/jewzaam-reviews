@@ -34,6 +34,7 @@ from scripts.envelope import (  # noqa: E402
     review_file_basename,
     assign_bucket,
     assign_ids_per_bucket,
+    is_security_finding,
     build_envelope,
     format_locations_block,
     format_validation_error,
@@ -60,10 +61,13 @@ def assign_buckets_and_ids(
     if scoring == "simple":
         # Simple mode: severity comes directly from the agents/verdicts;
         # low confidence lands in needs-review instead of a rubric mapping.
+        # Security findings are critical regardless of confidence.
         annotated = [
             {
                 **f,
-                "severity": "needs-review"
+                "severity": "critical"
+                if is_security_finding(f)
+                else "needs-review"
                 if f.get("confidence") == "low"
                 else f["severity"],
             }

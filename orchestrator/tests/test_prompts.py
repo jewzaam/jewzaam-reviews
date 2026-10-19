@@ -103,7 +103,8 @@ class TestSelectorPrompt:
         text = prompts.build_selector_prompt(_scope(), LENSES)
         for lens in LENSES:
             assert f"- {lens.slug}: " in text
-        assert "implementation (general correctness) always runs" in text
+        assert "- implementation always runs" in text
+        assert "- security always runs" in text
         assert "max 3" in text
 
 

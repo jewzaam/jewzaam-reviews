@@ -20,6 +20,7 @@ if str(PLUGIN_ROOT) not in sys.path:
 from orchestrator import pipeline  # noqa: E402
 from scripts.envelope import (  # noqa: E402
     content_hash,
+    is_security_finding,
     primary_location,
     load_stage_dir,
     write_stage_dir,
@@ -79,6 +80,8 @@ def collect_findings(raw_dir: Path) -> tuple[list[dict], list[dict], list[dict],
         for finding in output["findings"]:
             entry = dict(finding)
             entry["concern_slug"] = output["concern_slug"]
+            if is_security_finding(entry):
+                entry["severity"] = "critical"
             # Agent schema allows role: null (= primary); shared schema does not.
             entry["locations"] = [
                 {**loc, "role": loc.get("role") or "primary"} for loc in entry["locations"]
@@ -157,6 +160,8 @@ def _rendered_bucket(finding: dict) -> str:
     bucket from low confidence. Matching on severity alone therefore cannot
     name the supplementary half of the report.
     """
+    if is_security_finding(finding):
+        return "critical"
     return "needs-review" if finding.get("confidence") == "low" else finding["severity"]
 
 
@@ -222,7 +227,7 @@ def apply_verdicts(validation_dir: Path, findings: list[dict]) -> tuple[list[dic
         if verdict["action"] == "rescore":
             updated = dict(finding)
             # null means "not changing this" — the schema requires the key.
-            if verdict.get("new_severity") is not None:
+            if verdict.get("new_severity") is not None and not is_security_finding(finding):
                 updated["severity"] = verdict["new_severity"]
             if verdict.get("new_confidence") is not None:
                 updated["confidence"] = verdict["new_confidence"]

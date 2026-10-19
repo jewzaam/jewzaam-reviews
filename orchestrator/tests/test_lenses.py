@@ -37,6 +37,20 @@ def test_selector_subset_plus_always_run():
     assert rationales["security"] == "touches auth"
 
 
+def test_security_always_runs():
+    out = {"lenses": [{"name": "test", "rationale": "no tests added"}]}
+    selected, _, rationales = lenses.resolve_selection(out)
+    assert [lens.slug for lens in selected] == ["implementation", "security", "test"]
+    assert rationales["security"] == "Security always runs."
+
+
+def test_user_skip_beats_always_run():
+    roster = tuple(lens for lens in lenses.LENSES if lens.slug != "security")
+    out = {"lenses": [{"name": "test", "rationale": "x"}]}
+    selected, _, _ = lenses.resolve_selection(out, roster)
+    assert "security" not in [lens.slug for lens in selected]
+
+
 def test_empty_selection_falls_back_to_all():
     for bad in (None, {}, {"lenses": []}, {"lenses": [{"name": "nope", "rationale": "x"}]}):
         selected, source, _ = lenses.resolve_selection(bad)
@@ -52,7 +66,7 @@ def test_duplicates_dropped():
         ]
     }
     selected, _, _ = lenses.resolve_selection(out)
-    assert [lens.slug for lens in selected] == ["implementation"]
+    assert [lens.slug for lens in selected] == ["implementation", "security"]
 
 
 def test_dimensions_default_single():

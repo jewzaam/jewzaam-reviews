@@ -7,7 +7,7 @@ reference "the enforced output schema" rather than any tool name.
 
 import json
 
-from orchestrator.lenses import Lens
+from orchestrator.lenses import ALWAYS_RUN_SLUGS, Lens
 from orchestrator.scope import ReviewScope
 
 
@@ -82,10 +82,10 @@ def build_selector_prompt(scope: ReviewScope, roster: tuple[Lens, ...]) -> str:
     )
     intent_block = build_intent_block(scope.intent)
     pr_block = f"\n{scope.pr_scope_text}\n" if scope.pr_scope_text else ""
-    always_run_rule = (
-        "\n- implementation (general correctness) always runs — always include it."
-        if any(lens.slug == "implementation" for lens in roster)
-        else ""
+    always_run_rule = "".join(
+        f"\n- {lens.slug} always runs — always include it."
+        for lens in roster
+        if lens.slug in ALWAYS_RUN_SLUGS
     )
 
     return f"""Select which review lenses should run for this review scope.
@@ -124,7 +124,7 @@ def build_lens_prompt(
 - Split test coverage gaps from production defects as separate findings with different dimensions.
 - Do NOT drop speculative findings."""
     else:
-        rating_lines = """- Rate each finding: severity (critical = data loss, security breach, or crash in production paths; important = incorrect behavior or degraded operation; suggestion = everything else worth fixing) and confidence (high = demonstrated from the code; medium = inferred with a plausible failure scenario; low = speculative).
+        rating_lines = """- Rate each finding: severity (critical = data loss, security breach, sensitive data exposure (PII, secrets, other users' or tenants' data), privilege escalation, or crash in production paths — every security finding is critical; important = incorrect behavior or degraded operation; suggestion = everything else worth fixing) and confidence (high = demonstrated from the code; medium = inferred with a plausible failure scenario; low = speculative).
 - Do NOT drop low-confidence findings — they are segregated for review, not discarded."""
     pr_scope_block = f"\nPR SCOPE:\n{scope.pr_scope_text}\n" if scope.pr_scope_text else ""
     intent_block = build_intent_block(scope.intent)
@@ -289,7 +289,7 @@ PROJECT ROOT: {project_root}
 
 For each finding:
 1. Open the cited locations and verify the code exists as described
-2. Challenge the premise — a finding may cite real code but be wrong because its assumptions are invalid (e.g., framework-level validation already handles it, auth middleware prevents the attack path, behavior is tested indirectly)
+2. Challenge the premise — a finding may cite real code but be wrong because its assumptions are invalid (e.g., framework-level validation already handles it, auth middleware prevents the attack path, behavior is tested indirectly). Auth middleware does not answer a finding about a carve-out, exception, or path around that middleware — check whether the cited path actually goes through it
 {challenge_3}{challenge_4}
 {build_profile_block(profile, "simple" if simple else "categorical")}
 For each finding, produce a verdict:
@@ -302,6 +302,7 @@ For each finding, produce a verdict:
     "no action needed", "continue", or "maintain")
 
 remove_reason is REQUIRED when action is "remove" and must be absent otherwise.
+Security and sensitive-data findings are always critical and cannot be rescored down: remove one that is not real, otherwise confirm it.
 State the evidence for your choice in "reasoning" — for "pre_existing", say what you
 checked at the base and what you found.
 
