@@ -109,7 +109,19 @@ LENSES: tuple[Lens, ...] = (
         "full auth chain — endpoint-level guards may already prevent it. "
         "That check does not apply when the change itself adds an exception "
         "to, or a path around, those guards.\n"
-        "Every finding from this lens is rated critical.",
+        "SCOPE CHECK: report a defect in the artifact under review, not a "
+        "risk adjacent to it. 'This could be a security risk' is not enough; "
+        "the artifact must be expected to address it. For code, the change "
+        "itself creates or widens the exposure or escalation. For documents, "
+        "following the document as written weakens security, or the "
+        "document makes a security claim within its own purpose that is "
+        "wrong or incomplete. A document that leaves out a security topic "
+        "outside its purpose is not a finding — a breaking-change guideline "
+        "that does not treat authorization widening as a breaking change, or "
+        "does not warn that new data could be sensitive, has no security "
+        "defect.\n"
+        "Every finding from this lens is rated critical, so an out-of-scope "
+        "one costs the reader as much as a real one.",
         "Always — every change can expose data or widen access.",
     ),
     Lens(
