@@ -927,6 +927,11 @@ def _write_costs(state) -> dict:
         # outlives the run. Recorded so the run joins back to it in telemetry.
         "orchestrating_session_id": state.orchestrating_session_id or None,
         "scoring": state.options.scoring,
+        "cost_basis": (
+            "Codex per-thread backend estimate (not invoice)"
+            if state.options.harness == "codex"
+            else "reported by Claude"
+        ),
         "total_cost_usd": round(sum(c.cost_usd for c in state.costs), 6),
         "token_normalization": backend.TOKEN_WEIGHTS,
         "total_normalized_tokens": round(
@@ -1082,7 +1087,9 @@ def _print_summary(state, cost_report) -> None:
             f"Orchestrating session: {state.orchestrating_session_id} "
             "(its spend is NOT in the table below)"
         )
-    print(f"\nCost (backend-reported, scoring={cost_report['scoring']}):")
+    print(
+        f"\nCost ({cost_report['cost_basis']}, scoring={cost_report['scoring']}):"
+    )
     width = max([len(k) for k in cost_report["by_stage"]] + [len("total")])
     for stage_model, cost in cost_report["by_stage"].items():
         seconds = cost_report["seconds_by_stage"].get(stage_model, 0.0)

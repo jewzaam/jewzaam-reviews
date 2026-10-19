@@ -2,6 +2,7 @@
 """Tests for orchestrator/backend.py — the agent seam."""
 
 import json
+import io
 import re
 import subprocess
 import sys
@@ -58,6 +59,7 @@ def _patch_run(monkeypatch, response, capture=None):
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     monkeypatch.setattr(backend, "_kill_tree", lambda pid: None)
+    monkeypatch.setattr(backend, "_codex_thread_cost", lambda *args: None)
 
 
 class TestArgvConstruction:
@@ -914,11 +916,10 @@ class TestDualHarnessSchemas:
 
 
 class TestCodexTokenUsage:
-    """Codex reports no dollar cost, so tokens are its only cost signal.
+    """Codex JSONL exposes tokens; the app-server fetches thread dollars.
 
-    They were being dropped entirely: `_codex_result` never read `usage`, so
-    a full review ledgered 0 tokens and $0 — indistinguishable from a run
-    that never dispatched an agent.
+    Usage was previously dropped: `_codex_result` never read it, so a review
+    ledgered 0 tokens and $0 — indistinguishable from a run without agents.
     """
 
     def _events(self, **usage):
@@ -941,8 +942,16 @@ class TestCodexTokenUsage:
             "cache_creation_input_tokens": 0,  # Codex has no cache-write counter
             "output_tokens": 75,               # reasoning is billed as output
         }
+        assert res.cost_usd == 0.0
         # 1000*1.0 + 400*0.1 + 0*1.25 + 75*6.0
         assert backend.normalize_token_usage(res.token_usage) == 1490.0
+
+    def test_agent_uses_app_server_thread_cost(self, monkeypatch):
+        _patch_run(monkeypatch, _FakeProc("\n".join(self._events(input_tokens=1))))
+        monkeypatch.setattr(backend, "_codex_thread_cost", lambda *args: 0.081098)
+        res = backend.run_agent("p", schema=None, model="sonnet", allowed_tools=[],
+                                cwd="/tmp", harness="codex")
+        assert res.cost_usd == 0.081098
 
     def test_missing_usage_is_empty_not_zero_shaped(self, monkeypatch):
         events = [json.dumps({"type": "thread.started", "thread_id": "t-1"}),
@@ -964,6 +973,23 @@ class TestCodexTokenUsage:
         res = backend.run_agent("p", schema=None, model="sonnet",
                                 allowed_tools=[], cwd="/tmp", harness="codex")
         assert res.token_usage["input_tokens"] == 7
+
+
+class TestCodexThreadCost:
+    def test_reads_server_estimate_from_app_server_protocol(self, monkeypatch):
+        output = "\n".join([
+            json.dumps({"id": 1, "result": {}}),
+            json.dumps({"id": 2, "result": {"threadUsage": {
+                "estimatedUsageUsdMicros": 81098,
+            }}}),
+        ])
+        proc = type("AppServerProc", (), {
+            "stdin": io.StringIO(), "stdout": io.StringIO(output),
+            "poll": lambda self: None,
+            "wait": lambda self, timeout=None: 0,
+        })()
+        monkeypatch.setattr(backend.subprocess, "Popen", lambda *args, **kwargs: proc)
+        assert backend._codex_thread_cost("thread-1", "/tmp", {}) == 0.081098
 
 
 class TestCodexModelAndEffort:
@@ -1041,6 +1067,7 @@ class TestCodexLiveLog:
             json.dumps({"type": "item.completed",
                         "item": {"type": "agent_message", "text": '{"ok": true}'}}),
         ])
+        monkeypatch.setattr(backend, "_codex_thread_cost", lambda *args: None)
 
         def fake_popen(argv, **kwargs):
             # The CLI writes to the handle the backend opened, not to a pipe.

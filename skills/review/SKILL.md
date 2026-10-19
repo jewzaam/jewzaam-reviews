@@ -105,7 +105,7 @@ Two host limits differ, and the lower one wins. Codex takes at most 3 questions 
 1. **Categorical (default)** — five-dimension rubric with per-dimension justifications; deterministic severity mapping; stronger noise filtering. Higher output-token cost per finding.
 2. **Simple** — direct severity + confidence; cheaper and lighter; low-confidence findings land in needs-review.
 
-If a prior run's `.tmp-review/costs.json` exists in the project, read `total_cost_usd` and `scoring` from it and include that measured number in the option descriptions. Never invent cost numbers — cite measured ones or give none.
+If a prior run's `.tmp-review/costs.json` exists in the project, read `total_cost_usd`, `cost_basis`, and `scoring` from it and include the recorded amount with its basis in the option descriptions. Never call an estimate measured or invent cost numbers — cite the recorded figure or give none.
 
 **Profile question** — include only when Step 3 printed a `profile-hint` line. Header "Profile", two options:
 
@@ -170,4 +170,4 @@ The run report is the answer to "did the whole pipeline run?" — one row per st
 
 - Never write or edit `Findings-*` files — the renderer script owns them.
 - Never re-run pipeline stage scripts by hand; the orchestrator sequences them.
-- The orchestrator's cost table is backend-reported spend; its normalized-token table is comparison-only. Report both as-is.
+- The orchestrator labels Claude cost as backend-reported and Codex cost as the Codex per-thread estimate. Relay the cost basis with the amount; the Codex figure is an estimate, not an invoice. Normalized tokens are comparison-only. Report both as-is.

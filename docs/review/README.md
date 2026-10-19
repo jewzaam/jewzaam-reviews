@@ -68,8 +68,9 @@ The review writes these files in the repository root:
 
 The skill runs the review in the background and waits for completion. Check the
 run report for degraded or skipped stages, and the final summary for issues,
-model names, costs when available, and normalized-token counts. Codex does not
-report dollar cost through this orchestrator.
+model names, cost, and normalized-token counts. Claude cost is backend-reported;
+Codex cost uses the authenticated per-thread estimate returned by Codex's
+app-server usage request. It is an estimate, not an invoice.
 
 ## Harness and model settings
 
