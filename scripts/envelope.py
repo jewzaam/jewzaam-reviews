@@ -351,6 +351,21 @@ SEVERITY_BUCKETS = ("critical", "important", "suggestion", "needs-review")
 PROFILES = ("code", "docs")
 
 
+def is_security_finding(finding: dict) -> bool:
+    """Security and sensitive-data findings are always critical.
+
+    Matches on concern_slug and on failure_mode both: consolidation keeps the
+    dominant finding's concern_slug but the max failure_mode, so a security
+    finding merged into another lens's finding still carries
+    data-loss-or-security, and the observability lens's "sensitive data in
+    logs" is caught too. Simple-mode findings have no failure_mode.
+    """
+    return (
+        finding.get("concern_slug") == "security"
+        or finding.get("failure_mode") == "data-loss-or-security"
+    )
+
+
 def assign_bucket(finding: dict, profile: str = "code") -> str:
     """Map categorical dimensions to a severity bucket.
 
@@ -364,6 +379,11 @@ def assign_bucket(finding: dict, profile: str = "code") -> str:
     remap exists only here, so the same finding re-buckets under either
     profile.
     """
+    # Before the speculative check on purpose: even unevidenced security
+    # findings land in critical.
+    if is_security_finding(finding):
+        return "critical"
+
     rs = finding["runtime_scope"]
     fm = finding["failure_mode"]
     eq = finding["evidence_quality"]
@@ -381,14 +401,7 @@ def assign_bucket(finding: dict, profile: str = "code") -> str:
         eq == "demonstrated"
         and to == "entry-point"
         and rs == "service-external"
-        and fm in ("data-loss-or-security", "crash-or-outage")
-    ):
-        return "critical"
-    if (
-        eq == "demonstrated"
-        and to == "entry-point"
-        and rs == "service-internal"
-        and fm == "data-loss-or-security"
+        and fm == "crash-or-outage"
     ):
         return "critical"
 
@@ -403,14 +416,14 @@ def assign_bucket(finding: dict, profile: str = "code") -> str:
         eq == "demonstrated"
         and to == "component"
         and rs in ("service-internal", "service-external")
-        and fm in ("data-loss-or-security", "crash-or-outage")
+        and fm == "crash-or-outage"
     ):
         return "important"
     if (
         eq == "inferred"
         and to in ("component", "entry-point")
         and rs in ("service-internal", "service-external")
-        and fm in ("data-loss-or-security", "crash-or-outage")
+        and fm == "crash-or-outage"
     ):
         return "important"
     if (

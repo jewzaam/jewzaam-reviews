@@ -245,6 +245,45 @@ class TestRemovalTrail:
         assert findings[0]["evidence_quality_justification"] == "found additional evidence"
         assert findings[0]["runtime_scope"] == "service-internal"
 
+    def test_rescore_cannot_move_security_out_of_critical(self, tmp_path: Path):
+        f = _finding(
+            chash="aaaaaaaaaaaaaaaa",
+            title="user list leaks to non-admins",
+            failure_mode="data-loss-or-security",
+        )
+        _write_stage_dir(tmp_path / "10-merged", [f])
+        _write_verdicts(tmp_path / "15-validation", [
+            {
+                "finding_ref": {"content_hash": "aaaaaaaaaaaaaaaa"},
+                "action": "rescore",
+                "new_dimensions": {
+                    "runtime_scope": None,
+                    "runtime_scope_justification": None,
+                    "failure_mode": "degraded-behavior",
+                    "failure_mode_justification": "only a list of names",
+                    "evidence_quality": "inferred",
+                    "evidence_quality_justification": "not traced",
+                    "trace_origin": None,
+                    "trace_origin_justification": None,
+                    "effort_to_fix": None,
+                    "effort_to_fix_justification": None,
+                },
+                "reasoning": "downgraded",
+            },
+        ])
+        out = tmp_path / "20-findings"
+        out.mkdir()
+        result = _run([
+            "--input-dir", str(tmp_path / "10-merged"),
+            "--verdicts-dir", str(tmp_path / "15-validation"),
+            "--output-dir", str(out),
+        ])
+        assert result.returncode == 0, result.stderr
+        _envelope, findings = _load_stage(out)
+        assert findings[0]["failure_mode"] == "data-loss-or-security"
+        assert findings[0]["failure_mode_justification"] == "test"
+        assert findings[0]["evidence_quality"] == "inferred"
+
     def test_no_verdict_passes_through(self, tmp_path: Path):
         f = _finding(chash="aaaaaaaaaaaaaaaa", title="no verdict")
         _write_stage_dir(tmp_path / "10-merged", [f])

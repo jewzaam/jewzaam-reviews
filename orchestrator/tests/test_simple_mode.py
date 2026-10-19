@@ -101,6 +101,20 @@ class TestCollectFindings:
         findings, _, _, _ = simple_mode.collect_findings(raw)
         assert findings[0]["locations"][0]["role"] == "primary"
 
+    def test_security_pinned_critical(self, tmp_path):
+        raw = tmp_path / "00-raw"
+        raw.mkdir()
+        (raw / "security-full-scope.json").write_text(
+            json.dumps(
+                _simple_output(
+                    "security", [_finding("leak", severity="suggestion", confidence="low")]
+                )
+            )
+        )
+        findings, _, _, _ = simple_mode.collect_findings(raw)
+        assert findings[0]["severity"] == "critical"
+        assert simple_mode._rendered_bucket(findings[0]) == "critical"
+
 
 class TestApplyVerdicts:
     def _setup(self, tmp_path, verdicts):
@@ -132,6 +146,18 @@ class TestApplyVerdicts:
         assert survivors[1]["severity"] == "suggestion"
         assert len(issues) == 1
         assert "validator_removed[not_real]" in issues[0]["message"]
+
+    def test_security_cannot_be_rescored_down(self, tmp_path):
+        f = _finding("leak", severity="critical")
+        f["concern_slug"] = "security"
+        f["content_hash"] = "0" * 16
+        vdir = self._setup(
+            tmp_path,
+            [{"finding_ref": {"content_hash": f["content_hash"]}, "action": "rescore", "new_severity": "suggestion", "new_confidence": "low", "reasoning": "minor"}],
+        )
+        survivors, _ = simple_mode.apply_verdicts(vdir, [f])
+        assert survivors[0]["severity"] == "critical"
+        assert survivors[0]["confidence"] == "low"
 
 
 def _fake_simple_backend(calls):

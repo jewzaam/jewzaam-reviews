@@ -31,6 +31,7 @@ PLUGIN_ROOT = REPO_ROOT.parent.parent
 
 sys.path.insert(0, str(PLUGIN_ROOT))
 from scripts.envelope import (  # noqa: E402
+    is_security_finding,
     load_stage_dir,
     safe_load_json,
     schema_registry,
@@ -98,8 +99,11 @@ def _apply_verdict(finding: dict, verdict: dict) -> dict | None:
         result = dict(finding)
         # A dimension the validator is not changing arrives as null: the
         # schema requires every member, so "unset" has to be a value.
+        # A security finding keeps its failure_mode: it is always critical,
+        # so a validator may remove it but not rescore it out of that bucket.
+        pinned = is_security_finding(finding)
         for key, value in verdict["new_dimensions"].items():
-            if value is None:
+            if value is None or (pinned and key.startswith("failure_mode")):
                 continue
             result[key] = value
         return result

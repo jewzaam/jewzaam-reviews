@@ -109,7 +109,7 @@ Key properties:
 
 - **Intent is an input, and its absence is reported.** The skill gathers why the change exists — acceptance criteria, the PR/issue description, or what the requester said — and passes it to the CLI with `--intent-file`; the orchestrator fetches nothing itself. Every lens and the selector receive it. When none was available, `Findings-intent[-<scope>].md` says so and the run report carries a `skipped` intent row, because a review that inferred the purpose of the code from the code is not the same review as one that was told.
 
-- **Scope-aware sizing.** A cheap selector agent reads the diff (or repo shape) and picks applicable lenses from a roster with `runs_when` descriptions. The `implementation` lens always runs; a broken selector falls back to all lenses rather than silently narrowing the review. A small PR typically runs 1 selector + 2–4 lens agents + a validator, instead of a fixed matrix.
+- **Scope-aware sizing.** A cheap selector agent reads the diff (or repo shape) and picks applicable lenses from a roster with `runs_when` descriptions. The `implementation` and `security` lenses always run; a broken selector falls back to all lenses rather than silently narrowing the review. A small PR typically runs 1 selector + 2–4 lens agents + a validator, instead of a fixed matrix.
 
 ### Lenses
 
@@ -121,7 +121,7 @@ The roster lives in `orchestrator/lenses.py`; the selector picks the subset whos
 | `architecture` | sonnet | Module structure, interfaces, configuration, or new files/packages change |
 | `test` | sonnet | Functional code changed that should have tests, or test files changed |
 | `maintainability` | sonnet | More than a trivial fix; build files; duplicated/complex logic |
-| `security` | sonnet | Auth, crypto, secrets, input parsing, subprocess/network/file I/O, dependencies |
+| `security` | sonnet | Always — data exposure (PII/GDPR, secrets, other users' data), privilege escalation and authorization carve-outs can hide in any change |
 | `compatibility` | sonnet | Public interfaces (API/CLI/exports), URL or UI route paths, schemas or wire/file formats, DB migrations, config keys or defaults, metric/log/trace names, deployment manifests, runtime behavior consumers depend on |
 | `documentation` | haiku | Docs files, public API surfaces, or user-facing behavior described in the README |
 | `observability` | haiku | Logging, error paths, metrics, long-running/operational code |
@@ -153,16 +153,16 @@ Findings carry five categorical dimensions. The renderer maps them deterministic
 
 | Bucket | ID Prefix | Criteria |
 |--------|-----------|----------|
-| Critical | C | `demonstrated` + `entry-point` + `service-external` + `data-loss-or-security`/`crash-or-outage` |
-| Important | I | `demonstrated`/`inferred` + `component`/`entry-point` + service scope + severe failure modes |
+| Critical | C | Any `security` finding or `failure_mode = data-loss-or-security`, at any evidence quality; otherwise `demonstrated` + `entry-point` + `service-external` + `crash-or-outage` |
+| Important | I | `demonstrated`/`inferred` + `component`/`entry-point` + service scope + `crash-or-outage`/`degraded-behavior` |
 | Suggestion | S | Everything else that isn't speculative |
 | Needs-review | N | `evidence_quality = speculative` (unvalidated by default) |
 
-In simple mode, severity comes directly from the agents (validated for critical/important), and `confidence = low` maps to Needs-review.
+In simple mode, severity comes directly from the agents (validated for critical/important), and `confidence = low` maps to Needs-review. Security findings are Critical in both modes; a validator can remove one but not rescore it down.
 
 ### Criticality profile
 
-`--profile code|docs` sets how documentation is weighed. `code` (the default) treats it as secondary, so a documentation finding caps at Suggestion. `docs` is for repos where the documents are the deliverable (architecture, standards, designs): before the table above is applied, a finding with `runtime_scope = documentation` is weighed as `service-external`, and its `confusion` failure mode as `degraded-behavior`. A misleading document a reader reaches from an entry point is then Important; one that weakens security when followed is Critical. Code findings in the same run keep the code rubric. Lens and validator prompts carry a docs reading of each dimension (rated by what happens to a reader who follows the document). In simple mode the profile changes only that prompt guidance.
+`--profile code|docs` sets how documentation is weighed. `code` (the default) treats it as secondary, so a documentation finding caps at Suggestion unless it is a security finding. `docs` is for repos where the documents are the deliverable (architecture, standards, designs): before the table above is applied, a finding with `runtime_scope = documentation` is weighed as `service-external`, and its `confusion` failure mode as `degraded-behavior`. A misleading document a reader reaches from an entry point is then Important; one that weakens security when followed is Critical. Code findings in the same run keep the code rubric. Lens and validator prompts carry a docs reading of each dimension (rated by what happens to a reader who follows the document). In simple mode the profile changes only that prompt guidance.
 
 The mapping stays deterministic: the bucket is a function of the dimensions and the profile, which is recorded as a `profile` row in the run report and stored with the run's scope. When every in-scope file is documentation (or repo plumbing: dotfiles, `.github/`, `Makefile`, `LICENSE`) and no `--profile` was given, `--select-only` prints a `profile-hint` line — the skill asks before any lens runs — and the end-of-run summary prints a re-bucket command. `--rerender --profile docs` re-buckets an existing run without agents; its dimensions keep the ratings they were given under the original profile.
 
