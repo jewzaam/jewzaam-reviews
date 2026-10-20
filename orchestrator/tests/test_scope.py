@@ -88,11 +88,12 @@ class TestBaseBranch:
         s = scope.compute_scope(str(devel_repo), 9, "", base="devel")
         assert (s.base_branch, s.base_source) == ("origin/devel", "--base")
 
-    def test_falls_back_to_default_and_says_so(self, devel_repo):
-        s = scope.compute_scope(str(devel_repo), 9, "")
-        assert s.base_branch == "origin/main"
-        assert s.base_source == scope.BASE_SOURCE_DEFAULT
-        assert "devel_only.py" in s.pr_scope_text
+    def test_unknown_base_refuses_with_hints(self, devel_repo):
+        with pytest.raises(scope.ScopeError) as exc:
+            scope.compute_scope(str(devel_repo), 9, "")
+        assert "pass --base" in str(exc.value)
+        assert "base-hint: closer: origin/devel: 1 commit(s) ahead" in str(exc.value)
+        assert "base-hint: default: origin/main" in str(exc.value)
 
     def test_missing_base_ref_warns_not_main(self, devel_repo):
         s = scope.compute_scope(str(devel_repo), 9, "", base="gone")
@@ -192,7 +193,7 @@ class TestProbe:
 
 class TestComputeScope:
     def test_pr_review(self, git_repo):
-        s = scope.compute_scope(str(git_repo), 42, "")
+        s = scope.compute_scope(str(git_repo), 42, "", base="main")
         assert s.pr_number == 42
         assert s.scope_slug == "pr-42"
         assert s.merge_base

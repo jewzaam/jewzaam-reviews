@@ -35,7 +35,7 @@ From the arguments the skill was invoked with (`$ARGUMENTS` where the host subst
 - A `-i` or `--interactive` token enables the existing scoring and lens questions; remove it from the forwarded arguments.
 - A `--scoring categorical` or `--scoring simple` token passes through unchanged.
 - A `--profile code` or `--profile docs` token passes through unchanged.
-- A `--base <branch>` token passes through unchanged. Without it the orchestrator asks `gh pr view` for the PR's target branch, falling back to the default branch.
+- A `--base <branch>` token passes through unchanged. Without it the orchestrator asks `gh pr view` for the PR's target branch, and refuses the PR review when that cannot say.
 - A `--skip-lenses <slugs>` token passes through unchanged.
 - A `--validate-buckets <buckets>` token passes through unchanged.
 - Everything else is guidance → `--guidance "<text>"` (omit when empty).
@@ -61,7 +61,7 @@ Where those live is per-setup, so look at what this session already has rather t
 
 Comments on an issue are not intent. They contradict each other and go stale; criteria and descriptions are the record.
 
-If what you read for a PR names the branch it merges into and `--base` was not given, pass `--base <branch>` on every `<ORCH>` invocation below — without `gh` the orchestrator can only fall back to the default branch, which reports a feature-branch PR's inherited commits as its own.
+If what you read for a PR names the branch it merges into and `--base` was not given, pass `--base <branch>` on every `<ORCH>` invocation below — without `gh` the orchestrator cannot find it and refuses to run.
 
 Write what you found verbatim — not a summary — to a file, and pass `--intent-file <path>` on every `<ORCH>` invocation below. Put the file in your host's scratch directory, never in the project. Do not paraphrase, do not fill gaps, and do not invent intent when you found none: a review that says it had none is useful, and one that ran against a plausible-sounding fabrication is worse than useless.
 
@@ -77,7 +77,7 @@ python <ORCH> --harness <HARNESS> --select-only [--pr N [--base BRANCH]] [--inte
 
 It prints the lenses the selector matched for this scope, one per line as `lens: <slug>: <rationale>`, and saves the selection so the review run does not re-run the selector.
 
-**Base pre-check.** If it prints `base-hint:` lines instead of lenses, it stopped before selecting: the PR's target branch is unknown (no `--base`, and `gh` could not say) and HEAD sits closer to another remote branch than to the default — the PR was likely cut from, and probably merges into, that branch. Reviewing against the default would report that branch's commits as the PR's own. Ask ONE question now, before anything else — the only question outside Step 4, because lens selection depends on the answer: header "Base", one option per `base-hint: closer:` ref (nearest first, recommended), plus the `base-hint: default:` ref. Then rerun this step with `--base <answer>` added, and pass the same `--base` in Step 5. If no question can be asked, stop and relay the `base-hint` lines; do not review against a guessed base.
+**Base question.** If it exits 2 with `base-hint:` lines, it stopped before selecting: the PR's target branch is unknown (no `--base`, and `gh` could not say). Reviewing against a guessed base would report another branch's commits as the PR's own. Ask it with the host's structured-question tool — `AskUserQuestion` under Claude Code, `request_user_input` under Codex — never as chat output, and never just stop and relay the error: a review that ends on an error or a chat question looks finished when it is waiting on an answer. Make ONE call now, before anything else — the only question outside Step 4, because lens selection depends on the answer: header "Base", one option per `base-hint: closer:` ref (nearest first, recommended — HEAD sits closer to it than to the default, so the PR was likely cut from it), plus the `base-hint: default:` ref, plus "Cancel review" when that leaves fewer than two options. Then rerun this step with `--base <answer>` added, and pass the same `--base` in Step 5. Only when that tool is missing or refuses (`request_user_input` is mode-gated and root-thread-only), ask the same content as one plain message and wait for the reply; do not review against a guessed base.
 
 When every in-scope file is documentation and no `--profile` was given, it also prints `profile-hint: docs: <reason>`. Pass `--profile` through to this command when the user gave one — that is what silences the hint.
 
@@ -160,7 +160,7 @@ On a host that cannot both background a command and wake the session when it exi
 
 The run writes four files at the project root: `Findings-review[-<scope>].json` (structured findings), `.md` (critical/important detail, plus a concern-by-severity table linking the rest), `-supplementary.md` (every finding grouped by concern then severity, decomposition, cross-cutting observations), and `Findings-intent[-<scope>].md` (what the review was told the change exists for, or that it was told nothing). Critical and important findings appear in both markdown files by design — the main file is the severity read, the supplementary is the per-concern read.
 
-Relay the final `--wait` output verbatim: severity counts, output filenames, the run-report step table, the operational issue list, and the cost plus normalized-token tables. If it reports a non-zero finish, show that output and stop — do not attempt to reconstruct findings yourself.
+Relay the final `--wait` output verbatim: severity counts, output filenames, the run-report step table, the operational issue list, and the cost plus normalized-token tables. If it reports a non-zero finish, show that output and stop — do not attempt to reconstruct findings yourself. One exception: output with `base-hint:` lines means the run refused before any agent started (Step 3 was skipped, so the base was never checked). Ask the Base question exactly as in Step 3 — same structured-question tool call — then go back to Step 5 with `--base <answer>` added.
 
 If the output says findings were never adversarially validated, that line names `/jewzaam-reviews:validate-supplementary` — relay it. If the user then asks for those findings to be challenged, invoke that skill; do not re-run this one, which reviews again from scratch and produces a different finding set.
 

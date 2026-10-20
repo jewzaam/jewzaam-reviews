@@ -12,11 +12,10 @@ Run the skill from the repository you want reviewed:
 
 Without a PR number, it reviews the whole repository. A PR number scopes
 findings to files changed since the PR's merge base with the branch it
-merges into: `--base <branch>` when given, else `gh pr view`, else the
-default branch — that last fallback marks the run report's scope row
-`degraded`. Before that fallback is used, the skill checks whether HEAD sits
-closer to another remote branch (a PR cut from a feature branch) and asks
-which base to use.
+merges into: `--base <branch>` when given, else `gh pr view`. When neither
+names it, the review refuses rather than guess; the skill asks which base to
+use, offering remote branches HEAD sits closer to than the default (a PR cut
+from a feature branch) plus the default branch.
 Free-form guidance gives the review an additional focus. It does not restrict
 findings to particular files.
 

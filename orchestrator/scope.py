@@ -90,17 +90,16 @@ def check_git_context(project_root: str) -> str:
     return ref.removeprefix("refs/remotes/")
 
 
-BASE_SOURCE_DEFAULT = "default branch (PR base unknown)"
-
-
 def resolve_base_branch(
     project_root: str, pr_number: int, explicit: str, default_branch: str
 ) -> tuple[str, str]:
     """Return (base ref, source) for the PR: what it actually merges into.
 
-    Precedence: --base, `gh pr view`, then the repo default branch. A PR into a feature branch diffed against main
-    reports every commit that branch carries as the PR's own, so the
-    fallback is labelled for the run report rather than taken silently.
+    Precedence: --base, then `gh pr view`. Neither → ScopeError, never a
+    guess: a PR into a feature branch diffed against main reports every
+    commit that branch carries as the PR's own, and a whole review run
+    against that diff is paid for before anyone notices. The error carries
+    `base-hint:` lines naming candidates for the caller to offer.
     A base that is found but has no local ref is NOT replaced by the default
     branch — compute_pr_scope then warns naming the missing ref.
     """
@@ -109,7 +108,16 @@ def resolve_base_branch(
     else:
         name, source = _base_from_gh(project_root, pr_number), "gh pr view"
     if not name:
-        return default_branch, BASE_SOURCE_DEFAULT
+        hints = [
+            f"base-hint: closer: {ref}: {commits} commit(s) ahead"
+            # 2 + default fits Codex's 3-option question limit.
+            for ref, commits in closer_branches(project_root, default_branch)[:2]
+        ]
+        hints.append(f"base-hint: default: {default_branch}")
+        raise ScopeError(
+            f"PR #{pr_number} target branch unknown: pass --base <branch> "
+            "(gh pr view could not say).\n" + "\n".join(hints)
+        )
     return (name if name.startswith("origin/") else f"origin/{name}"), source
 
 

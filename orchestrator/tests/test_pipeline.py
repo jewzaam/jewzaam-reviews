@@ -465,7 +465,7 @@ class TestSelectOnly:
 
 
 class TestBasePreCheck:
-    """Unknown PR base + a closer remote branch stops select-only before the selector."""
+    """Unknown PR base stops select-only before the selector."""
 
     @pytest.fixture
     def stacked_repo(self, git_repo, monkeypatch):
@@ -486,12 +486,20 @@ class TestBasePreCheck:
         calls = []
         monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
         sel = tmp_path / "sel.json"
-        assert pipeline.run_select_only(_options(stacked_repo, pr_number=3), sel) == 0
-        out = capsys.readouterr().out
-        assert "base-hint: default: origin/main" in out
-        assert "base-hint: closer: origin/devel: 1 commit(s) ahead" in out
-        assert "lens:" not in out
+        assert pipeline.run_select_only(_options(stacked_repo, pr_number=3), sel) == 2
+        captured = capsys.readouterr()
+        assert "base-hint: default: origin/main" in captured.err
+        assert "base-hint: closer: origin/devel: 1 commit(s) ahead" in captured.err
+        assert "lens:" not in captured.out
         assert calls == [] and not sel.exists()
+
+    def test_full_run_refuses_too(self, stacked_repo, monkeypatch, capsys):
+        # --skip-lenses skips select-only; the run itself must not guess either.
+        calls = []
+        monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory(calls))
+        assert pipeline.run_review(_options(stacked_repo, pr_number=3)) == 2
+        assert "base-hint: default: origin/main" in capsys.readouterr().err
+        assert calls == []
 
     def test_explicit_base_silences_hint(self, stacked_repo, monkeypatch, tmp_path, capsys):
         monkeypatch.setattr(backend, "run_agent", _fake_run_agent_factory([]))
