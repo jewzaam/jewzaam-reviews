@@ -1145,15 +1145,6 @@ def run_select_only(options: Options, selection_file: Path) -> int:
     except scope_mod.ScopeError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    # Before the selector: it is shown the diff, so a selection made against
-    # the wrong base would be saved and reused by the run.
-    if review_scope.base_source == scope_mod.BASE_SOURCE_DEFAULT:
-        closer = scope_mod.closer_branches(options.project_root, review_scope.base_branch)
-        if closer:
-            print(f"base-hint: default: {review_scope.base_branch}")
-            for ref, commits in closer[:3]:
-                print(f"base-hint: closer: {ref}: {commits} commit(s) ahead")
-            return 0
     state = RunState(options=options, scope=review_scope)
     selector_output = _run_selector(state)
     roster = _active_roster(state)
@@ -1391,12 +1382,9 @@ def run_review(options: Options, selection_file: Path | None = None) -> int:
         return 2
 
     state = RunState(options=options, scope=review_scope)
-    # A PR diffed against a guessed base can report a whole feature branch as
-    # the PR's own changes, so the guess is degraded, not ok.
-    base_guessed = review_scope.base_source == scope_mod.BASE_SOURCE_DEFAULT
     state.record_step(
         "scope",
-        "degraded" if base_guessed or (options.pr_number and not review_scope.merge_base) else "ok",
+        "degraded" if options.pr_number and not review_scope.merge_base else "ok",
         f"{review_scope.project_name} ({review_scope.language}); "
         + (
             f"PR #{options.pr_number}, base {review_scope.base_branch} "
