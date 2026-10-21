@@ -249,7 +249,7 @@ def _codex_env() -> tuple[dict, Path]:
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith("CODEX_")
+        if not key.startswith("CODEX_") or key == "CODEX_CMD"
     }
     env["CODEX_HOME"] = str(child_home)
     return env, child_home
