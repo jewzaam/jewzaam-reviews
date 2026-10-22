@@ -73,41 +73,35 @@ app-server usage request. It is an estimate, not an invoice.
 
 ## Harness and model settings
 
-The review skill launches the harness CLI as a separate process. The model
-selected for the current Codex or Claude Code conversation does not configure
-these review agents.
+The review roster chooses a review level based on the kind of analysis each
+agent performs. Both harnesses use the same levels; only the translation to a
+concrete provider model differs.
+
+| Review level | Review work | Why |
+| --- | --- | --- |
+| `deep` | Implementation, architecture, tests, maintainability, security, backwards compatibility, and validation | These reviews trace behavior and assess interactions, edge cases, and risk. |
+| `focused` | Lens selection, documentation, and observability | These are narrower classification or targeted review tasks. |
 
 ### Codex
 
-The orchestrator invokes `codex exec`. All review agents use one Codex model.
-The review roster's `sonnet` and `haiku` tiers are mapped to it.
+The orchestrator invokes `codex exec` and maps review levels to Codex models:
+`deep` to `gpt-5.6-terra` and `focused` to `gpt-6-luna`. Each agent uses the
+model assigned to its review level; there is no global model override.
 
-| Environment variable | Default | Effect |
-| --- | --- | --- |
-| `REVIEW_ORCHESTRATOR_CODEX_MODEL` | `gpt-5.6-luna` | Model for the selector, lens agents, and validators. |
-| `REVIEW_ORCHESTRATOR_CODEX_EFFORT` | `high` | Codex `model_reasoning_effort` setting for all agents. |
-
-Set these in the environment that launches Codex, before starting the Codex
-host. A later shell export will not change an already-running Codex process.
-The detached review inherits the host's environment. For example, to run the
-orchestrator directly for one review:
-
-```bash
-REVIEW_ORCHESTRATOR_CODEX_MODEL=gpt-5.6-sol \
-  python /path/to/jewzaam-reviews/orchestrator/cli.py --harness codex --detach --pr 42
-python /path/to/jewzaam-reviews/orchestrator/cli.py --harness codex --wait --wait-timeout-s 3600
-```
-
-Set `REVIEW_ORCHESTRATOR_CODEX_MODEL` to an empty string to omit `--model` and
-let the Codex CLI use its configured default. This setting applies to every
-agent. There is no per-lens model override.
+The `effort` supplied by a review stage is sent as Codex's
+`model_reasoning_effort` setting. If a stage does not supply effort, Codex uses
+its configured default.
 
 ### Claude Code
 
-The orchestrator invokes `claude -p` with an explicit model. Most lenses and
-validators use `sonnet`. The selector and documentation/observability lenses
-use `haiku`. The plugin has no environment variable for overriding these
-models at runtime.
+The orchestrator invokes `claude -p`, mapping `deep` to `sonnet` and `focused`
+to `haiku`. The per-lens assignments and rationale are listed above. The
+plugin has no environment variable for overriding Claude models at runtime.
+
+For both harnesses, a stage's explicit effort is used when provided. Codex
+receives it as `model_reasoning_effort`; otherwise Codex uses its configured
+default. Claude receives explicit effort with `--effort`; otherwise Claude
+uses its configured default.
 
 The selected harness follows the host running the skill: Codex uses `codex`
 and Claude Code uses `claude`. When running the CLI directly, select it with

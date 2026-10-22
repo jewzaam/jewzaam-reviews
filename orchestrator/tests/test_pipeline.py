@@ -158,8 +158,8 @@ class TestCategoricalEndToEnd:
             "review",
             "validate",
         }
-        assert "select/haiku" in costs["by_stage"]
-        assert "validate/sonnet" in costs["by_stage"]
+        assert "select/focused" in costs["by_stage"]
+        assert "validate/deep" in costs["by_stage"]
         assert set(costs["seconds_by_stage"]) == set(costs["by_stage"])
         # Selector picked implementation only; security always runs too.
         lens_calls = [c for c in calls if "axis within the dimension" in c["prompt"]]
@@ -236,7 +236,7 @@ class TestRetry:
             backend.AgentResult(output={"ok": True}, cost_usd=0.02),
         ]
         final = pipeline._run_with_retry(
-            state, "review", "x", "sonnet", lambda: results.pop(0)
+            state, "review", "x", "deep", lambda: results.pop(0)
         )
         assert final.error is None
         assert [c.cost_usd for c in state.costs] == [0.01, 0.02]
@@ -248,7 +248,7 @@ class TestRetry:
         result = backend.AgentResult(output={"ok": True}, cost_usd=0.01)
         result.permission_denials = [denial]
         final = pipeline._run_with_retry(
-            state, "review", "x", "sonnet", lambda: result
+            state, "review", "x", "deep", lambda: result
         )
         assert final.error is None
         assert state.costs[0].denials == [denial]
@@ -261,7 +261,7 @@ class TestRetry:
             backend.AgentResult(output={"needed": 1}, cost_usd=0.01),
         ]
         final = pipeline._run_with_retry(
-            state, "review", "x", "sonnet", lambda: results.pop(0), schema=schema
+            state, "review", "x", "deep", lambda: results.pop(0), schema=schema
         )
         assert final.error is None
         assert final.output == {"needed": 1}
@@ -387,7 +387,7 @@ class TestDenialAggregation:
         denial = {"tool_name": "Bash", "tool_input": {"command": "git -C x diff"}}
         result = backend.AgentResult(output={"ok": True}, cost_usd=0.01)
         result.permission_denials = [denial, dict(denial)]
-        pipeline._run_with_retry(state, "select", "x", "haiku", lambda: result)
+        pipeline._run_with_retry(state, "select", "x", "focused", lambda: result)
         report = pipeline._write_costs(state)
         assert report["denials_by_tool"] == {"Bash": 2}
 
@@ -403,10 +403,10 @@ class TestDenialAggregation:
                 "output_tokens": 10,
             },
         )
-        pipeline._run_with_retry(state, "select", "x", "haiku", lambda: result)
+        pipeline._run_with_retry(state, "select", "x", "focused", lambda: result)
         report = pipeline._write_costs(state)
         assert report["total_normalized_tokens"] == 205.0
-        assert report["normalized_tokens_by_stage"] == {"select/haiku": 205.0}
+        assert report["normalized_tokens_by_stage"] == {"select/focused": 205.0}
 
 
 class TestSelectOnly:
@@ -454,7 +454,7 @@ class TestSelectOnly:
         selection_file.write_text(json.dumps({
             "head": head,
             "selector_output": ["not", "a", "dict"],
-            "costs": [{"stage": "select", "label": "x", "model": "haiku",
+            "costs": [{"stage": "select", "label": "x", "model": "focused",
                        "cost_usd": 0.01, "bogus_key": True}, "junk"],
         }))
         rc = pipeline.run_review(_options(git_repo), selection_file=selection_file)
@@ -762,7 +762,7 @@ class TestOrchestratingSession:
         state.options.project_root = str(tmp_path)
         (tmp_path / ".tmp-review").mkdir()
         state.costs.append(
-            pipeline.CostEntry(stage="lens", label="a", model="haiku", cost_usd=0.25)
+            pipeline.CostEntry(stage="lens", label="a", model="focused", cost_usd=0.25)
         )
         report = pipeline._write_costs(state)
         assert report["orchestrating_session_id"] == "sess-abc"
@@ -811,7 +811,7 @@ class TestBudgetHarvest:
             attempts.append(1)
             return self._budget_stop()
 
-        pipeline._run_with_retry(state, "review", "impl/full-scope", "sonnet", fn)
+        pipeline._run_with_retry(state, "review", "impl/full-scope", "deep", fn)
         assert len(attempts) == 1, "a runaway must not be re-run at full price"
 
     def test_harvest_reopens_the_stopped_session(self, git_repo):
@@ -828,7 +828,7 @@ class TestBudgetHarvest:
             state,
             "review",
             "impl/full-scope",
-            "sonnet",
+            "deep",
             lambda: self._budget_stop("sess-abc"),
             harvest=harvest,
         )
@@ -841,7 +841,7 @@ class TestBudgetHarvest:
             state,
             "review",
             "impl/full-scope",
-            "sonnet",
+            "deep",
             lambda: self._budget_stop(),
             harvest=lambda sid: backend.AgentResult(output={"ok": 1}, cost_usd=0.4),
         )
@@ -857,7 +857,7 @@ class TestBudgetHarvest:
             state,
             "review",
             "impl/full-scope",
-            "sonnet",
+            "deep",
             lambda: self._budget_stop(),
             harvest=lambda sid: backend.AgentResult(output={"ok": 1}, cost_usd=0.4),
         )
@@ -872,7 +872,7 @@ class TestBudgetHarvest:
             state,
             "review",
             "impl/full-scope",
-            "sonnet",
+            "deep",
             lambda: self._budget_stop(),
             harvest=lambda sid: backend.AgentResult(
                 error="resume failed", error_category="agent"
@@ -889,7 +889,7 @@ class TestBudgetHarvest:
             state,
             "review",
             "impl/full-scope",
-            "sonnet",
+            "deep",
             lambda: self._budget_stop(session_id=""),
             harvest=lambda sid: called.append(sid),
         )
@@ -904,14 +904,14 @@ class TestBudgetHarvest:
             attempts.append(1)
             return backend.AgentResult(error="bad json", error_category="protocol")
 
-        pipeline._run_with_retry(state, "review", "impl/full-scope", "sonnet", fn)
+        pipeline._run_with_retry(state, "review", "impl/full-scope", "deep", fn)
         assert len(attempts) == 3, "schema/protocol flukes are worth an identical retry"
 
 
 class TestBudgetByModel:
-    def test_sonnet_and_haiku_differ(self):
-        assert pipeline.budget_for("sonnet") == 6.0
-        assert pipeline.budget_for("haiku") == 2.0
+    def test_review_levels_have_different_budgets(self):
+        assert pipeline.budget_for("deep") == 6.0
+        assert pipeline.budget_for("focused") == 2.0
 
     def test_unknown_model_gets_the_default(self):
         assert pipeline.budget_for("some-future-model") == pipeline.DEFAULT_BUDGET_USD

@@ -22,6 +22,19 @@ def test_roster_matches_agent_output_enum():
     assert {lens.concern for lens in lenses.LENSES} == schema_concerns
 
 
+def test_review_levels_follow_the_lenses_reasoning_scope():
+    assert {lens.slug: lens.review_level for lens in lenses.LENSES} == {
+        "implementation": "deep",
+        "architecture": "deep",
+        "test": "deep",
+        "maintainability": "deep",
+        "security": "deep",
+        "compatibility": "deep",
+        "documentation": "focused",
+        "observability": "focused",
+    }
+
+
 def test_selector_subset_plus_always_run():
     out = {
         "lenses": [

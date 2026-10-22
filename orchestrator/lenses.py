@@ -16,7 +16,7 @@ from dataclasses import dataclass
 class Lens:
     concern: str  # exact agent-output schema enum value
     slug: str  # exact concern_slug enum value
-    model: str
+    review_level: str
     scope_text: str  # what this lens reviews (goes into the agent prompt)
     runs_when: str  # selector guidance
 
@@ -25,7 +25,7 @@ LENSES: tuple[Lens, ...] = (
     Lens(
         "Implementation Quality",
         "implementation",
-        "sonnet",
+        "deep",
         "Logic correctness, error handling, type safety, resource management, "
         "edge cases, concurrency. Security excluded — dedicated lens.",
         "Always — general code correctness runs on every review.",
@@ -33,7 +33,7 @@ LENSES: tuple[Lens, ...] = (
     Lens(
         "Architecture and Design",
         "architecture",
-        "sonnet",
+        "deep",
         "Project structure, module boundaries, coupling, data model, "
         "configuration management, design pattern consistency.\n"
         "REUSE BEFORE BUILD: new code that reimplements what the stdlib, an "
@@ -59,7 +59,7 @@ LENSES: tuple[Lens, ...] = (
     Lens(
         "Test Quality and Coverage",
         "test",
-        "sonnet",
+        "deep",
         "Test plan alignment, isolation, assertion quality, edge case "
         "coverage, mock usage, missing scenarios, fixture design.",
         "Functional code changed that should have corresponding tests, or "
@@ -68,7 +68,7 @@ LENSES: tuple[Lens, ...] = (
     Lens(
         "Maintainability and Standards",
         "maintainability",
-        "sonnet",
+        "deep",
         "Naming, duplication, import organization, function complexity, "
         "internal consistency, build system. Documentation excluded — "
         "dedicated lens.",
@@ -78,7 +78,7 @@ LENSES: tuple[Lens, ...] = (
     Lens(
         "Security",
         "security",
-        "sonnet",
+        "deep",
         "Authn/authz, input validation, injection vectors, credential/secret "
         "handling, path traversal, deserialization, supply chain (deps), "
         "TLS/crypto, auth-related error leakage.\n"
@@ -127,7 +127,7 @@ LENSES: tuple[Lens, ...] = (
     Lens(
         "Backwards Compatibility",
         "compatibility",
-        "sonnet",
+        "deep",
         "Contract changes toward existing consumers. A breaking change is any "
         "change that forces an existing consumer of a supported surface to act "
         "in order to keep working as it did before. 'Consumer' is broad: an "
@@ -199,7 +199,7 @@ LENSES: tuple[Lens, ...] = (
     Lens(
         "Documentation",
         "documentation",
-        "haiku",
+        "focused",
         "README accuracy and completeness, docstrings, inline comments where "
         "non-obvious, examples, ADRs, changelog, public API docs, "
         "install/usage instructions.",
@@ -209,7 +209,7 @@ LENSES: tuple[Lens, ...] = (
     Lens(
         "Observability",
         "observability",
-        "haiku",
+        "focused",
         "Log quality (levels, structured fields, sensitive data), error "
         "context, metrics, traces, debug affordances, alerting hooks.",
         "Change touches logging, error handling paths, metrics, or "
