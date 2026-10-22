@@ -57,9 +57,8 @@ class AgentResult:
     # timeout | spawn | protocol | agent | budget | schema (set by callers) | None
     error_category: str | None = None
     session_id: str = ""  # child session id — joins the trace/ledger to telemetry
-    # The model actually invoked. Differs from the requested one whenever a
-    # harness resolves it: the lens roster names Anthropic tiers, and Codex
-    # runs a single configured model instead. The ledger records this, not the
+    # The model actually invoked. Differs from the requested review level
+    # whenever a harness resolves it. The ledger records this, not the
     # request, so a cost table never names a model that did not run.
     model_used: str = ""
 
@@ -211,31 +210,22 @@ def _scrubbed_env() -> dict:
     return env
 
 
-# Codex is not tiered the way the lens roster is: the roster names Anthropic
-# tiers (`sonnet`, `haiku`) to split cheap lenses from expensive ones, and
-# Codex has no equivalent, so one configured model runs every agent. Passing
-# the tier name through would ask Codex for a model that does not exist;
-# dropping it silently — the previous behaviour — left the ledger reporting
-# `review/sonnet` for work no Anthropic model did.
-_CODEX_MODEL_ENV = "REVIEW_ORCHESTRATOR_CODEX_MODEL"
-_CODEX_EFFORT_ENV = "REVIEW_ORCHESTRATOR_CODEX_EFFORT"
-DEFAULT_CODEX_MODEL = "gpt-5.6-luna"
-DEFAULT_CODEX_EFFORT = "high"
-# Anthropic tier names in the lens roster. Never sent to Codex.
-_ANTHROPIC_TIERS = frozenset({"sonnet", "haiku", "opus"})
+# Provider-neutral review levels are resolved to each harness's model names.
+_CODEX_MODELS = {
+    "deep": "gpt-5.6-terra",
+    "focused": "gpt-6-luna",
+}
+_CLAUDE_MODELS = {"deep": "sonnet", "focused": "haiku"}
+
+
+def claude_model(requested: str) -> str:
+    """Resolve a review level to Claude, or preserve an explicit model."""
+    return _CLAUDE_MODELS.get(requested, requested)
 
 
 def codex_model(requested: str) -> str:
-    """The Codex model to run for a roster entry naming an Anthropic tier.
-
-    A non-tier name is passed through untouched, so an explicit model still
-    wins. Set to an empty string to fall back to whatever Codex is
-    configured with, in which case nothing is sent and the ledger says
-    `codex:default` rather than inventing a name.
-    """
-    if requested not in _ANTHROPIC_TIERS:
-        return requested
-    return os.environ.get(_CODEX_MODEL_ENV, DEFAULT_CODEX_MODEL)
+    """Resolve a review level to Codex, or preserve an explicit model."""
+    return _CODEX_MODELS.get(requested, requested)
 
 
 def _codex_env() -> tuple[dict, Path]:
@@ -562,8 +552,9 @@ def run_agent(
     codex_log = None
     effective_model = model
     if harness == "claude":
+        effective_model = claude_model(model)
         argv = [
-            "claude", "-p", "--output-format", "json", "--model", model,
+            "claude", "-p", "--output-format", "json", "--model", effective_model,
             "--permission-mode", "dontAsk",
         ]
         if not persist_session:
@@ -605,12 +596,9 @@ def run_agent(
         effective_model = codex_model(model)
         if effective_model:
             argv += ["--model", effective_model]
-        # `effort` on the call names an Anthropic effort tier; Codex takes its
-        # own, and one setting covers every agent since the model is not
-        # tiered either. Config key, not a flag — there is no `--effort`.
-        codex_effort = os.environ.get(_CODEX_EFFORT_ENV, DEFAULT_CODEX_EFFORT)
-        if codex_effort:
-            argv += ["-c", f"model_reasoning_effort={codex_effort}"]
+        # Codex takes reasoning effort as a config key, not a flag.
+        if effort:
+            argv += ["-c", f"model_reasoning_effort={effort}"]
         if schema is not None:
             schema_file = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".json", prefix="review-schema-", delete=False

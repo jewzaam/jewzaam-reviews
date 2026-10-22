@@ -69,7 +69,7 @@ class TestArgvConstruction:
         backend.run_agent(
             "the prompt",
             schema={"type": "object"},
-            model="sonnet",
+            model="deep",
             allowed_tools=["Read", "Grep"],
             tools="Read,Grep",
             cwd="/tmp",
@@ -112,7 +112,7 @@ class TestArgvConstruction:
         result = backend.run_agent(
             "the prompt",
             schema={"type": "object"},
-            model="sonnet",
+            model="deep",
             allowed_tools=["Read"],
             tools="Read",
             cwd="/tmp",
@@ -130,7 +130,7 @@ class TestArgvConstruction:
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         monkeypatch.setenv("REVIEW_ORCHESTRATOR_CODEX_SANDBOX", "read-only")
         backend.run_agent(
-            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp", harness="codex"
+            "p", schema=None, model="deep", allowed_tools=[], cwd="/tmp", harness="codex"
         )
         argv = capture["argv"]
         assert argv[argv.index("--sandbox") + 1] == "read-only"
@@ -139,7 +139,7 @@ class TestArgvConstruction:
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp"
         )
         assert "--json-schema" not in capture["argv"]
         assert "--allowedTools" not in capture["argv"]
@@ -155,7 +155,7 @@ class TestArgvConstruction:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
         monkeypatch.setenv("HOME", "/home/x")
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
-        backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        backend.run_agent("p", schema=None, model="focused", allowed_tools=[], cwd="/tmp")
         env = capture["kwargs"]["env"]
         # Session identity stripped
         assert "CLAUDECODE" not in env
@@ -173,7 +173,7 @@ class TestArgvConstruction:
         monkeypatch.setenv("CODEX_SESSION_ID", "parent")
         monkeypatch.setenv("CODEX_THREAD_ID", "parent-thread")
         monkeypatch.setenv("CODEX_CMD", "/usr/bin/codex")
-        backend.run_agent("p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp", harness="codex")
+        backend.run_agent("p", schema=None, model="deep", allowed_tools=[], cwd="/tmp", harness="codex")
         env = capture["kwargs"]["env"]
         assert "CODEX_SESSION_ID" not in env
         assert "CODEX_THREAD_ID" not in env
@@ -184,7 +184,7 @@ class TestResultParsing:
     def test_success_with_schema(self, monkeypatch):
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())))
         res = backend.run_agent(
-            "p", schema={"type": "object"}, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema={"type": "object"}, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert res.error is None
         assert res.output == {"ok": True}
@@ -203,7 +203,7 @@ class TestResultParsing:
             }))),
         )
         res = backend.run_agent(
-            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert res.token_usage["input_tokens"] == 100
         assert backend.normalize_token_usage(res.token_usage) == 205.0
@@ -211,7 +211,7 @@ class TestResultParsing:
     def test_success_without_schema_returns_text(self, monkeypatch):
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())))
         res = backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp"
         )
         assert res.output == {"text": "raw text"}
 
@@ -221,7 +221,7 @@ class TestResultParsing:
             _FakeProc(json.dumps(_cli_result(is_error=True, result="boom"))),
         )
         res = backend.run_agent(
-            "p", schema={"type": "object"}, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema={"type": "object"}, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert res.error is not None and "boom" in res.error
         assert res.output is None
@@ -233,14 +233,14 @@ class TestResultParsing:
             _FakeProc(json.dumps(_cli_result(structured_output=None))),
         )
         res = backend.run_agent(
-            "p", schema={"type": "object"}, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema={"type": "object"}, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert res.error == "missing structured_output in result"
 
     def test_non_json_stdout(self, monkeypatch):
         _patch_run(monkeypatch, _FakeProc("garbage", returncode=1, stderr="bad"))
         res = backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp"
         )
         assert "malformed CLI result" in res.error
 
@@ -249,14 +249,14 @@ class TestResultParsing:
             monkeypatch, subprocess.TimeoutExpired(cmd=["claude"], timeout=5)
         )
         res = backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp", timeout_s=5
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp", timeout_s=5
         )
         assert "timeout" in res.error
 
     def test_spawn_failure(self, monkeypatch):
         _patch_run(monkeypatch, FileNotFoundError("no claude"))
         res = backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp"
         )
         assert "failed to spawn" in res.error
 
@@ -267,7 +267,7 @@ class TestResultParsing:
             _FakeProc(json.dumps(_cli_result(permission_denials=[denial]))),
         )
         res = backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=["Read"], cwd="/tmp"
+            "p", schema=None, model="focused", allowed_tools=["Read"], cwd="/tmp"
         )
         assert res.permission_denials == [denial]
 
@@ -302,7 +302,7 @@ class TestAgentTrace:
         backend.run_agent(
             "the prompt",
             schema={"type": "object"},
-            model="sonnet",
+            model="deep",
             allowed_tools=["Read"],
             cwd="/tmp",
             trace_file=trace,
@@ -324,12 +324,12 @@ class TestAgentTrace:
         trace = tmp_path / "agent-trace.jsonl"
         _patch_run(monkeypatch, _FakeProc("garbage", returncode=1, stderr="bad"))
         backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp",
             trace_file=trace, label="a",
         )
         _patch_run(monkeypatch, subprocess.TimeoutExpired(cmd=["claude"], timeout=5))
         backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp",
             trace_file=trace, label="b", timeout_s=5,
         )
         records = [_json.loads(x) for x in trace.read_text().strip().splitlines()]
@@ -343,7 +343,7 @@ class TestAgentTrace:
 
         _patch_run(monkeypatch, _FakeProc(_json.dumps(_cli_result())))
         backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp"
         )
         assert list(tmp_path.iterdir()) == []
 
@@ -369,7 +369,7 @@ class TestRedactPrompt:
         trace = tmp_path / "trace.jsonl"
         backend.run_agent(
             "USER GUIDANCE:\ntopsecret\n\nMETHODOLOGY:\ngo",
-            schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            schema=None, model="focused", allowed_tools=[], cwd="/tmp",
             trace_file=trace, label="x", redact="topsecret",
         )
         content = trace.read_text()
@@ -382,18 +382,18 @@ class TestErrorCategories:
     def test_timeout_category(self, monkeypatch):
         _patch_run(monkeypatch, subprocess.TimeoutExpired(cmd=["claude"], timeout=5))
         res = backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp", timeout_s=5
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp", timeout_s=5
         )
         assert res.error_category == "timeout"
 
     def test_spawn_category(self, monkeypatch):
         _patch_run(monkeypatch, FileNotFoundError("no claude"))
-        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        res = backend.run_agent("p", schema=None, model="focused", allowed_tools=[], cwd="/tmp")
         assert res.error_category == "spawn"
 
     def test_agent_error_category(self, monkeypatch):
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result(is_error=True))))
-        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        res = backend.run_agent("p", schema=None, model="focused", allowed_tools=[], cwd="/tmp")
         assert res.error_category == "agent"
 
 
@@ -402,7 +402,7 @@ class TestAllowedToolsJoinAndTraceRobustness:
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         backend.run_agent(
-            "p", schema=None, model="haiku",
+            "p", schema=None, model="focused",
             allowed_tools=["Read", "Bash(git diff:*)", "Bash(git log:*)"],
             cwd="/tmp",
         )
@@ -417,7 +417,7 @@ class TestAllowedToolsJoinAndTraceRobustness:
         blocker.write_text("")  # parent path exists as a file
         unwritable = blocker / "trace.jsonl"
         res = backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp",
             trace_file=unwritable, label="x",
         )
         assert res.error is None  # tracing failure never fails the run
@@ -428,7 +428,7 @@ class TestAllowedToolsJoinAndTraceRobustness:
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())))
         trace = tmp_path / "nodir" / "trace.jsonl"
         res = backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp",
             trace_file=trace, label="lens-selector",
         )
         assert res.error is None
@@ -448,20 +448,20 @@ class TestAllowedToolsJoinAndTraceRobustness:
 class TestMalformedResults:
     def test_non_dict_json_result_is_protocol_error(self, monkeypatch):
         _patch_run(monkeypatch, _FakeProc('["not", "a", "dict"]'))
-        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        res = backend.run_agent("p", schema=None, model="focused", allowed_tools=[], cwd="/tmp")
         assert res.error_category == "protocol"
         assert "malformed CLI result" in res.error
 
     def test_junk_cost_value_tolerated(self, monkeypatch):
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result(total_cost_usd="junk"))))
-        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        res = backend.run_agent("p", schema=None, model="focused", allowed_tools=[], cwd="/tmp")
         assert res.error is None
         assert res.cost_usd == 0.0
 
     def test_prompt_goes_via_stdin_not_argv(self, monkeypatch):
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
-        backend.run_agent("the secret prompt", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        backend.run_agent("the secret prompt", schema=None, model="focused", allowed_tools=[], cwd="/tmp")
         assert "the secret prompt" not in capture["argv"]
         assert capture["kwargs"]["stdin"] is not None
 
@@ -469,7 +469,7 @@ class TestMalformedResults:
 class TestDenialsFallback:
     def test_non_list_permission_denials_tolerated(self, monkeypatch):
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result(permission_denials="junk"))))
-        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        res = backend.run_agent("p", schema=None, model="focused", allowed_tools=[], cwd="/tmp")
         assert res.error is None
         assert res.permission_denials == []
 
@@ -517,7 +517,7 @@ class TestOtelAttributes:
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://c:4318")
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp",
             otel_attributes={"review.run_id": "abc123", "review.agent": "impl/full-scope"},
         )
         attrs = capture["kwargs"]["env"]["OTEL_RESOURCE_ATTRIBUTES"]
@@ -530,7 +530,7 @@ class TestOtelAttributes:
         monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         backend.run_agent(
-            "p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp",
+            "p", schema=None, model="focused", allowed_tools=[], cwd="/tmp",
             otel_attributes={"review.agent": "a,b=c"},
         )
         attrs = capture["kwargs"]["env"]["OTEL_RESOURCE_ATTRIBUTES"]
@@ -540,7 +540,7 @@ class TestOtelAttributes:
         capture = {}
         monkeypatch.delenv("OTEL_RESOURCE_ATTRIBUTES", raising=False)
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
-        backend.run_agent("p", schema=None, model="haiku", allowed_tools=[], cwd="/tmp")
+        backend.run_agent("p", schema=None, model="focused", allowed_tools=[], cwd="/tmp")
         assert "OTEL_RESOURCE_ATTRIBUTES" not in capture["kwargs"]["env"]
 
 
@@ -567,7 +567,7 @@ class TestBudgetStop:
             monkeypatch, _FakeProc(json.dumps(self._budget_result()), returncode=1)
         )
         res = backend.run_agent(
-            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert res.error_category == "budget", "must not be lumped in with 'agent'"
         assert res.error is not None
@@ -578,7 +578,7 @@ class TestBudgetStop:
             monkeypatch, _FakeProc(json.dumps(self._budget_result()), returncode=1)
         )
         res = backend.run_agent(
-            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert res.cost_usd == 6.0705224
         assert res.session_id == "sess-1234"
@@ -590,7 +590,7 @@ class TestBudgetStop:
             monkeypatch, _FakeProc(json.dumps(self._budget_result()), returncode=1)
         )
         res = backend.run_agent(
-            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert "Reached maximum budget ($6)" in res.error
 
@@ -599,7 +599,7 @@ class TestBudgetStop:
         del result["subtype"]
         _patch_run(monkeypatch, _FakeProc(json.dumps(result), returncode=1))
         res = backend.run_agent(
-            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert res.error_category == "budget"
 
@@ -611,7 +611,7 @@ class TestBudgetStop:
             ),
         )
         res = backend.run_agent(
-            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert res.error_category == "agent"
 
@@ -624,7 +624,7 @@ class TestSessionAndBudgetArgv:
         backend.run_agent(
             "p",
             schema=None,
-            model="sonnet",
+            model="deep",
             allowed_tools=[],
             cwd="/tmp",
             max_budget_usd=6.0,
@@ -644,7 +644,7 @@ class TestSessionAndBudgetArgv:
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         backend.run_agent(
-            "p", schema=None, model="sonnet", allowed_tools=[], cwd="/tmp"
+            "p", schema=None, model="deep", allowed_tools=[], cwd="/tmp"
         )
         assert "--no-session-persistence" in capture["argv"]
 
@@ -653,7 +653,7 @@ class TestSessionAndBudgetArgv:
         backend.run_agent(
             "p",
             schema=None,
-            model="sonnet",
+            model="deep",
             allowed_tools=[],
             cwd="/tmp",
             persist_session=True,
@@ -668,7 +668,7 @@ class TestSessionAndBudgetArgv:
         backend.run_agent(
             "p",
             schema=None,
-            model="sonnet",
+            model="deep",
             allowed_tools=[],
             cwd="/tmp",
             session_id="aaaaaaaa-2222-3333-4444-555555555555",
@@ -688,7 +688,7 @@ class TestSessionAndBudgetArgv:
         res = backend.run_agent(
             "p",
             schema=None,
-            model="sonnet",
+            model="deep",
             allowed_tools=[],
             cwd="/tmp",
             session_id="cccccccc-2222-3333-4444-555555555555",
@@ -837,7 +837,7 @@ class TestDualHarnessSchemas:
 
             monkeypatch.setattr(subprocess, "Popen", fake_popen)
             backend.run_agent(
-                "p", schema=schema, model="sonnet", allowed_tools=[],
+                "p", schema=schema, model="deep", allowed_tools=[],
                 cwd="/tmp", harness=harness,
             )
             assert sent["schema"] == schema, f"{harness} mutated the schema"
@@ -936,7 +936,7 @@ class TestCodexTokenUsage:
         _patch_run(monkeypatch, _FakeProc("\n".join(self._events(
             input_tokens=1000, cached_input_tokens=400,
             output_tokens=50, reasoning_output_tokens=25))))
-        res = backend.run_agent("p", schema=None, model="sonnet",
+        res = backend.run_agent("p", schema=None, model="deep",
                                 allowed_tools=[], cwd="/tmp", harness="codex")
         assert res.token_usage == {
             "input_tokens": 1000,
@@ -951,7 +951,7 @@ class TestCodexTokenUsage:
     def test_agent_uses_app_server_thread_cost(self, monkeypatch):
         _patch_run(monkeypatch, _FakeProc("\n".join(self._events(input_tokens=1))))
         monkeypatch.setattr(backend, "_codex_thread_cost", lambda *args: 0.081098)
-        res = backend.run_agent("p", schema=None, model="sonnet", allowed_tools=[],
+        res = backend.run_agent("p", schema=None, model="deep", allowed_tools=[],
                                 cwd="/tmp", harness="codex")
         assert res.cost_usd == 0.081098
 
@@ -960,7 +960,7 @@ class TestCodexTokenUsage:
                   json.dumps({"type": "item.completed",
                               "item": {"type": "agent_message", "text": "{}"}})]
         _patch_run(monkeypatch, _FakeProc("\n".join(events)))
-        res = backend.run_agent("p", schema=None, model="sonnet",
+        res = backend.run_agent("p", schema=None, model="deep",
                                 allowed_tools=[], cwd="/tmp", harness="codex")
         assert res.token_usage == {}
 
@@ -972,7 +972,7 @@ class TestCodexTokenUsage:
                   json.dumps({"type": "turn.completed",
                               "turn": {"usage": {"input_tokens": 7}}})]
         _patch_run(monkeypatch, _FakeProc("\n".join(events)))
-        res = backend.run_agent("p", schema=None, model="sonnet",
+        res = backend.run_agent("p", schema=None, model="deep",
                                 allowed_tools=[], cwd="/tmp", harness="codex")
         assert res.token_usage["input_tokens"] == 7
 
@@ -995,64 +995,54 @@ class TestCodexThreadCost:
 
 
 class TestCodexModelAndEffort:
-    """Codex is not tiered; the roster is. Resolving that must be visible.
+    """Review levels resolve to Codex models and effort passes through."""
 
-    Dropping the tier silently — the old behaviour — ran every agent on
-    Codex's default while the ledger reported `review/sonnet` and
-    `review/haiku`, naming two Anthropic models that never executed and
-    inventing a cost split that did not happen.
-    """
-
-    def _argv(self, monkeypatch, model="sonnet", **env):
-        for key in ("REVIEW_ORCHESTRATOR_CODEX_MODEL", "REVIEW_ORCHESTRATOR_CODEX_EFFORT"):
-            monkeypatch.delenv(key, raising=False)
+    def _argv(self, monkeypatch, model="deep", effort="low", **env):
         for key, value in env.items():
             monkeypatch.setenv(key, value)
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         res = backend.run_agent("p", schema=None, model=model, allowed_tools=[],
-                                cwd="/tmp", effort="low", harness="codex")
+                                cwd="/tmp", effort=effort, harness="codex")
         return capture["argv"], res
 
-    def test_tier_is_resolved_to_the_configured_model(self, monkeypatch):
-        argv, res = self._argv(monkeypatch, model="sonnet")
-        assert argv[argv.index("--model") + 1] == backend.DEFAULT_CODEX_MODEL
-        assert "sonnet" not in argv, "an Anthropic tier must never reach Codex"
-        assert res.model_used == backend.DEFAULT_CODEX_MODEL
+    def test_review_level_is_resolved_to_codex_model(self, monkeypatch):
+        argv, res = self._argv(monkeypatch, model="deep")
+        assert argv[argv.index("--model") + 1] == "gpt-5.6-terra"
+        assert "deep" not in argv, "a review level must never reach Codex"
+        assert res.model_used == "gpt-5.6-terra"
 
-    def test_both_tiers_resolve_to_one_model(self, monkeypatch):
-        sonnet, _ = self._argv(monkeypatch, model="sonnet")
-        haiku, _ = self._argv(monkeypatch, model="haiku")
-        assert sonnet[sonnet.index("--model") + 1] == haiku[haiku.index("--model") + 1]
+    @pytest.mark.parametrize("review_level,model", [
+        ("deep", "gpt-5.6-terra"),
+        ("focused", "gpt-6-luna"),
+    ])
+    def test_review_levels_map_to_matching_codex_models(self, monkeypatch, review_level, model):
+        argv, _ = self._argv(monkeypatch, model=review_level)
+        assert argv[argv.index("--model") + 1] == model
 
-    def test_env_overrides_the_model(self, monkeypatch):
+    def test_old_global_override_does_not_replace_review_level(self, monkeypatch):
         argv, res = self._argv(monkeypatch, REVIEW_ORCHESTRATOR_CODEX_MODEL="gpt-x")
-        assert argv[argv.index("--model") + 1] == "gpt-x"
-        assert res.model_used == "gpt-x"
-
-    def test_empty_env_falls_back_to_codex_default(self, monkeypatch):
-        argv, res = self._argv(monkeypatch, REVIEW_ORCHESTRATOR_CODEX_MODEL="")
-        assert "--model" not in argv
-        assert res.model_used == "codex:default", "never invent a model name"
+        assert argv[argv.index("--model") + 1] == "gpt-5.6-terra"
+        assert res.model_used == "gpt-5.6-terra"
 
     def test_explicit_non_tier_model_passes_through(self, monkeypatch):
         argv, _ = self._argv(monkeypatch, model="gpt-explicit")
         assert argv[argv.index("--model") + 1] == "gpt-explicit"
 
-    def test_reasoning_effort_is_sent_as_a_config_key(self, monkeypatch):
+    def test_call_effort_is_sent_as_a_config_key(self, monkeypatch):
         argv, _ = self._argv(monkeypatch)
         assert "-c" in argv
-        assert f"model_reasoning_effort={backend.DEFAULT_CODEX_EFFORT}" in argv
+        assert "model_reasoning_effort=low" in argv
         assert "--effort" not in argv, "Codex has no --effort flag"
 
-    def test_effort_env_override(self, monkeypatch):
-        argv, _ = self._argv(monkeypatch, REVIEW_ORCHESTRATOR_CODEX_EFFORT="low")
-        assert "model_reasoning_effort=low" in argv
+    def test_missing_effort_uses_codex_config(self, monkeypatch):
+        argv, _ = self._argv(monkeypatch, effort=None)
+        assert "model_reasoning_effort=" not in " ".join(argv)
 
-    def test_claude_still_gets_the_tier_verbatim(self, monkeypatch):
+    def test_claude_resolves_review_level_to_model(self, monkeypatch):
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
-        res = backend.run_agent("p", schema=None, model="haiku", allowed_tools=[],
+        res = backend.run_agent("p", schema=None, model="focused", allowed_tools=[],
                                 cwd="/tmp", harness="claude")
         argv = capture["argv"]
         assert argv[argv.index("--model") + 1] == "haiku"
@@ -1079,7 +1069,7 @@ class TestCodexLiveLog:
             return _FakeProc("")
 
         monkeypatch.setattr(subprocess, "Popen", fake_popen)
-        res = backend.run_agent("p", schema={"type": "object"}, model="sonnet",
+        res = backend.run_agent("p", schema={"type": "object"}, model="deep",
                                 allowed_tools=[], cwd="/tmp", harness="codex",
                                 debug_file=log)
         assert log.read_text().count("\n") >= 1, "log holds the event stream"

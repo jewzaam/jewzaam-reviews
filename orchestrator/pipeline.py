@@ -34,12 +34,11 @@ TRACE_FILENAME = "agent-trace.jsonl"
 LOG_DIRNAME = "agent-logs"
 
 # Per-agent spend cap — the actual runaway control (Options.timeout_s is only
-# a latency backstop). Keyed by model because the floors differ by an order of
-# magnitude: measured haiku lenses run $0.25-$0.40 and sonnet lenses
-# $2.07-$3.53, so one flat cap is either no cap for haiku or too tight for
-# sonnet. The CLI enforces this between turns, so real spend overshoots by up
-# to one turn's cost.
-BUDGET_USD_BY_MODEL = {"sonnet": 6.0, "haiku": 2.0}
+# a latency backstop). Keyed by review level because measured focused lenses
+# run $0.25-$0.40 and deep lenses $2.07-$3.53, so one flat cap is either no
+# cap for focused work or too tight for deep work. The CLI enforces this
+# between turns, so real spend overshoots by up to one turn's cost.
+BUDGET_USD_BY_REVIEW_LEVEL = {"deep": 6.0, "focused": 2.0}
 DEFAULT_BUDGET_USD = 6.0
 
 # Second pass over a budget-stopped agent: reopen its session and ask only for
@@ -73,9 +72,9 @@ DECISION_KINDS = frozenset({"finding_removed", "finding_truncated"})
 RUN_REPORT_FILENAME = "run-report.json"
 
 
-def budget_for(model: str) -> float:
-    """Spend cap for one agent invocation on this model."""
-    return BUDGET_USD_BY_MODEL.get(model, DEFAULT_BUDGET_USD)
+def budget_for(review_level: str) -> float:
+    """Spend cap for one agent invocation at this review level."""
+    return BUDGET_USD_BY_REVIEW_LEVEL.get(review_level, DEFAULT_BUDGET_USD)
 
 
 @dataclass(frozen=True)
@@ -130,7 +129,8 @@ class Options:
     profile: str = ""
     max_agents: int = 16
     parallel: int = 4
-    # Latency backstop only. Spend is capped per agent by BUDGET_USD_BY_MODEL,
+    # Latency backstop only. Spend is capped per agent by
+    # BUDGET_USD_BY_REVIEW_LEVEL,
     # which stops a runaway without SIGKILL and so keeps its cost reportable.
     timeout_s: int = 3600
     dry_run: bool = False
@@ -285,10 +285,7 @@ def _run_with_retry(state, stage, label, model, fn, schema=None, retries=2, harv
             CostEntry(
                 stage=stage,
                 label=label,
-                # What ran, not what was asked for. Under Codex the roster's
-                # Anthropic tier is resolved to one configured model, and a
-                # by_stage row reading `review/sonnet` for a Codex run names
-                # a model that never executed.
+                # What ran, not the review level requested.
                 model=attempt.model_used or model,
                 cost_usd=attempt.cost_usd,
                 token_usage=attempt.token_usage,
@@ -599,17 +596,17 @@ def _run_selector(state) -> dict | None:
         state,
         "select",
         "lens-selector",
-        "haiku",
+        "focused",
         lambda: backend.run_agent(
             prompt,
             schema=schema,
-            model="haiku",
+            model="focused",
             allowed_tools=list(SELECTOR_TOOLS.allowed),
             tools=SELECTOR_TOOLS.tools,
             cwd=state.options.project_root,
             effort="low",
             timeout_s=state.options.timeout_s,
-            max_budget_usd=budget_for("haiku"),
+            max_budget_usd=budget_for("focused"),
             session_id=str(uuid.uuid4()),
             debug_file=state.log_dir / "lens-selector.log",
             trace_file=state.tmp_dir / TRACE_FILENAME,
@@ -671,16 +668,16 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
             state,
             "review",
             label,
-            lens.model,
+            lens.review_level,
             lambda: backend.run_agent(
                 prompt,
                 schema=schema,
-                model=lens.model,
+                model=lens.review_level,
                 allowed_tools=list(LENS_TOOLS.allowed),
                 tools=LENS_TOOLS.tools,
                 cwd=state.options.project_root,
                 timeout_s=state.options.timeout_s,
-                max_budget_usd=budget_for(lens.model),
+                max_budget_usd=budget_for(lens.review_level),
                 session_id=lens_session_id,
                 persist_session=True,
                 debug_file=state.log_dir / f"{log_stem}.log",
@@ -694,7 +691,7 @@ def _dispatch_review_agents(state, selected, dimensions) -> None:
             harvest=lambda sid: backend.run_agent(
                 HARVEST_PROMPT,
                 schema=schema,
-                model=lens.model,
+                model=lens.review_level,
                 allowed_tools=[],
                 tools="",
                 cwd=state.options.project_root,
@@ -828,16 +825,16 @@ def run_validators(state) -> None:
             state,
             "validate",
             f"batch-{batch['batch_number']}",
-            "sonnet",
+            "deep",
             lambda: backend.run_agent(
                 prompt,
                 schema=schema,
-                model="sonnet",
+                model="deep",
                 allowed_tools=list(VALIDATOR_TOOLS.allowed),
                 tools=VALIDATOR_TOOLS.tools,
                 cwd=state.options.project_root,
                 timeout_s=state.options.timeout_s,
-                max_budget_usd=budget_for("sonnet"),
+                max_budget_usd=budget_for("deep"),
                 session_id=str(uuid.uuid4()),
                 debug_file=state.log_dir
                 / f"validator-batch-{batch['batch_number']}.log",
