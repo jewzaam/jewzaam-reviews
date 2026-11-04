@@ -1,0 +1,10 @@
+interface:
+  display_name: "Refine"
+  short_description: "Review-and-fix loop that preserves user-facing behavior"
+  # Plugin-bundled skills are namespaced by the plugin's manifest name.
+  default_prompt: "Use $jewzaam-reviews:refine to refine this codebase without changing user-facing behavior."
+
+# Mirrors disable-model-invocation in SKILL.md, which Codex does not read.
+# This runs paid review agents across several iterations and edits the working tree.
+policy:
+  allow_implicit_invocation: false

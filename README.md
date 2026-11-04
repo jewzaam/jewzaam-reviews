@@ -15,6 +15,7 @@ See the [review skill guide](docs/review/README.md) for usage and harness-specif
 | `jewzaam-reviews:update-pr` | `Findings-update-pr-<number>.{json,md}` | Fetch GitHub PR review comments and supplementary feedback |
 | `jewzaam-reviews:c4-reverse-engineer` | `Findings-c4-reverse-engineer.{json,md}` | Reverse-engineer C4 architecture diagrams and behavioral spec from a codebase |
 | `jewzaam-reviews:apply-review` | `Report-apply-review.json` | Consume any `Findings-*.json`, apply as one-commit-per-finding, emit an action report |
+| `jewzaam-reviews:refine` | `Findings-review-iteration-<N>*`, `Review-<skill>-iteration-<N>.md`, `Report-apply-review-<source>-iteration-<N>.json` (copies of apply-review's fixed-name report, which each apply run overwrites), uncommitted changes | Non-interactive review → triage → apply loop that only applies behavior-preserving fixes, then one standards pass; behavior-changing findings are deferred to the final report |
 
 ## Installation
 
@@ -186,6 +187,7 @@ From any project repo:
 /jewzaam-reviews:update-pr                       # Pull PR review comments
 /jewzaam-reviews:c4-reverse-engineer             # Generate C4 diagrams + spec
 /jewzaam-reviews:apply-review                    # Apply any Findings-*.json
+/jewzaam-reviews:refine                          # Review/apply loop, behavior-preserving fixes only, no questions
 ```
 
 The orchestrator also runs standalone (useful outside Claude Code or from other agent frontends):
