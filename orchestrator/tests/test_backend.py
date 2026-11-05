@@ -64,6 +64,7 @@ def _patch_run(monkeypatch, response, capture=None):
 
 class TestArgvConstruction:
     def test_full_argv(self, monkeypatch):
+        monkeypatch.setenv("REVIEW_ORCHESTRATOR_MODEL_DEEP", "some-model")
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         backend.run_agent(
@@ -84,7 +85,7 @@ class TestArgvConstruction:
         assert "--output-format" in argv and argv[argv.index("--output-format") + 1] == "json"
         assert "--no-session-persistence" in argv
         assert "--bare" not in argv
-        assert argv[argv.index("--model") + 1] == "sonnet"
+        assert argv[argv.index("--model") + 1] == "some-model"
         assert argv[argv.index("--effort") + 1] == "low"
         assert argv[argv.index("--allowedTools") + 1] == "Read,Grep"
         assert json.loads(argv[argv.index("--json-schema") + 1]) == {"type": "object"}
@@ -994,40 +995,42 @@ class TestCodexThreadCost:
         assert backend._codex_thread_cost("thread-1", "/tmp", {}) == 0.081098
 
 
-class TestCodexModelAndEffort:
-    """Review levels resolve to Codex models and effort passes through."""
+class TestModelAndEffort:
+    """Models come from the environment per review level; effort passes through."""
 
-    def _argv(self, monkeypatch, model="deep", effort="low", **env):
+    @pytest.fixture(autouse=True)
+    def _no_model_env(self, monkeypatch):
+        for level in ("DEEP", "FOCUSED"):
+            monkeypatch.delenv(f"REVIEW_ORCHESTRATOR_MODEL_{level}", raising=False)
+
+    def _argv(self, monkeypatch, model="deep", effort="low", harness="codex", **env):
         for key, value in env.items():
             monkeypatch.setenv(key, value)
         capture = {}
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         res = backend.run_agent("p", schema=None, model=model, allowed_tools=[],
-                                cwd="/tmp", effort=effort, harness="codex")
+                                cwd="/tmp", effort=effort, harness=harness)
         return capture["argv"], res
 
-    def test_review_level_is_resolved_to_codex_model(self, monkeypatch):
-        argv, res = self._argv(monkeypatch, model="deep")
-        assert argv[argv.index("--model") + 1] == "gpt-5.6-terra"
-        assert "deep" not in argv, "a review level must never reach Codex"
-        assert res.model_used == "gpt-5.6-terra"
+    @pytest.mark.parametrize("harness", ["claude", "codex"])
+    def test_level_env_is_sent_verbatim(self, monkeypatch, harness):
+        argv, res = self._argv(monkeypatch, harness=harness,
+                               REVIEW_ORCHESTRATOR_MODEL_DEEP="vendor/model-x[1m]")
+        assert argv[argv.index("--model") + 1] == "vendor/model-x[1m]"
+        assert "deep" not in argv, "a review level must never reach a harness"
+        assert res.model_used == "vendor/model-x[1m]"
 
-    @pytest.mark.parametrize("review_level,model", [
-        ("deep", "gpt-5.6-terra"),
-        ("focused", "gpt-6-luna"),
-    ])
-    def test_review_levels_map_to_matching_codex_models(self, monkeypatch, review_level, model):
-        argv, _ = self._argv(monkeypatch, model=review_level)
-        assert argv[argv.index("--model") + 1] == model
+    def test_levels_resolve_independently(self, monkeypatch):
+        monkeypatch.setenv("REVIEW_ORCHESTRATOR_MODEL_DEEP", "big")
+        monkeypatch.setenv("REVIEW_ORCHESTRATOR_MODEL_FOCUSED", "small")
+        argv, _ = self._argv(monkeypatch, model="focused")
+        assert argv[argv.index("--model") + 1] == "small"
 
-    def test_old_global_override_does_not_replace_review_level(self, monkeypatch):
-        argv, res = self._argv(monkeypatch, REVIEW_ORCHESTRATOR_CODEX_MODEL="gpt-x")
-        assert argv[argv.index("--model") + 1] == "gpt-5.6-terra"
-        assert res.model_used == "gpt-5.6-terra"
-
-    def test_explicit_non_tier_model_passes_through(self, monkeypatch):
-        argv, _ = self._argv(monkeypatch, model="gpt-explicit")
-        assert argv[argv.index("--model") + 1] == "gpt-explicit"
+    @pytest.mark.parametrize("harness", ["claude", "codex"])
+    def test_unset_sends_no_model_and_ledgers_harness_default(self, monkeypatch, harness):
+        argv, res = self._argv(monkeypatch, harness=harness)
+        assert "--model" not in argv
+        assert res.model_used == f"{harness}:default"
 
     def test_call_effort_is_sent_as_a_config_key(self, monkeypatch):
         argv, _ = self._argv(monkeypatch)
@@ -1038,15 +1041,6 @@ class TestCodexModelAndEffort:
     def test_missing_effort_uses_codex_config(self, monkeypatch):
         argv, _ = self._argv(monkeypatch, effort=None)
         assert "model_reasoning_effort=" not in " ".join(argv)
-
-    def test_claude_resolves_review_level_to_model(self, monkeypatch):
-        capture = {}
-        _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
-        res = backend.run_agent("p", schema=None, model="focused", allowed_tools=[],
-                                cwd="/tmp", harness="claude")
-        argv = capture["argv"]
-        assert argv[argv.index("--model") + 1] == "haiku"
-        assert res.model_used == "haiku"
 
 
 class TestCodexLiveLog:

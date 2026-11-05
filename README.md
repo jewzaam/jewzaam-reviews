@@ -98,7 +98,7 @@ The review skill is a thin wrapper around a standalone Python orchestrator (`orc
 graph TD
     A["/review [PR#] [--scoring MODE] [guidance]"] --> B["orchestrator/cli.py"]
     B --> C["Scope compute<br/>(git, deterministic)"]
-    C --> D["Selector agent<br/>(haiku) picks lenses"]
+    C --> D["Selector agent<br/>(focused) picks lenses"]
     D --> E["Lens agents × selected<br/>(parallel)"]
     E --> F["Consolidate + diff-scope filter<br/>(scripts)"]
     F --> G["Validator agents<br/>(critical/important only)"]
@@ -114,18 +114,18 @@ Key properties:
 
 ### Lenses
 
-The roster lives in `orchestrator/lenses.py`; the selector picks the subset whose `runs_when` matches the scope.
+The roster lives in `orchestrator/lenses.py`; the selector picks the subset whose `runs_when` matches the scope. Each review level runs the model set for it in the environment; see [harness and model settings](docs/review/README.md#harness-and-model-settings).
 
-| Lens (`concern_slug`) | Model | Selector picks it when |
+| Lens (`concern_slug`) | Review level | Selector picks it when |
 |---|---|---|
-| `implementation` | sonnet | Always — general correctness runs on every review |
-| `architecture` | sonnet | Module structure, interfaces, configuration, or new files/packages change |
-| `test` | sonnet | Functional code changed that should have tests, or test files changed |
-| `maintainability` | sonnet | More than a trivial fix; build files; duplicated/complex logic |
-| `security` | sonnet | Always — data exposure (PII/GDPR, secrets, other users' data), privilege escalation and authorization carve-outs can hide in any change |
-| `compatibility` | sonnet | Public interfaces (API/CLI/exports), URL or UI route paths, schemas or wire/file formats, DB migrations, config keys or defaults, metric/log/trace names, deployment manifests, runtime behavior consumers depend on |
-| `documentation` | haiku | Docs files, public API surfaces, or user-facing behavior described in the README |
-| `observability` | haiku | Logging, error paths, metrics, long-running/operational code |
+| `implementation` | deep | Always — general correctness runs on every review |
+| `architecture` | deep | Module structure, interfaces, configuration, or new files/packages change |
+| `test` | deep | Functional code changed that should have tests, or test files changed |
+| `maintainability` | deep | More than a trivial fix; build files; duplicated/complex logic |
+| `security` | deep | Always — data exposure (PII/GDPR, secrets, other users' data), privilege escalation and authorization carve-outs can hide in any change |
+| `compatibility` | deep | Public interfaces (API/CLI/exports), URL or UI route paths, schemas or wire/file formats, DB migrations, config keys or defaults, metric/log/trace names, deployment manifests, runtime behavior consumers depend on |
+| `documentation` | focused | Docs files, public API surfaces, or user-facing behavior described in the README |
+| `observability` | focused | Logging, error paths, metrics, long-running/operational code |
 
 The `compatibility` lens carries a self-contained breaking-change rubric — nothing external is read, so it behaves identically in any checkout. It classifies the deliverable first (batch tool / library vs long-running vs HA service) from repo evidence and assesses only the facets that can exist there: interface contracts (API, CLI including parsed stdout, schemas, behavioral semantics), persisted-state safety in both directions (upgrade and rollback), mixed-version coexistence and in-flight work during rolling updates (deployed services only), operational contracts (metric/log/trace names, config keys and defaults), URL and UI route paths, and third-party integrations.
 
@@ -200,12 +200,12 @@ python <plugin-root>/orchestrator/cli.py --wait --wait-timeout-s 3600  # block u
 python <plugin-root>/orchestrator/cli.py --rerender     # re-render a hand-edited .tmp-review/20-findings/
 ```
 
-The orchestrator needs either `claude` or `codex` on PATH with working auth. Select explicitly with `--harness claude|codex`, or leave the default `--harness auto` to use Codex when running under Codex and Claude otherwise.
+The orchestrator needs either `claude` or `codex` on PATH with working auth. Harness, models, and spend caps come from `REVIEW_ORCHESTRATOR_*` environment variables; see [harness and model settings](docs/review/README.md#harness-and-model-settings).
 
 For example:
 
 ```
-python <plugin-root>/orchestrator/cli.py --harness codex --pr 42 --scoring simple
+REVIEW_ORCHESTRATOR_HARNESS=codex python <plugin-root>/orchestrator/cli.py --pr 42 --scoring simple
 ```
 
 ## Filename convention

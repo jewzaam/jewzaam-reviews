@@ -57,9 +57,9 @@ class AgentResult:
     # timeout | spawn | protocol | agent | budget | schema (set by callers) | None
     error_category: str | None = None
     session_id: str = ""  # child session id — joins the trace/ledger to telemetry
-    # The model actually invoked. Differs from the requested review level
-    # whenever a harness resolves it. The ledger records this, not the
-    # request, so a cost table never names a model that did not run.
+    # The model actually invoked, or `<harness>:default` when none was named.
+    # The ledger records this, not the review level, so a cost table never
+    # names a model that did not run.
     model_used: str = ""
 
 
@@ -210,22 +210,15 @@ def _scrubbed_env() -> dict:
     return env
 
 
-# Provider-neutral review levels are resolved to each harness's model names.
-_CODEX_MODELS = {
-    "deep": "gpt-5.6-terra",
-    "focused": "gpt-6-luna",
-}
-_CLAUDE_MODELS = {"deep": "sonnet", "focused": "haiku"}
+# The roster names review levels, never models: the user picks the model per
+# level by environment, verbatim for whichever harness runs. Unset sends no
+# `--model` and the harness's own configuration decides.
+_MODEL_ENV_PREFIX = "REVIEW_ORCHESTRATOR_MODEL_"
 
 
-def claude_model(requested: str) -> str:
-    """Resolve a review level to Claude, or preserve an explicit model."""
-    return _CLAUDE_MODELS.get(requested, requested)
-
-
-def codex_model(requested: str) -> str:
-    """Resolve a review level to Codex, or preserve an explicit model."""
-    return _CODEX_MODELS.get(requested, requested)
+def resolve_model(review_level: str) -> str:
+    """Model for a review level from `REVIEW_ORCHESTRATOR_MODEL_<LEVEL>`, or ""."""
+    return os.environ.get(_MODEL_ENV_PREFIX + review_level.upper(), "")
 
 
 def _codex_env() -> tuple[dict, Path]:
@@ -525,7 +518,7 @@ def run_agent(
                 "ts": round(time.time(), 3),
                 "label": label,
                 "model": model,
-                "model_used": effective_model or "codex:default",
+                "model_used": effective_model or f"{harness}:default",
                 "effort": effort,
                 "tools": tools,
                 "allowed_tools": allowed_tools,
@@ -550,13 +543,11 @@ def run_agent(
     schema_file = None
     codex_home = None
     codex_log = None
-    effective_model = model
+    effective_model = resolve_model(model)
     if harness == "claude":
-        effective_model = claude_model(model)
-        argv = [
-            "claude", "-p", "--output-format", "json", "--model", effective_model,
-            "--permission-mode", "dontAsk",
-        ]
+        argv = ["claude", "-p", "--output-format", "json", "--permission-mode", "dontAsk"]
+        if effective_model:
+            argv += ["--model", effective_model]
         if not persist_session:
             argv.append("--no-session-persistence")
         if resume_session_id:
@@ -593,7 +584,6 @@ def run_agent(
                 )
             )
         argv = ["codex", "exec", "--json", "--ephemeral", "--sandbox", sandbox]
-        effective_model = codex_model(model)
         if effective_model:
             argv += ["--model", effective_model]
         # Codex takes reasoning effort as a config key, not a flag.
@@ -724,7 +714,7 @@ def run_agent(
         cost_usd = 0.0
     denials = result.get("permission_denials")
     agent_result = AgentResult(
-        model_used=effective_model or "codex:default",
+        model_used=effective_model or f"{harness}:default",
         cost_usd=cost_usd,
         token_usage=_parse_token_usage(result),
         permission_denials=denials if isinstance(denials, list) else [],

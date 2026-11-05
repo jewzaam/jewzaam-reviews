@@ -741,6 +741,7 @@ class TestOrchestratingSession:
     """The launching session is linked, never costed (pipeline.RunState)."""
 
     def _state(self, monkeypatch, session_id):
+        monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
         if session_id is None:
             monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
         else:
@@ -752,6 +753,12 @@ class TestOrchestratingSession:
         attrs = state.agent_attributes("lens", "security/full-scope")
         assert attrs["review.orchestrating_session_id"] == "sess-abc"
         assert attrs["review.run_id"] == state.run_id
+
+    def test_codex_thread_is_the_session_under_codex(self, monkeypatch):
+        self._state(monkeypatch, None)
+        monkeypatch.setenv("CODEX_THREAD_ID", "thread-9")
+        state = pipeline.RunState(options=_options("/tmp"), scope=None)
+        assert state.orchestrating_session_id == "thread-9"
 
     def test_absent_session_omits_attribute(self, monkeypatch):
         state = self._state(monkeypatch, None)
@@ -908,13 +915,29 @@ class TestBudgetHarvest:
         assert len(attempts) == 3, "schema/protocol flukes are worth an identical retry"
 
 
-class TestBudgetByModel:
+class TestBudgetByReviewLevel:
+    @pytest.fixture(autouse=True)
+    def _no_budget_env(self, monkeypatch):
+        for level in ("DEEP", "FOCUSED"):
+            monkeypatch.delenv(f"REVIEW_ORCHESTRATOR_BUDGET_USD_{level}", raising=False)
+
     def test_review_levels_have_different_budgets(self):
         assert pipeline.budget_for("deep") == 6.0
         assert pipeline.budget_for("focused") == 2.0
 
-    def test_unknown_model_gets_the_default(self):
-        assert pipeline.budget_for("some-future-model") == pipeline.DEFAULT_BUDGET_USD
+    def test_unknown_level_gets_the_default(self):
+        assert pipeline.budget_for("some-future-level") == pipeline.DEFAULT_BUDGET_USD
+
+    def test_env_overrides_one_level(self, monkeypatch):
+        monkeypatch.setenv("REVIEW_ORCHESTRATOR_BUDGET_USD_FOCUSED", "12.5")
+        assert pipeline.budget_for("focused") == 12.5
+        assert pipeline.budget_for("deep") == 6.0
+
+    @pytest.mark.parametrize("value", ["abc", "0", "-1", "nan"])
+    def test_invalid_override_raises(self, monkeypatch, value):
+        monkeypatch.setenv("REVIEW_ORCHESTRATOR_BUDGET_USD_DEEP", value)
+        with pytest.raises(ValueError):
+            pipeline.budget_for("deep")
 
 
 class TestAgentLogsExist:

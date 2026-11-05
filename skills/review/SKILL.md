@@ -13,10 +13,6 @@ Run the review orchestrator: a Python CLI that owns the whole review pipeline. M
 
 This skill runs under both Claude Code and Codex. Where a step needs a host capability only one of them has, the fallback is given inline — take it rather than inventing a substitute.
 
-Set `<HARNESS>` from the host before running the CLI: `codex` under Codex and
-`claude` under Claude Code. Pass `--harness <HARNESS>` to every orchestrator
-invocation below.
-
 ## Orchestrator path
 
 Every step below runs the same CLI, written here as `<ORCH>`. Resolve it ONCE, before Step 1, and reuse that exact string:
@@ -72,7 +68,7 @@ If nothing yields intent, omit `--intent-file` and continue. The run records tha
 If `--skip-lenses` was given in the arguments, skip this step. Otherwise run via foreground Bash:
 
 ```
-python <ORCH> --harness <HARNESS> --select-only [--pr N [--base BRANCH]] [--intent-file PATH] [--profile PROFILE] [--guidance "..."]
+python <ORCH> --select-only [--pr N [--base BRANCH]] [--intent-file PATH] [--profile PROFILE] [--guidance "..."]
 ```
 
 It prints the lenses the selector matched for this scope, one per line as `lens: <slug>: <rationale>`, and saves the selection so the review run does not re-run the selector.
@@ -129,7 +125,7 @@ Selected slugs become `--skip-lenses <comma-separated>`. Nothing selected → om
 Run this via foreground Bash from the project root, EXACTLY ONCE:
 
 ```
-python <ORCH> --harness <HARNESS> --detach [--pr N [--base BRANCH]] [--intent-file PATH] [--scoring MODE] [--profile PROFILE] [--skip-lenses slugs] [--validate-buckets buckets] [--guidance "..."]
+python <ORCH> --detach [--pr N [--base BRANCH]] [--intent-file PATH] [--scoring MODE] [--profile PROFILE] [--skip-lenses slugs] [--validate-buckets buckets] [--guidance "..."]
 ```
 
 The bracketed flags come from Step 1's parse: include `--pr` only when a leading PR number was given, `--base` when given in the arguments or found in Step 2, `--scoring`, `--profile` and `--skip-lenses` from the argument or Step 4's answers (omit `--profile` when neither supplied one, and `--skip-lenses` when none), `--validate-buckets` only when it was given in the arguments, `--guidance` only when non-empty, `--intent-file` whenever Step 2 produced one. `<ORCH>` is the absolute path resolved above; a relative `python orchestrator/cli.py ...` runs from the project root and will not find the CLI.
@@ -141,7 +137,7 @@ It returns immediately; the review runs as a detached process that survives this
 Run this EXACTLY ONCE, via **background** Bash (`run_in_background: true`) — never foreground, never repeatedly:
 
 ```
-python <ORCH> --harness <HARNESS> --wait --wait-timeout-s 3600
+python <ORCH> --wait --wait-timeout-s 3600
 ```
 
 A backgrounded command issues no model requests while it runs; the harness re-invokes this session when it exits. So the entire 10-30 minute review costs the orchestrating session nothing.
