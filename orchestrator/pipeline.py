@@ -37,9 +37,13 @@ LOG_DIRNAME = "agent-logs"
 # a latency backstop). Keyed by review level because measured focused lenses
 # run $0.25-$0.40 and deep lenses $2.07-$3.53, so one flat cap is either no
 # cap for focused work or too tight for deep work. The CLI enforces this
-# between turns, so real spend overshoots by up to one turn's cost.
+# between turns, so real spend overshoots by up to one turn's cost. These are
+# measured Claude defaults; `REVIEW_ORCHESTRATOR_BUDGET_USD_<LEVEL>` replaces
+# one for a model priced differently. Never unset: the harvest below only
+# fires on a budget stop, and a timeout's SIGKILL loses the cost.
 BUDGET_USD_BY_REVIEW_LEVEL = {"deep": 6.0, "focused": 2.0}
 DEFAULT_BUDGET_USD = 6.0
+_BUDGET_ENV_PREFIX = "REVIEW_ORCHESTRATOR_BUDGET_USD_"
 
 # Second pass over a budget-stopped agent: reopen its session and ask only for
 # what it already worked out. Cheap because it does no new investigation, and
@@ -73,8 +77,22 @@ RUN_REPORT_FILENAME = "run-report.json"
 
 
 def budget_for(review_level: str) -> float:
-    """Spend cap for one agent invocation at this review level."""
-    return BUDGET_USD_BY_REVIEW_LEVEL.get(review_level, DEFAULT_BUDGET_USD)
+    """Spend cap for one agent invocation at this review level.
+
+    Raises ValueError for an override that is not a positive number; the CLI
+    checks every level at startup so a typo stops the run before any spend.
+    """
+    name = _BUDGET_ENV_PREFIX + review_level.upper()
+    override = os.environ.get(name)
+    if override is None:
+        return BUDGET_USD_BY_REVIEW_LEVEL.get(review_level, DEFAULT_BUDGET_USD)
+    try:
+        budget = float(override)
+    except ValueError:
+        budget = 0.0
+    if not budget > 0:
+        raise ValueError(f"{name} must be a positive number, got {override!r}")
+    return budget
 
 
 @dataclass(frozen=True)
@@ -161,14 +179,17 @@ class RunState:
     options: Options
     scope: scope_mod.ReviewScope
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    # The Claude Code session that launched this run. The orchestrator makes no
+    # The host session that launched this run: the Claude Code session id, or
+    # the Codex thread id (what Codex exports to tool calls; also the key its
+    # per-thread cost lookup uses). The orchestrator makes no
     # model calls of its own, so this session's spend — reading the skill,
     # choosing arguments, polling --wait, relaying results — is real review cost
     # that no ledger entry here can capture: it belongs to a process this one
     # cannot see and never ends when the run does. Recording the id is what
     # makes it joinable. Empty when the CLI is run from a plain shell.
     orchestrating_session_id: str = field(
-        default_factory=lambda: os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        default_factory=lambda: os.environ.get("CLAUDE_CODE_SESSION_ID")
+        or os.environ.get("CODEX_THREAD_ID", "")
     )
     saved_selection: dict | None = None  # selector output from --select-only
     # Which buckets this run actually sent to the validators. Read by

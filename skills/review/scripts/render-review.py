@@ -429,8 +429,9 @@ def main(argv: list[str]) -> int:
         "--orchestrating-session-id",
         default="",
         help=(
-            "Claude Code session that launched the run; a join key for "
-            "telemetry, not a cost (that session's spend is not in costs.json)"
+            "host session (Claude Code session or Codex thread) that launched "
+            "the run; a join key for telemetry, not a cost (that session's "
+            "spend is not in costs.json)"
         ),
     )
     args = parser.parse_args(argv)

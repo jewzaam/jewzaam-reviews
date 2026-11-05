@@ -6,7 +6,6 @@ Usage (typically via the review skill wrapper, but works standalone):
 
     python orchestrator/cli.py [--pr N [--base BRANCH]] [--guidance "text"]
         [--scoring categorical|simple] [--profile code|docs]
-        [--harness auto|claude|codex]
         [--project-root PATH]
         [--max-agents 16] [--parallel 4] [--timeout 600] [--dry-run]
 
@@ -215,12 +214,6 @@ def main(argv: list[str] | None = None) -> int:
         "ran with",
     )
     parser.add_argument(
-        "--harness",
-        choices=["auto", "claude", "codex"],
-        default="auto",
-        help="agent CLI harness; auto selects Codex when running under Codex, otherwise Claude",
-    )
-    parser.add_argument(
         "--project-root", default=os.getcwd(), help="project to review"
     )
     def _positive_int(value: str) -> int:
@@ -300,6 +293,25 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.wait:
         return _wait(args)
+    for review_level in pipeline.BUDGET_USD_BY_REVIEW_LEVEL:
+        try:
+            pipeline.budget_for(review_level)
+        except ValueError as exc:
+            print(f"error: invalid budget override: {exc}", file=sys.stderr)
+            return 2
+    harness = os.environ.get("REVIEW_ORCHESTRATOR_HARNESS", "")
+    if not harness:
+        harness = (
+            "codex"
+            if any(os.environ.get(key) for key in ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CODEX_CI"))
+            else "claude"
+        )
+    elif harness not in {"claude", "codex"}:
+        print(
+            f"error: REVIEW_ORCHESTRATOR_HARNESS must be claude or codex, got {harness!r}",
+            file=sys.stderr,
+        )
+        return 2
     if args.detach:
         passthrough = [a for a in (argv if argv is not None else sys.argv[1:]) if a != "--detach"]
         return _detach(args, passthrough)
@@ -351,15 +363,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    harness = args.harness
-    if harness == "auto":
-        harness = os.environ.get("REVIEW_ORCHESTRATOR_HARNESS", "")
-        if harness not in {"claude", "codex"}:
-            harness = (
-                "codex"
-                if any(os.environ.get(key) for key in ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CODEX_CI"))
-                else "claude"
-            )
     intent = ""
     if args.intent_file is not None:
         try:

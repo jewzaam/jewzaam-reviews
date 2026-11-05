@@ -60,6 +60,24 @@ class TestArgValidation:
             with pytest.raises(SystemExit):
                 cli.main(combo)
 
+    def test_invalid_harness_stops_before_detach(self, run_dir, monkeypatch, capsys):
+        monkeypatch.setenv("REVIEW_ORCHESTRATOR_HARNESS", "cluade")
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("spawned"))
+        rc = cli.main(["--detach", "--project-root", "/some/project"])
+        assert rc == 2
+        assert "REVIEW_ORCHESTRATOR_HARNESS" in capsys.readouterr().err
+
+    def test_harness_is_not_a_flag(self):
+        with pytest.raises(SystemExit):
+            cli.main(["--harness", "claude", "--dry-run"])
+
+    def test_invalid_budget_override_stops_before_detach(self, run_dir, monkeypatch, capsys):
+        monkeypatch.setenv("REVIEW_ORCHESTRATOR_BUDGET_USD_DEEP", "six")
+        monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("spawned"))
+        rc = cli.main(["--detach", "--project-root", "/some/project"])
+        assert rc == 2
+        assert "REVIEW_ORCHESTRATOR_BUDGET_USD_DEEP" in capsys.readouterr().err
+
 
 class TestDetach:
     def test_detach_spawns_and_records_pid(self, run_dir, monkeypatch, capsys):

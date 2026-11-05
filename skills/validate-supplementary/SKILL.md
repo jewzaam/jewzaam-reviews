@@ -23,8 +23,7 @@ reusing the previous run's `.tmp-review/10-merged/`.
 findings cannot be recovered and the CLI says so rather than quietly starting
 a full review.
 
-This skill runs under both Claude Code and Codex. Set `<HARNESS>` from the
-host: `codex` under Codex, `claude` under Claude Code.
+This skill runs under both Claude Code and Codex.
 
 ## Orchestrator path
 
@@ -53,7 +52,7 @@ previous run saved.
 Run this via foreground Bash from the project root, EXACTLY ONCE:
 
 ```
-python <ORCH> --harness <HARNESS> --detach --resume-validation [--validate-buckets buckets]
+python <ORCH> --detach --resume-validation [--validate-buckets buckets]
 ```
 
 It returns immediately; the validators run as a detached process that survives
@@ -73,7 +72,7 @@ Run this EXACTLY ONCE, via **background** Bash (`run_in_background: true`) —
 never foreground, never repeatedly:
 
 ```
-python <ORCH> --harness <HARNESS> --wait --wait-timeout-s 3600
+python <ORCH> --wait --wait-timeout-s 3600
 ```
 
 A backgrounded command issues no model requests while it runs; the harness

@@ -73,36 +73,29 @@ app-server usage request. It is an estimate, not an invoice.
 
 ## Harness and model settings
 
-The review roster chooses a review level based on the kind of analysis each
-agent performs. Both harnesses use the same levels; only the translation to a
-concrete provider model differs.
+The orchestrator names no models. Each agent runs at a review level, and the
+user maps levels to models through the environment:
 
-| Review level | Review work | Why |
+| Review level | Review work |
+| --- | --- |
+| `deep` | Implementation, architecture, tests, maintainability, security, backwards compatibility, and validation |
+| `focused` | Lens selection, documentation, and observability |
+
+| Variable | Effect when set | When unset |
 | --- | --- | --- |
-| `deep` | Implementation, architecture, tests, maintainability, security, backwards compatibility, and validation | These reviews trace behavior and assess interactions, edge cases, and risk. |
-| `focused` | Lens selection, documentation, and observability | These are narrower classification or targeted review tasks. |
+| `REVIEW_ORCHESTRATOR_HARNESS` | `claude` or `codex`; any other value stops the CLI with exit 2 | Codex when running under Codex, otherwise Claude |
+| `REVIEW_ORCHESTRATOR_MODEL_DEEP` | Model id sent verbatim as `--model` to `deep` agents | No `--model`; the harness's own configuration decides |
+| `REVIEW_ORCHESTRATOR_MODEL_FOCUSED` | Same, for `focused` agents | Same |
+| `REVIEW_ORCHESTRATOR_BUDGET_USD_DEEP` | Per-agent spend cap in USD for `deep` agents | `6.0` |
+| `REVIEW_ORCHESTRATOR_BUDGET_USD_FOCUSED` | Same, for `focused` agents | `2.0` |
 
-### Codex
+Set both model variables to the same id to run every agent on one model. The
+cost table names the model that ran, or `<harness>:default` when none was set.
 
-The orchestrator invokes `codex exec` and maps review levels to Codex models:
-`deep` to `gpt-5.6-terra` and `focused` to `gpt-6-luna`. Each agent uses the
-model assigned to its review level; there is no global model override.
+The default caps were measured on Claude `sonnet`/`haiku`; raise them for a
+pricier model. Only Claude enforces them (`--max-budget-usd`); Codex has no
+spend cap. A budget value that is not a positive number stops the CLI with
+exit 2 before any agent runs.
 
-The `effort` supplied by a review stage is sent as Codex's
-`model_reasoning_effort` setting. If a stage does not supply effort, Codex uses
-its configured default.
-
-### Claude Code
-
-The orchestrator invokes `claude -p`, mapping `deep` to `sonnet` and `focused`
-to `haiku`. The per-lens assignments and rationale are listed above. The
-plugin has no environment variable for overriding Claude models at runtime.
-
-For both harnesses, a stage's explicit effort is used when provided. Codex
-receives it as `model_reasoning_effort`; otherwise Codex uses its configured
-default. Claude receives explicit effort with `--effort`; otherwise Claude
-uses its configured default.
-
-The selected harness follows the host running the skill: Codex uses `codex`
-and Claude Code uses `claude`. When running the CLI directly, select it with
-`--harness codex` or `--harness claude`.
+A stage's explicit effort is sent to Claude as `--effort` and to Codex as
+`model_reasoning_effort`; otherwise each harness uses its configured default.
