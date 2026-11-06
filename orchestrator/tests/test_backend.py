@@ -151,8 +151,14 @@ class TestArgvConstruction:
         monkeypatch.setenv("CLAUDECODE", "1")
         monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "abc")
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/cc.sock")
+        monkeypatch.setenv("CLAUDE_CODE_MESSAGING_TOKEN", "secret")
+        monkeypatch.setenv("CLAUDE_CODE_SOMETHING_NEW", "1")
+        monkeypatch.setenv("CLAUDE_CODE_MAX_TURNS", "5")
+        monkeypatch.setenv("CLAUDE_CODE_USE_VERTEX", "1")
         monkeypatch.setenv("CLAUDE_CODE_ENABLE_TELEMETRY", "1")
         monkeypatch.setenv("CLAUDE_CODE_ENHANCED_TELEMETRY_BETA", "1")
+        monkeypatch.setenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", "850000")
         monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
         monkeypatch.setenv("HOME", "/home/x")
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
@@ -162,9 +168,17 @@ class TestArgvConstruction:
         assert "CLAUDECODE" not in env
         assert "CLAUDE_CODE_ENTRYPOINT" not in env
         assert "CLAUDE_CODE_SESSION_ID" not in env
+        assert "CLAUDE_CODE_MESSAGING_SOCKET" not in env
+        assert "CLAUDE_CODE_MESSAGING_TOKEN" not in env
+        # Default-deny: unknown CLAUDE* vars and non-allowlisted config stripped
+        assert "CLAUDE_CODE_SOMETHING_NEW" not in env
+        assert "CLAUDE_CODE_MAX_TURNS" not in env
         # Telemetry config preserved
         assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
         assert env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] == "1"
+        # CLI config inherited
+        assert env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] == "850000"
+        assert env["CLAUDE_CODE_USE_VERTEX"] == "1"
         assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
         assert env["HOME"] == "/home/x"
 
@@ -485,7 +499,9 @@ class TestTelemetryEnvFill:
             "CLAUDE_CODE_ENABLE_TELEMETRY=1\n"
             "SECRET_TOKEN=do-not-leak\n"
             "SANDBOX_UNIQUE_TEST_KEY=nope\n"
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS=1\n"
         )
+        monkeypatch.delenv("CLAUDE_CODE_MAX_CONTEXT_TOKENS", raising=False)
         monkeypatch.setenv(backend._OTEL_ENV_FILE_OVERRIDE, str(env_file))
         monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
         env = backend._scrubbed_env()
@@ -494,6 +510,7 @@ class TestTelemetryEnvFill:
         assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
         assert "SECRET_TOKEN" not in env
         assert "SANDBOX_UNIQUE_TEST_KEY" not in env  # only telemetry keys load
+        assert "CLAUDE_CODE_MAX_CONTEXT_TOKENS" not in env  # inherit-only
 
     def test_inherited_endpoint_not_overridden(self, monkeypatch, tmp_path):
         env_file = tmp_path / "site.env"

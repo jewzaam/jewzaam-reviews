@@ -148,6 +148,21 @@ _ENV_KEEP = {
     "CLAUDE_CODE_ENABLE_TELEMETRY",
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
 }
+# CLAUDE* vars that configure the CLI, not session identity: a child must
+# reach the same provider with the same limits as its parent. Allowlist on
+# purpose — a CLAUDE* var not named here is excluded until someone decides it
+# is CLI config. Inherited only, never read from the env files (those carry
+# telemetry and nothing else). CLAUDE_CODE_MAX_TURNS is left out: spend
+# (--max-budget-usd) is the runaway control, and a parent's turn cap would cut
+# lens agents short on a different axis.
+_ENV_INHERIT = {
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLAUDE_CODE_USE_BEDROCK",
+    # Travels with ANTHROPIC_BASE_URL, which passes the scrub unprefixed.
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+}
 # Env files consulted (first hit wins) when the inherited environment has no
 # OTLP endpoint — a long-running parent process can hold an env older than
 # the machine's telemetry config. Only telemetry keys are read from them.
@@ -182,11 +197,15 @@ def _telemetry_env_from_file() -> dict:
 
 
 def _scrubbed_env() -> dict:
-    """Child env without session-identity CLAUDE* vars.
+    """Child env without session-bound CLAUDE* vars.
 
-    The orchestrator may itself run inside a Claude Code session; inherited
-    CLAUDE* vars (CLAUDECODE, CLAUDE_CODE_SESSION_ID, ...) could make the
-    nested CLI behave as a subagent of that session. Telemetry toggles are
+    The orchestrator usually runs inside a Claude Code session, and that
+    session's env is bound to it: CLAUDECODE, CLAUDE_CODE_SESSION_ID,
+    CLAUDE_CODE_ENTRYPOINT, CLAUDE_PID, CLAUDE_CODE_MESSAGING_SOCKET/_TOKEN.
+    Each sub-agent is its own session, so it must not inherit any of them.
+    The scrub is by prefix, not by that list, so a session-bound var added in
+    a later CLI release is excluded without anyone naming it; the cost is that
+    CLI config must be allowlisted (_ENV_INHERIT). Telemetry toggles are
     kept — verified empirically that a scrub of CLAUDE_CODE_ENABLE_TELEMETRY
     kills the child's OTEL export. When the inherited env lacks an OTLP
     endpoint, telemetry keys are filled in (never overridden) from a
@@ -195,7 +214,7 @@ def _scrubbed_env() -> dict:
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith("CLAUDE") or k in _ENV_KEEP
+        if not k.startswith("CLAUDE") or k in _ENV_KEEP or k in _ENV_INHERIT
     }
     if "OTEL_EXPORTER_OTLP_ENDPOINT" not in env:
         for key, value in _telemetry_env_from_file().items():
