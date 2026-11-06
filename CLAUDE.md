@@ -243,7 +243,7 @@ Enforcement: `make version-check` validates that
 
 The check runs on every PR via `.github/workflows/version-check.yml`. On push to main, the workflow also creates a `vX.Y.Z` git tag if one doesn't exist.
 
-Docs-only changes (CLAUDE.md, README.md, `.claude-plugin/` metadata other than `version`) do not require a bump — the script only looks at `schemas/` and `skills/` for bump-required detection.
+Docs-only changes (CLAUDE.md, README.md, `.claude-plugin/` metadata other than `version`) do not require a bump — the script looks at every shipped source dir (`schemas/`, `skills/`, `orchestrator/`, `scripts/`, `resources/`) for bump-required detection. Tests are excluded: they do not change what a user runs.
 
 Bump targets: `make version-bump-patch`, `make version-bump-minor`, `make version-bump-major`. These update `plugin.json`, `marketplace.json`, `.codex-plugin/plugin.json`, and all fixture `schema_version` fields atomically. Run `make help` for the full target list.
 
