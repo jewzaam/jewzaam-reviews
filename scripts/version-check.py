@@ -15,8 +15,9 @@ Checks:
    (Render scripts read the plugin version at runtime; fixtures are
    static and must be hand-updated on every bump. This check catches
    forgotten fixture updates.)
-4. **Version bumped** — if source dirs (default: `schemas/ skills/`) changed
-   relative to the mainline branch, the version must differ from mainline.
+4. **Version bumped** — if any shipped source dir (default: `schemas/
+   skills/ orchestrator/ scripts/ resources/`) changed relative to the
+   mainline branch, the version must differ from mainline.
 
 Adapted from the standards template at
 `~/source/standards/python/templates/version-check.sh`, which reads
@@ -50,7 +51,9 @@ SEMVER_RE = re.compile(
     r"(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$"
 )
 
-DEFAULT_SOURCE_DIRS = ["schemas", "skills"]
+# Everything the plugin installs and executes. Tests and docs are not here
+# on purpose: neither changes what a user runs.
+DEFAULT_SOURCE_DIRS = ["schemas", "skills", "orchestrator", "scripts", "resources"]
 
 
 def read_plugin_version() -> str:
