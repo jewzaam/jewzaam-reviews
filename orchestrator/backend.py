@@ -148,20 +148,26 @@ _ENV_KEEP = {
     "CLAUDE_CODE_ENABLE_TELEMETRY",
     "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
 }
-# CLAUDE* vars that configure the CLI, not session identity: a child must
-# reach the same provider with the same limits as its parent. Allowlist on
-# purpose — a CLAUDE* var not named here is excluded until someone decides it
-# is CLI config. Inherited only, never read from the env files (those carry
-# telemetry and nothing else). CLAUDE_CODE_MAX_TURNS is left out: spend
-# (--max-budget-usd) is the runaway control, and a parent's turn cap would cut
-# lens agents short on a different axis.
+# CLI config the child must share with its parent, whichever harness runs.
+# Both env builders scrub by prefix, so an entry for a prefix the current
+# scrub does not see is inert. Allowlist on purpose — an unprefixed var not
+# named here is excluded until someone decides it is CLI config. Inherited
+# only, never read from the env files (those carry telemetry and nothing else).
+# CLAUDE_CODE_MAX_TURNS is left out: spend (--max-budget-usd) is the runaway
+# control, and a parent's turn cap would cut lens agents short on a different
+# axis.
 _ENV_INHERIT = {
+    # Claude: provider selection and limits.
     "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_BEDROCK",
     # Travels with ANTHROPIC_BASE_URL, which passes the scrub unprefixed.
     "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    # Codex: shim binary and patch line endings. Auth and config reach the
+    # child through the temp CODEX_HOME instead of env.
+    "CODEX_CMD",
+    "CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS",
 }
 # Env files consulted (first hit wins) when the inherited environment has no
 # OTLP endpoint — a long-running parent process can hold an env older than
@@ -251,7 +257,7 @@ def _codex_env() -> tuple[dict, Path]:
     env = {
         key: value
         for key, value in os.environ.items()
-        if not key.startswith("CODEX_") or key == "CODEX_CMD"
+        if not key.startswith("CODEX_") or key in _ENV_INHERIT
     }
     env["CODEX_HOME"] = str(child_home)
     return env, child_home

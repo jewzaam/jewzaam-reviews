@@ -187,12 +187,16 @@ class TestArgvConstruction:
         _patch_run(monkeypatch, _FakeProc(json.dumps(_cli_result())), capture)
         monkeypatch.setenv("CODEX_SESSION_ID", "parent")
         monkeypatch.setenv("CODEX_THREAD_ID", "parent-thread")
+        monkeypatch.setenv("CODEX_SOMETHING_NEW", "parent-config")
         monkeypatch.setenv("CODEX_CMD", "/usr/bin/codex")
+        monkeypatch.setenv("CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS", "1")
         backend.run_agent("p", schema=None, model="deep", allowed_tools=[], cwd="/tmp", harness="codex")
         env = capture["kwargs"]["env"]
         assert "CODEX_SESSION_ID" not in env
         assert "CODEX_THREAD_ID" not in env
+        assert "CODEX_SOMETHING_NEW" not in env
         assert env["CODEX_CMD"] == "/usr/bin/codex"
+        assert env["CODEX_APPLY_PATCH_PRESERVE_LINE_ENDINGS"] == "1"
 
 
 class TestResultParsing:
